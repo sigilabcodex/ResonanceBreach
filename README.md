@@ -1,48 +1,48 @@
 # ResonanceBreach
 
-ResonanceBreach is a minimalist browser-based experimental game prototype about containing an abstract multidimensional breach. The current pass pushes the project away from a sparse reactive screensaver and toward a living systemic field: unstable pockets form, local outbreaks chain together, and the player now works against chambered spatial pressure instead of a flat open plane.
+ResonanceBreach is a minimalist browser-based prototype about observing, containing, and navigating an abstract systemic breach. This pass slows the simulation down, introduces readable temporal phases, differentiates entity roles, and adds direct control over camera space and simulation time.
 
-## Prototype Direction
+## What changed in this iteration
 
-This pass is focused on a stronger propagation-control fantasy while keeping the presentation abstract, dark, and elegant.
+- **Continuous phase progression:** the field now evolves through calm, anomaly, emergence, pressure, and breach states with gradual blending instead of hard mode switches.
+- **Clear entity roles:** harmonic nodes stabilize space, anomalies appear first as flickering distortions, and breach entities arrive later as rhythmic propagators with distinct motion and structure.
+- **Slower pacing:** spawn rates, escalation, and motion have all been reduced to create more contemplative observation windows.
+- **Camera navigation:** the field can now be explored with zoom and panning for local inspection or strategic overview.
+- **Time control:** players can temporarily slow the system down or accelerate it to study phase changes and pressure spikes.
+- **Rhythmic pressure audio:** once breach entities emerge, the soundscape gains a subtle pulse that intensifies with instability.
 
-### What changed in this iteration
+## System phases
 
-- **Regional outbreaks:** resonance now accumulates inside local chambers, creating visible instability pockets and clustered spawns instead of mostly uniform global drift.
-- **Pseudo-maze topology:** the field is divided into soft containment cells with directional flow and gate-like barrier segments that create bottlenecks, corridors, and local crises without becoming a literal maze.
-- **More expressive entities:** entities now exhibit attraction, repulsion, swirl, charge-up behavior, and outbreak priming so dangerous regions can be read before they cascade.
-- **Stronger containment feel:** the stabilizer zone now produces a clearer pulse, stronger local recovery, and more legible entity displacement and cooling.
-- **Richer atmosphere:** visuals distinguish calm, resonant, and unstable regions more clearly, and the audio now behaves like a layered generative ambient bed that roughens as the breach worsens.
+The simulation continuously blends between five phases:
 
-## Core Loop
+1. **Calm** – mostly harmonic nodes, slow drift, low distortion.
+2. **Anomaly** – rare distortions begin to flicker into the field.
+3. **Emergence** – the first breach entities appear.
+4. **Pressure** – breach reproduction increases and rhythmic pulsing becomes more present.
+5. **Breach** – instability dominates and containment becomes fragile.
 
-The player manages a drifting field of geometric entities whose local alignments create resonance, chamber pressure, outbreaks, and systemic collapse risk.
+These phases are not discrete levels. They overlap and crossfade based on elapsed time, field instability, and containment pressure.
 
-The central game state is **stability** in `[0, 1]`:
+## Entity roles
 
-- `1` = coherent, calm, controlled field.
-- `0` = containment failure and loss state.
-
-Stability continuously drives gameplay pressure, visuals, and audio.
+- **Harmonic nodes** – ambient and stable. They drift gently and reinforce coherence.
+- **Anomalies** – subtle distortions rather than full circles. They flicker, shear, and mark unstable emergence points.
+- **Breach entities** – visually and behaviorally distinct geometric intrusions that propagate more aggressively and pulse with the rising system rhythm.
 
 ## Controls
 
-- **Click / press and drag:** project a containment zone.
+- **Left click / drag:** project the containment zone.
+- **Mouse wheel:** zoom in and out.
+- **Right click / drag:** pan the camera.
+- **WASD / Arrow keys:** pan the camera.
+- **Hold Shift:** slow time to `0.5×`.
+- **Hold Space:** fast-forward to `2×`.
 - **R:** restart immediately.
-- **Restart button:** reseed the field with a fresh run.
+- **Restart button:** reseed the simulation.
 
 Audio begins after the first user interaction to comply with browser autoplay restrictions.
 
-## Current Prototype Features
-
-- chambered simulation field with soft barriers, gates, and flow-biased regions;
-- clustered resonance logic with outbreak-prone hotspots and local chain reactions;
-- procedural entities with pre-spawn charge states, attraction/repulsion influence, and signal-like motion;
-- a temporary containment tool with stronger feedback and local recovery response;
-- layered ambient WebAudio that stays airy and harmonic in stable states, then grows denser and rougher during instability;
-- a minimal HUD showing stability, entity count, and active instability pockets.
-
-## Running the Prototype
+## Running the prototype
 
 ```bash
 npm install
@@ -55,18 +55,18 @@ Build for production:
 npm run build
 ```
 
-## Architecture Overview
+## Architecture overview
 
-- `src/app.ts` – app bootstrap and fixed-timestep loop.
-- `src/sim/simulation.ts` – chamber topology, entity behavior, outbreak logic, stability, and containment response.
-- `src/render/renderer.ts` – procedural canvas rendering for regions, barriers, hotspots, entities, and containment feedback.
-- `src/audio/audioEngine.ts` – layered generative ambient WebAudio system mapped to stability and outbreak risk.
-- `src/input/playerInput.ts` – mouse / pointer and keyboard controls.
-- `src/ui/hud.ts` – minimal DOM HUD for stability and pocket readouts.
-- `src/config.ts` – global tuning constants and topology dimensions.
+- `src/app.ts` – app bootstrap, camera/time controls, and fixed-timestep loop.
+- `src/sim/simulation.ts` – phase blending, entity role behavior, spawning, stability, and containment response.
+- `src/render/renderer.ts` – camera-aware canvas rendering for field regions, anomalies, breach forms, and containment feedback.
+- `src/audio/audioEngine.ts` – generative ambient audio with rhythmic pressure mapped to breach escalation.
+- `src/input/playerInput.ts` – pointer, wheel, keyboard camera movement, and time-control handling.
+- `src/ui/hud.ts` – HUD for stability, current phase, entities, and controls.
+- `src/config.ts` – global simulation, camera, and timing constants.
 
-## Design Notes
+## Design notes
 
-- The prototype is **not** intended to be a literal clone of classic propagation-control games.
-- The simulation should instead evoke escalating intervention pressure through abstract systems, visible local crises, and recoverable pockets.
-- The goal for future passes is to deepen identity and decision-making without abandoning the minimalist presentation.
+- The prototype remains abstract, geometric, and continuous.
+- The focus of this pass is clarity, pacing, and readable evolution rather than feature complexity.
+- Future iterations can deepen intervention mechanics without losing the minimal visual direction.

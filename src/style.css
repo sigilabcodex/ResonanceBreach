@@ -111,6 +111,12 @@ canvas {
   margin-top: 10px;
 }
 
+.hud__row--minor {
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: rgba(202, 215, 236, 0.76);
+}
+
 .hud__row--hint {
   align-items: flex-start;
 }
