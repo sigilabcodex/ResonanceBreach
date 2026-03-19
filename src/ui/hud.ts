@@ -7,6 +7,7 @@ export class Hud {
   private readonly stabilityBar: HTMLDivElement;
   private readonly stabilityValue: HTMLSpanElement;
   private readonly entityValue: HTMLSpanElement;
+  private readonly pocketValue: HTMLSpanElement;
   private readonly hintValue: HTMLSpanElement;
   private frames = 0;
 
@@ -33,9 +34,13 @@ export class Hud {
           <span>Entities</span>
           <span data-entity-count>0</span>
         </div>
+        <div class="hud__row">
+          <span>Pockets</span>
+          <span data-pocket-count>Quiet</span>
+        </div>
         <div class="hud__row hud__row--hint">
           <span>Controls</span>
-          <span data-hint>Click / drag to place a stabilizer zone · R to reseed</span>
+          <span data-hint>Click / drag to pulse a containment zone · R to reseed</span>
         </div>
       </div>
     `;
@@ -44,6 +49,7 @@ export class Hud {
     this.stabilityBar = this.element.querySelector('[data-stability-bar]') as HTMLDivElement;
     this.stabilityValue = this.element.querySelector('[data-stability-value]') as HTMLSpanElement;
     this.entityValue = this.element.querySelector('[data-entity-count]') as HTMLSpanElement;
+    this.pocketValue = this.element.querySelector('[data-pocket-count]') as HTMLSpanElement;
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
   }
 
@@ -58,11 +64,16 @@ export class Hud {
     }
 
     const percentage = Math.round(snapshot.stability * 100);
+    const hotspotLabel = snapshot.hotspots.length === 0
+      ? 'Quiet'
+      : `${snapshot.hotspots.length} active · ${Math.round((snapshot.hotspots[0]?.intensity ?? 0) * 100)}%`;
+
     this.stabilityBar.style.width = `${percentage}%`;
     this.stabilityValue.textContent = `${percentage}%`;
     this.entityValue.textContent = String(snapshot.entities.length);
+    this.pocketValue.textContent = hotspotLabel;
     this.hintValue.textContent = snapshot.lost
-      ? 'Breach cascade detected · Press R or use restart to reseed'
-      : 'Click / drag to place a stabilizer zone · R to reseed';
+      ? 'Containment failure · Press R or use restart to reseed'
+      : 'Click / drag to pulse a containment zone · Watch bright pockets before they cascade';
   }
 }
