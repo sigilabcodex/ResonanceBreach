@@ -1,4 +1,4 @@
-import type { EntityType } from '../config';
+import type { EntityRole, SystemPhase } from '../config';
 
 export interface Vec2 {
   x: number;
@@ -7,7 +7,7 @@ export interface Vec2 {
 
 export interface Entity {
   id: number;
-  type: EntityType;
+  role: EntityRole;
   position: Vec2;
   velocity: Vec2;
   energy: number;
@@ -17,6 +17,9 @@ export interface Entity {
   cluster: number;
   driftBias: number;
   age: number;
+  pulse: number;
+  instability: number;
+  lifespan: number;
 }
 
 export interface StabilizerZone {
@@ -64,6 +67,17 @@ export interface Hotspot {
   radius: number;
 }
 
+export interface PhaseState {
+  current: SystemPhase;
+  progress: number;
+  blend: Record<SystemPhase, number>;
+}
+
+export interface CameraState {
+  center: Vec2;
+  zoom: number;
+}
+
 export interface SimulationSnapshot {
   entities: Entity[];
   field: FieldCell[];
@@ -76,4 +90,8 @@ export interface SimulationSnapshot {
   zone: StabilizerZone;
   time: number;
   lost: boolean;
+  phaseState: PhaseState;
+  rhythmicPressure: number;
+  camera: CameraState;
+  timeScale: number;
 }

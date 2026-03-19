@@ -18,6 +18,8 @@ export class AudioEngine {
   private padGain?: GainNode;
   private airGain?: GainNode;
   private strainGain?: GainNode;
+  private rhythmGain?: GainNode;
+  private rhythmFilter?: BiquadFilterNode;
   private bedFilter?: BiquadFilterNode;
   private padFilter?: BiquadFilterNode;
   private airFilter?: BiquadFilterNode;
@@ -25,7 +27,8 @@ export class AudioEngine {
   private bedOscA?: OscillatorNode;
   private bedOscB?: OscillatorNode;
   private padOsc?: OscillatorNode;
-  private pulseOsc?: OscillatorNode;
+  private pulseLfo?: OscillatorNode;
+  private rhythmOsc?: OscillatorNode;
   private started = false;
 
   async ensureStarted(): Promise<void> {
@@ -45,7 +48,7 @@ export class AudioEngine {
     bedGain.gain.value = 0.0001;
     const bedFilter = context.createBiquadFilter();
     bedFilter.type = 'lowpass';
-    bedFilter.frequency.value = 1400;
+    bedFilter.frequency.value = 1500;
     bedFilter.Q.value = 0.7;
     bedFilter.connect(bedGain);
     bedGain.connect(master);
@@ -59,7 +62,7 @@ export class AudioEngine {
     const bedOscB = context.createOscillator();
     bedOscB.type = 'triangle';
     bedOscB.frequency.value = 261.6;
-    bedOscB.detune.value = 2;
+    bedOscB.detune.value = 3;
     bedOscB.connect(bedFilter);
     bedOscB.start();
 
@@ -67,26 +70,26 @@ export class AudioEngine {
     padGain.gain.value = 0.0001;
     const padFilter = context.createBiquadFilter();
     padFilter.type = 'bandpass';
-    padFilter.frequency.value = 820;
-    padFilter.Q.value = 0.8;
+    padFilter.frequency.value = 840;
+    padFilter.Q.value = 0.9;
     padFilter.connect(padGain);
     padGain.connect(master);
 
     const padOsc = context.createOscillator();
-    padOsc.type = 'sawtooth';
-    padOsc.frequency.value = 349.2;
-    padOsc.detune.value = -4;
+    padOsc.type = 'triangle';
+    padOsc.frequency.value = 329.6;
+    padOsc.detune.value = -5;
     padOsc.connect(padFilter);
     padOsc.start();
 
-    const pulseOsc = context.createOscillator();
-    pulseOsc.type = 'sine';
-    pulseOsc.frequency.value = 0.12;
+    const pulseLfo = context.createOscillator();
+    pulseLfo.type = 'sine';
+    pulseLfo.frequency.value = 0.1;
     const pulseDepth = context.createGain();
-    pulseDepth.gain.value = 16;
-    pulseOsc.connect(pulseDepth);
+    pulseDepth.gain.value = 12;
+    pulseLfo.connect(pulseDepth);
     pulseDepth.connect(bedOscB.frequency);
-    pulseOsc.start();
+    pulseLfo.start();
 
     const airNoise = context.createBufferSource();
     airNoise.buffer = createNoiseBuffer(context, 2);
@@ -107,22 +110,28 @@ export class AudioEngine {
     strainNoise.loop = true;
     const strainFilter = context.createBiquadFilter();
     strainFilter.type = 'bandpass';
-    strainFilter.frequency.value = 900;
-    strainFilter.Q.value = 1.6;
-    const strainShaper = context.createWaveShaper();
-    const curve = new Float32Array(1024);
-    for (let i = 0; i < curve.length; i += 1) {
-      const x = (i / (curve.length - 1)) * 2 - 1;
-      curve[i] = Math.tanh(x * 2.8);
-    }
-    strainShaper.curve = curve;
+    strainFilter.frequency.value = 920;
+    strainFilter.Q.value = 1.5;
     const strainGain = context.createGain();
     strainGain.gain.value = 0.0001;
     strainNoise.connect(strainFilter);
-    strainFilter.connect(strainShaper);
-    strainShaper.connect(strainGain);
+    strainFilter.connect(strainGain);
     strainGain.connect(master);
     strainNoise.start();
+
+    const rhythmOsc = context.createOscillator();
+    rhythmOsc.type = 'triangle';
+    rhythmOsc.frequency.value = 48;
+    const rhythmFilter = context.createBiquadFilter();
+    rhythmFilter.type = 'bandpass';
+    rhythmFilter.frequency.value = 180;
+    rhythmFilter.Q.value = 2.1;
+    const rhythmGain = context.createGain();
+    rhythmGain.gain.value = 0.0001;
+    rhythmOsc.connect(rhythmFilter);
+    rhythmFilter.connect(rhythmGain);
+    rhythmGain.connect(master);
+    rhythmOsc.start();
 
     this.context = context;
     this.master = master;
@@ -130,6 +139,8 @@ export class AudioEngine {
     this.padGain = padGain;
     this.airGain = airGain;
     this.strainGain = strainGain;
+    this.rhythmGain = rhythmGain;
+    this.rhythmFilter = rhythmFilter;
     this.bedFilter = bedFilter;
     this.padFilter = padFilter;
     this.airFilter = airFilter;
@@ -137,7 +148,8 @@ export class AudioEngine {
     this.bedOscA = bedOscA;
     this.bedOscB = bedOscB;
     this.padOsc = padOsc;
-    this.pulseOsc = pulseOsc;
+    this.pulseLfo = pulseLfo;
+    this.rhythmOsc = rhythmOsc;
     this.started = true;
   }
 
@@ -149,6 +161,8 @@ export class AudioEngine {
       !this.padGain ||
       !this.airGain ||
       !this.strainGain ||
+      !this.rhythmGain ||
+      !this.rhythmFilter ||
       !this.bedFilter ||
       !this.padFilter ||
       !this.airFilter ||
@@ -156,7 +170,8 @@ export class AudioEngine {
       !this.bedOscA ||
       !this.bedOscB ||
       !this.padOsc ||
-      !this.pulseOsc
+      !this.pulseLfo ||
+      !this.rhythmOsc
     ) {
       return;
     }
@@ -166,29 +181,36 @@ export class AudioEngine {
     const instability = 1 - stability;
     const pressure = clamp(snapshot.pressure, 0, 1.4);
     const outbreak = clamp(snapshot.outbreakRisk, 0, 1.4);
-    const hotspot = snapshot.hotspots[0]?.intensity ?? 0;
+    const rhythm = clamp(snapshot.rhythmicPressure, 0, 1.4);
+    const calmBlend = snapshot.phaseState.blend.calm;
+    const breachBlend = snapshot.phaseState.blend.breach;
 
-    const root = 164.81 + stability * 28;
+    const root = 164.81 + calmBlend * 18 - breachBlend * 8;
     const fifth = root * 1.5;
-    const ninth = root * 2.24;
+    const upper = root * 2;
 
-    this.bedOscA.frequency.setTargetAtTime(root + Math.sin(snapshot.time * 0.08) * 3, now, 0.6);
-    this.bedOscB.frequency.setTargetAtTime(fifth + Math.sin(snapshot.time * 0.11 + pressure) * 6, now, 0.55);
-    this.padOsc.frequency.setTargetAtTime(ninth - instability * 35 + Math.sin(snapshot.time * 0.15) * 4, now, 0.45);
-    this.pulseOsc.frequency.setTargetAtTime(0.08 + outbreak * 0.05, now, 0.9);
+    this.bedOscA.frequency.setTargetAtTime(root + Math.sin(snapshot.time * 0.08) * 2.2, now, 0.8);
+    this.bedOscB.frequency.setTargetAtTime(fifth + Math.sin(snapshot.time * 0.11 + pressure) * 4, now, 0.7);
+    this.padOsc.frequency.setTargetAtTime(upper + snapshot.phaseState.blend.emergence * 14 - instability * 12, now, 0.6);
+    this.pulseLfo.frequency.setTargetAtTime(0.06 + rhythm * 0.32, now, 0.7);
+    this.rhythmOsc.frequency.setTargetAtTime(42 + rhythm * 26 + pressure * 8, now, 0.18);
 
-    this.bedFilter.frequency.setTargetAtTime(900 + stability * 2200 - outbreak * 180, now, 0.5);
-    this.bedFilter.Q.setTargetAtTime(0.6 + pressure * 0.8, now, 0.5);
-    this.padFilter.frequency.setTargetAtTime(540 + stability * 1500 - instability * 220, now, 0.45);
-    this.padFilter.Q.setTargetAtTime(0.8 + hotspot * 0.4, now, 0.45);
-    this.airFilter.frequency.setTargetAtTime(1400 + stability * 1800 - outbreak * 220, now, 0.4);
-    this.strainFilter.frequency.setTargetAtTime(650 + instability * 1100 + pressure * 240, now, 0.25);
-    this.strainFilter.Q.setTargetAtTime(1.1 + outbreak * 2.8, now, 0.25);
+    this.bedFilter.frequency.setTargetAtTime(1200 + stability * 1400 - outbreak * 120, now, 0.6);
+    this.padFilter.frequency.setTargetAtTime(520 + stability * 900 + snapshot.phaseState.blend.emergence * 180, now, 0.5);
+    this.airFilter.frequency.setTargetAtTime(1600 + calmBlend * 1600 - breachBlend * 220, now, 0.5);
+    this.strainFilter.frequency.setTargetAtTime(620 + instability * 900 + pressure * 180, now, 0.25);
+    this.strainFilter.Q.setTargetAtTime(1.1 + outbreak * 1.6 + rhythm * 0.6, now, 0.25);
+    this.rhythmFilter.frequency.setTargetAtTime(150 + rhythm * 160, now, 0.15);
+    this.rhythmFilter.Q.setTargetAtTime(1.8 + rhythm * 1.5, now, 0.15);
 
-    this.bedGain.gain.setTargetAtTime(0.014 + stability * 0.05 - instability * 0.008, now, 0.5);
-    this.padGain.gain.setTargetAtTime(0.006 + stability * 0.026, now, 0.6);
-    this.airGain.gain.setTargetAtTime(0.003 + stability * 0.018 + Math.max(0, 0.01 - pressure * 0.003), now, 0.5);
-    this.strainGain.gain.setTargetAtTime(0.001 + instability * 0.02 + outbreak * 0.014 + pressure * 0.008, now, 0.22);
-    this.master.gain.setTargetAtTime(snapshot.lost ? 0.11 : 0.13 + stability * 0.08, now, 0.55);
+    this.bedGain.gain.setTargetAtTime(0.018 + stability * 0.036, now, 0.6);
+    this.padGain.gain.setTargetAtTime(0.005 + calmBlend * 0.018 + snapshot.phaseState.blend.emergence * 0.01, now, 0.6);
+    this.airGain.gain.setTargetAtTime(0.003 + stability * 0.014, now, 0.55);
+    this.strainGain.gain.setTargetAtTime(0.001 + instability * 0.01 + outbreak * 0.008 + breachBlend * 0.01, now, 0.25);
+
+    const pulseShape = 0.35 + 0.65 * Math.max(0, Math.sin(snapshot.time * (2.4 + rhythm * 4.2)));
+    const rhythmGainTarget = rhythm <= 0.05 ? 0.0001 : 0.002 + rhythm * 0.012 * pulseShape;
+    this.rhythmGain.gain.setTargetAtTime(rhythmGainTarget, now, 0.08);
+    this.master.gain.setTargetAtTime(snapshot.lost ? 0.1 : 0.12 + stability * 0.06, now, 0.6);
   }
 }

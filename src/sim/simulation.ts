@@ -1,11 +1,12 @@
 import {
   BASE_STABILITY_DRAIN,
-  INITIAL_ENTITY_COUNT,
+  CAMERA_MAX_ZOOM,
+  CAMERA_MIN_ZOOM,
+  INITIAL_HARMONIC_COUNT,
   MAX_ENTITIES,
   MAX_POCKET_INDICATORS,
-  RESONANCE_ALIGNMENT_THRESHOLD,
+  PHASE_SEQUENCE,
   RESONANCE_RANGE,
-  SPAWN_PRESSURE_THRESHOLD,
   STABILITY_RECOVERY,
   STABILIZER_HEAT_DAMPING,
   STABILIZER_MAX_CHARGE,
@@ -16,10 +17,20 @@ import {
   TOPOLOGY_ROWS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
-  type EntityType,
+  type EntityRole,
+  type SystemPhase,
 } from '../config';
 import { Rng } from './random';
-import type { BarrierSegment, Entity, FieldCell, Hotspot, SimulationSnapshot, StabilizerZone } from './types';
+import type {
+  BarrierSegment,
+  CameraState,
+  Entity,
+  FieldCell,
+  Hotspot,
+  PhaseState,
+  SimulationSnapshot,
+  StabilizerZone,
+} from './types';
 
 const TWO_PI = Math.PI * 2;
 const CELL_WIDTH = WORLD_WIDTH / TOPOLOGY_COLS;
@@ -27,11 +38,15 @@ const CELL_HEIGHT = WORLD_HEIGHT / TOPOLOGY_ROWS;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const smoothstep = (edge0: number, edge1: number, value: number) => {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
-const entityTypeEnergy: Record<EntityType, number> = {
-  seed: 0.42,
-  wave: 0.62,
-  fracture: 0.9,
+const roleEnergy: Record<EntityRole, number> = {
+  harmonic: 0.32,
+  anomaly: 0.44,
+  breach: 0.76,
 };
 
 export class Simulation {
@@ -42,11 +57,23 @@ export class Simulation {
   private hotspots: Hotspot[] = [];
   private nextId = 1;
   private time = 0;
-  private stability = 0.88;
+  private stability = 0.94;
   private pressure = 0;
   private avgResonance = 0;
   private outbreakRisk = 0;
+  private rhythmicPressure = 0;
   private lost = false;
+  private phaseSignal = 0;
+  private phaseState: PhaseState = {
+    current: 'calm',
+    progress: 0,
+    blend: { calm: 1, anomaly: 0, emergence: 0, pressure: 0, breach: 0 },
+  };
+  private camera: CameraState = {
+    center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+    zoom: 1,
+  };
+  private timeScale = 1;
   private zone: StabilizerZone = {
     active: false,
     position: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
@@ -68,18 +95,28 @@ export class Simulation {
     this.hotspots = [];
     this.nextId = 1;
     this.time = 0;
-    this.stability = 0.88;
+    this.stability = 0.94;
     this.pressure = 0;
     this.avgResonance = 0;
     this.outbreakRisk = 0;
+    this.rhythmicPressure = 0;
+    this.phaseSignal = 0;
+    this.phaseState = {
+      current: 'calm',
+      progress: 0,
+      blend: { calm: 1, anomaly: 0, emergence: 0, pressure: 0, breach: 0 },
+    };
     this.lost = false;
     this.zone.active = false;
     this.zone.charge = 0;
     this.zone.pulse = 0;
     this.zone.recovery = 0;
+    this.zone.position = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+    this.camera = { center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }, zoom: 1 };
+    this.timeScale = 1;
 
-    for (let i = 0; i < INITIAL_ENTITY_COUNT; i += 1) {
-      this.entities.push(this.createEntity(this.pickFieldAnchor()));
+    for (let i = 0; i < INITIAL_HARMONIC_COUNT; i += 1) {
+      this.entities.push(this.createEntity('harmonic', this.pickFieldAnchor()));
     }
   }
 
@@ -93,32 +130,44 @@ export class Simulation {
     }
   }
 
+  setCamera(centerX: number, centerY: number, zoom: number): void {
+    this.camera.center.x = clamp(centerX, 0, WORLD_WIDTH);
+    this.camera.center.y = clamp(centerY, 0, WORLD_HEIGHT);
+    this.camera.zoom = clamp(zoom, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
+  }
+
+  setTimeScale(timeScale: number): void {
+    this.timeScale = timeScale;
+  }
+
   update(dt: number): void {
     this.time += dt;
-    this.zone.recovery *= 0.92;
-    this.zone.pulse = Math.max(0, this.zone.pulse - dt * 0.9);
+    this.zone.recovery *= 0.96;
+    this.zone.pulse = Math.max(0, this.zone.pulse - dt * 0.75);
 
     if (this.lost) {
-      this.zone.charge = Math.max(0, this.zone.charge - dt * 0.45);
+      this.zone.charge = Math.max(0, this.zone.charge - dt * 0.28);
       return;
     }
 
-    this.resetFieldMetrics();
+    this.resetFieldMetrics(dt);
+    this.updatePhaseState(dt);
 
     let resonanceTotal = 0;
-    let clusterPressure = 0;
     let interactionCount = 0;
 
     for (const entity of this.entities) {
       entity.age += dt;
-      entity.phase = (entity.phase + dt * (0.35 + entity.energy * 0.28 + entity.charge * 0.45)) % TWO_PI;
-      entity.resonance *= 0.93;
-      entity.cluster *= 0.88;
-      entity.charge = Math.max(0, entity.charge - dt * 0.06);
+      entity.phase = (entity.phase + dt * (0.22 + entity.energy * 0.2 + entity.charge * 0.18)) % TWO_PI;
+      entity.pulse = Math.max(0, entity.pulse - dt * 0.8);
+      entity.resonance *= 0.98;
+      entity.cluster *= 0.95;
+      entity.charge *= 0.99;
+      entity.instability *= 0.985;
 
       const cell = this.getCellAt(entity.position.x, entity.position.y);
       cell.density += 1;
-      cell.resonance += entity.resonance;
+      cell.resonance += entity.resonance + entity.instability * 0.2;
     }
 
     for (let i = 0; i < this.entities.length; i += 1) {
@@ -131,140 +180,75 @@ export class Simulation {
         if (distSq > RESONANCE_RANGE * RESONANCE_RANGE) continue;
 
         const dist = Math.sqrt(distSq) || 1;
+        const proximity = 1 - dist / RESONANCE_RANGE;
         const nx = dx / dist;
         const ny = dy / dist;
-        const proximity = 1 - dist / RESONANCE_RANGE;
         const phaseAlignment = (Math.cos(a.phase - b.phase) + 1) * 0.5;
-        const antiPhase = 1 - phaseAlignment;
-        const localA = this.getCellAt(a.position.x, a.position.y);
-        const localB = this.getCellAt(b.position.x, b.position.y);
-        const sharedHazard = (localA.hazard + localB.hazard) * 0.5;
-        const energyBlend = (a.energy + b.energy) * 0.5;
-        const resonance = proximity * (phaseAlignment * 0.9 + sharedHazard * 0.45) * energyBlend;
-        const clusterFactor = proximity * (0.55 + sharedHazard + (localA.density + localB.density) * 0.01);
+        const localPressure = (this.getCellAt(a.position.x, a.position.y).hazard + this.getCellAt(b.position.x, b.position.y).hazard) * 0.5;
 
-        const attraction = (phaseAlignment * 2 - 1) * (18 + sharedHazard * 26) + clusterFactor * 14;
-        const repulsion = antiPhase * (14 + (a.charge + b.charge) * 30);
-        const swirl = (0.5 - phaseAlignment) * (22 + sharedHazard * 35);
-
-        a.velocity.x += nx * (attraction - repulsion) * dt;
-        a.velocity.y += ny * (attraction - repulsion) * dt;
-        b.velocity.x -= nx * (attraction - repulsion) * dt;
-        b.velocity.y -= ny * (attraction - repulsion) * dt;
-
-        a.velocity.x += -ny * swirl * dt;
-        a.velocity.y += nx * swirl * dt;
-        b.velocity.x -= -ny * swirl * dt;
-        b.velocity.y -= nx * swirl * dt;
-
-        a.resonance += resonance * 0.03;
-        b.resonance += resonance * 0.03;
-        a.cluster += clusterFactor * 0.08;
-        b.cluster += clusterFactor * 0.08;
-
-        if (phaseAlignment > RESONANCE_ALIGNMENT_THRESHOLD && proximity > 0.42) {
-          const chargeGain = resonance * (0.024 + clusterFactor * 0.012);
-          a.charge = clamp(a.charge + chargeGain, 0, 1.7);
-          b.charge = clamp(b.charge + chargeGain, 0, 1.7);
-          localA.instability = clamp(localA.instability + resonance * 0.008, 0, 1.5);
-          localB.instability = clamp(localB.instability + resonance * 0.008, 0, 1.5);
-          clusterPressure += resonance * (0.8 + clusterFactor);
+        let influence = 0;
+        if (a.role === 'harmonic' && b.role === 'harmonic') {
+          influence = (phaseAlignment - 0.35) * 12;
+          a.resonance += proximity * 0.004;
+          b.resonance += proximity * 0.004;
+        } else if (a.role === 'breach' || b.role === 'breach') {
+          influence = (0.22 + proximity + localPressure * 0.4) * 24;
+          a.charge += proximity * 0.0025;
+          b.charge += proximity * 0.0025;
+          a.pulse = Math.max(a.pulse, proximity * 0.4);
+          b.pulse = Math.max(b.pulse, proximity * 0.4);
+        } else {
+          influence = Math.sin(this.time * 4 + a.id + b.id) * (4 + proximity * 8);
+          a.instability += proximity * 0.004;
+          b.instability += proximity * 0.004;
         }
 
-        resonanceTotal += resonance;
+        a.velocity.x -= nx * influence * dt;
+        a.velocity.y -= ny * influence * dt;
+        b.velocity.x += nx * influence * dt;
+        b.velocity.y += ny * influence * dt;
+
+        if (a.role === 'anomaly' || b.role === 'anomaly') {
+          const swirl = (0.5 - phaseAlignment) * (12 + localPressure * 10);
+          a.velocity.x += -ny * swirl * dt;
+          a.velocity.y += nx * swirl * dt;
+          b.velocity.x -= -ny * swirl * dt;
+          b.velocity.y -= nx * swirl * dt;
+        }
+
+        resonanceTotal += proximity * (0.4 + phaseAlignment * 0.6 + localPressure * 0.2);
         interactionCount += 1;
       }
     }
 
     this.finalizeFieldMetrics();
+    this.updateEntities(dt);
+    this.spawnByPhase(dt);
 
-    if (this.zone.charge > 0) {
-      const discharge = this.zone.active ? 0.22 : 0.8;
-      this.zone.charge = Math.max(0, this.zone.charge - dt * discharge);
-    }
-
-    for (const entity of this.entities) {
-      const cell = this.getCellAt(entity.position.x, entity.position.y);
-      const driftAngle = entity.phase + entity.driftBias + this.time * (0.04 + entity.energy * 0.03);
-      const flowMix = 14 + cell.containment * 32;
-      const laneBias = Math.sin(entity.position.y * 0.012 + cell.flow.x) * 8;
-
-      entity.velocity.x += cell.flow.x * flowMix * dt + Math.cos(driftAngle) * (8 + entity.energy * 12) * dt;
-      entity.velocity.y += cell.flow.y * flowMix * dt + Math.sin(driftAngle * 0.9 + laneBias * 0.04) * (7 + entity.energy * 11) * dt;
-
-      const centerDx = cell.center.x - entity.position.x;
-      const centerDy = cell.center.y - entity.position.y;
-      entity.velocity.x += centerDx * cell.containment * 0.0025 * dt;
-      entity.velocity.y += centerDy * cell.containment * 0.0025 * dt;
-
-      if (cell.hazard > 0.4) {
-        const orbital = 18 * cell.hazard;
-        entity.velocity.x += -centerDy * orbital * 0.0006 * dt;
-        entity.velocity.y += centerDx * orbital * 0.0006 * dt;
-      }
-
-      if (this.zone.charge > 0.001) {
-        const dx = entity.position.x - this.zone.position.x;
-        const dy = entity.position.y - this.zone.position.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        if (dist < this.zone.radius) {
-          const influence = 1 - dist / this.zone.radius;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          const pulseStrength = this.zone.active ? 1.1 : 0.8;
-          entity.velocity.x += nx * STABILIZER_STRENGTH * (0.4 + influence * pulseStrength) * dt;
-          entity.velocity.y += ny * STABILIZER_STRENGTH * (0.4 + influence * pulseStrength) * dt;
-          entity.velocity.x += cell.flow.x * -20 * influence * dt;
-          entity.velocity.y += cell.flow.y * -20 * influence * dt;
-          entity.energy *= 1 - (1 - STABILIZER_HEAT_DAMPING) * influence * 0.22;
-          entity.resonance *= 1 - influence * 0.36;
-          entity.charge *= 1 - influence * 0.46;
-          entity.cluster *= 1 - influence * 0.34;
-          cell.instability = Math.max(0, cell.instability - influence * dt * 0.9);
-          this.stability += STABILIZER_RECOVERY * influence * dt;
-          this.zone.recovery += influence * 0.01;
-          this.zone.pulse = Math.min(1.4, this.zone.pulse + influence * 0.08);
-        }
-      }
-
-      this.applyBarrierInfluence(entity, dt);
-
-      const drag = 0.992 - entity.energy * 0.008 - entity.charge * 0.01;
-      entity.velocity.x *= drag;
-      entity.velocity.y *= drag;
-      entity.position.x += entity.velocity.x * dt;
-      entity.position.y += entity.velocity.y * dt;
-
-      if (entity.position.x < 0 || entity.position.x > WORLD_WIDTH) {
-        entity.position.x = clamp(entity.position.x, 0, WORLD_WIDTH);
-        entity.velocity.x *= -0.9;
-      }
-      if (entity.position.y < 0 || entity.position.y > WORLD_HEIGHT) {
-        entity.position.y = clamp(entity.position.y, 0, WORLD_HEIGHT);
-        entity.velocity.y *= -0.9;
-      }
-
-      const postCell = this.getCellAt(entity.position.x, entity.position.y);
-      entity.energy = clamp(
-        entity.energy + entity.resonance * 0.007 + postCell.hazard * 0.004 + entity.charge * 0.003 - 0.0012,
-        0.22,
-        1.35,
-      );
-    }
-
-    const spawnBudget = this.resolveOutbreaks(dt, clusterPressure);
-    const normalizedEntityPressure = Math.max(0, this.entities.length - INITIAL_ENTITY_COUNT) / (MAX_ENTITIES - INITIAL_ENTITY_COUNT);
+    const harmonicCount = this.entities.filter((entity) => entity.role === 'harmonic').length;
+    const anomalyCount = this.entities.filter((entity) => entity.role === 'anomaly').length;
+    const breachCount = this.entities.filter((entity) => entity.role === 'breach').length;
     const interactionResonance = interactionCount > 0 ? resonanceTotal / interactionCount : 0;
-    this.avgResonance = resonanceTotal / Math.max(1, this.entities.length);
-    this.outbreakRisk = clamp(spawnBudget * 0.22 + this.highestCellHazard() * 0.55, 0, 1.6);
-    this.pressure = clamp(interactionResonance * 1.6 + normalizedEntityPressure * 0.9 + this.outbreakRisk * 0.7, 0, 1.8);
 
-    const stabilityDrift = BASE_STABILITY_DRAIN + this.pressure * 0.036 + this.outbreakRisk * 0.028;
-    const passiveRecovery = Math.max(0, (1 - this.pressure) * STABILITY_RECOVERY * 0.08);
-    this.stability = clamp(this.stability - stabilityDrift * dt + passiveRecovery * dt + this.zone.recovery * 0.018, 0, 1);
+    this.avgResonance = resonanceTotal / Math.max(1, this.entities.length);
+    this.outbreakRisk = clamp(
+      this.field.reduce((sum, cell) => sum + cell.hazard, 0) / Math.max(1, this.field.length) + breachCount * 0.028 + anomalyCount * 0.01,
+      0,
+      1.4,
+    );
+    this.rhythmicPressure = clamp(this.phaseState.blend.pressure * 0.45 + this.phaseState.blend.breach * 0.95 + breachCount * 0.025, 0, 1.5);
+    this.pressure = clamp(
+      interactionResonance * 0.45 + anomalyCount * 0.012 + breachCount * 0.03 + this.outbreakRisk * 0.5,
+      0,
+      1.6,
+    );
+
+    const stabilityDrift = BASE_STABILITY_DRAIN + this.outbreakRisk * 0.009 + this.rhythmicPressure * 0.014;
+    const passiveRecovery = STABILITY_RECOVERY * (0.65 + harmonicCount * 0.008) * (1 - this.phaseState.blend.breach * 0.78);
+    this.stability = clamp(this.stability - stabilityDrift * dt + passiveRecovery * dt + this.zone.recovery * 0.045, 0, 1);
 
     if (this.entities.length >= MAX_ENTITIES) {
-      this.stability = clamp(this.stability - dt * 0.11, 0, 1);
+      this.stability = clamp(this.stability - dt * 0.06, 0, 1);
     }
 
     this.hotspots = this.computeHotspots();
@@ -284,6 +268,43 @@ export class Simulation {
       zone: this.zone,
       time: this.time,
       lost: this.lost,
+      phaseState: this.phaseState,
+      rhythmicPressure: this.rhythmicPressure,
+      camera: this.camera,
+      timeScale: this.timeScale,
+    };
+  }
+
+  private updatePhaseState(dt: number): void {
+    const elapsed = smoothstep(12, 180, this.time);
+    const stress = smoothstep(0.08, 0.82, 1 - this.stability + this.outbreakRisk * 0.28);
+    const targetSignal = clamp(elapsed * 0.62 + stress * 0.7, 0, 1.12);
+    this.phaseSignal = lerp(this.phaseSignal, targetSignal, 1 - Math.exp(-dt * 0.35));
+
+    const centers: SystemPhase[] = [...PHASE_SEQUENCE];
+    const spread = 0.16;
+    const blend = centers.reduce((acc, phase, index) => {
+      const center = index / (centers.length - 1);
+      const distance = Math.abs(this.phaseSignal - center);
+      const weight = clamp(1 - distance / spread, 0, 1);
+      acc[phase] = weight * weight * (3 - 2 * weight);
+      return acc;
+    }, { calm: 0, anomaly: 0, emergence: 0, pressure: 0, breach: 0 } as Record<SystemPhase, number>);
+
+    const total = Object.values(blend).reduce((sum, value) => sum + value, 0) || 1;
+    for (const phase of centers) {
+      blend[phase] /= total;
+    }
+
+    let dominant: SystemPhase = 'calm';
+    for (const phase of centers) {
+      if (blend[phase] > blend[dominant]) dominant = phase;
+    }
+
+    this.phaseState = {
+      current: dominant,
+      progress: this.phaseSignal,
+      blend,
     };
   }
 
@@ -293,7 +314,6 @@ export class Simulation {
       for (let col = 0; col < TOPOLOGY_COLS; col += 1) {
         const index = row * TOPOLOGY_COLS + col;
         const flowAngle = this.rng.range(0, TWO_PI);
-        const containment = this.rng.range(0.18, 0.72);
         cells.push({
           index,
           col,
@@ -309,11 +329,11 @@ export class Simulation {
             height: CELL_HEIGHT,
           },
           flow: {
-            x: Math.cos(flowAngle) * this.rng.range(0.2, 0.95),
-            y: Math.sin(flowAngle) * this.rng.range(0.2, 0.95),
+            x: Math.cos(flowAngle) * this.rng.range(0.08, 0.42),
+            y: Math.sin(flowAngle) * this.rng.range(0.08, 0.42),
           },
-          containment,
-          instability: this.rng.range(0.02, 0.16),
+          containment: this.rng.range(0.24, 0.76),
+          instability: this.rng.range(0.01, 0.06),
           resonance: 0,
           density: 0,
           hazard: 0,
@@ -336,9 +356,9 @@ export class Simulation {
           position: x,
           spanStart,
           spanEnd,
-          gateCenter: spanStart + CELL_HEIGHT * this.rng.range(0.28, 0.72),
-          gateSize: CELL_HEIGHT * this.rng.range(0.18, 0.28),
-          strength: this.rng.range(0.65, 1.05),
+          gateCenter: spanStart + CELL_HEIGHT * this.rng.range(0.34, 0.66),
+          gateSize: CELL_HEIGHT * this.rng.range(0.18, 0.26),
+          strength: this.rng.range(0.42, 0.82),
         });
       }
     }
@@ -353,9 +373,9 @@ export class Simulation {
           position: y,
           spanStart,
           spanEnd,
-          gateCenter: spanStart + CELL_WIDTH * this.rng.range(0.24, 0.76),
+          gateCenter: spanStart + CELL_WIDTH * this.rng.range(0.34, 0.66),
           gateSize: CELL_WIDTH * this.rng.range(0.16, 0.24),
-          strength: this.rng.range(0.5, 0.92),
+          strength: this.rng.range(0.36, 0.74),
         });
       }
     }
@@ -363,12 +383,14 @@ export class Simulation {
     return barriers;
   }
 
-  private resetFieldMetrics(): void {
+  private resetFieldMetrics(dt: number): void {
     for (const cell of this.field) {
       cell.density = 0;
-      cell.resonance *= 0.4;
-      cell.instability = clamp(cell.instability * 0.988 + 0.003, 0, 1.4);
-      cell.hazard = clamp(cell.instability * 0.72 + cell.containment * 0.18, 0, 1.4);
+      cell.resonance *= 0.24;
+      cell.instability = clamp(cell.instability * 0.996 + this.phaseState.blend.anomaly * 0.0005 + this.phaseState.blend.breach * 0.0018, 0, 1.4);
+      cell.hazard = clamp(cell.instability * 0.72 + cell.containment * 0.12, 0, 1.4);
+      cell.flow.x = lerp(cell.flow.x, cell.flow.x * 0.96 + Math.sin(this.time * 0.08 + cell.row) * 0.015, 1 - Math.exp(-dt * 0.2));
+      cell.flow.y = lerp(cell.flow.y, cell.flow.y * 0.96 + Math.cos(this.time * 0.06 + cell.col) * 0.015, 1 - Math.exp(-dt * 0.2));
     }
   }
 
@@ -376,64 +398,153 @@ export class Simulation {
     const smoothed = this.field.map((cell) => {
       const neighbors = this.getCellNeighbors(cell);
       const neighborInstability = neighbors.reduce((sum, neighbor) => sum + neighbor.instability, 0) / Math.max(1, neighbors.length);
-      const densityFactor = cell.density / 7.5;
+      const densityFactor = cell.density / 8;
       const resonanceFactor = cell.resonance / Math.max(1, cell.density || 1);
-      return clamp(cell.instability * 0.62 + neighborInstability * 0.28 + densityFactor * 0.08 + resonanceFactor * 0.4, 0, 1.5);
+      return clamp(cell.instability * 0.58 + neighborInstability * 0.28 + densityFactor * 0.06 + resonanceFactor * 0.32, 0, 1.45);
     });
 
     smoothed.forEach((instability, index) => {
       const cell = this.field[index];
       cell.instability = instability;
-      cell.hazard = clamp(instability * 0.78 + cell.density / 10 + cell.containment * 0.12, 0, 1.55);
+      cell.hazard = clamp(instability * 0.76 + cell.density / 14 + cell.containment * 0.1, 0, 1.5);
       cell.resonance = cell.density > 0 ? cell.resonance / cell.density : 0;
     });
   }
 
-  private resolveOutbreaks(dt: number, clusterPressure: number): number {
-    let spawnBudget = 0;
+  private updateEntities(dt: number): void {
+    const survivors: Entity[] = [];
 
-    const hazardCells = [...this.field].sort((a, b) => b.hazard - a.hazard).slice(0, 6);
-    for (const cell of hazardCells) {
-      if (cell.density <= 0) continue;
+    for (const entity of this.entities) {
+      const cell = this.getCellAt(entity.position.x, entity.position.y);
+      const driftAngle = entity.phase + entity.driftBias + this.time * 0.03;
 
-      const localEntities = this.entities.filter((entity) => this.getCellAt(entity.position.x, entity.position.y).index === cell.index);
-      const criticalEntities = localEntities.filter((entity) => entity.charge > 0.42 || entity.resonance > 0.11);
-      const localPressure = cell.hazard * 0.9 + criticalEntities.length * 0.12 + clusterPressure * 0.0022;
-      spawnBudget += localPressure;
-
-      if (
-        localPressure * dt > SPAWN_PRESSURE_THRESHOLD * dt &&
-        this.entities.length < MAX_ENTITIES &&
-        this.rng.next() < clamp(localPressure * dt * 0.42, 0, 0.7)
-      ) {
-        const burstCount = criticalEntities.length > 2 && this.rng.next() < 0.45 ? 2 : 1;
-        const anchor = criticalEntities[0]?.position ?? cell.center;
-        for (let i = 0; i < burstCount && this.entities.length < MAX_ENTITIES; i += 1) {
-          this.entities.push(this.createEntity({ x: anchor.x, y: anchor.y }, cell));
-        }
-        cell.instability = clamp(cell.instability + 0.08, 0, 1.5);
-        this.stability = clamp(this.stability - 0.016 * burstCount, 0, 1);
+      if (entity.role === 'harmonic') {
+        const centerDx = cell.center.x - entity.position.x;
+        const centerDy = cell.center.y - entity.position.y;
+        entity.velocity.x += centerDx * 0.004 * dt + Math.cos(driftAngle) * 7 * dt + cell.flow.x * 10 * dt;
+        entity.velocity.y += centerDy * 0.004 * dt + Math.sin(driftAngle) * 7 * dt + cell.flow.y * 10 * dt;
+        entity.energy = clamp(entity.energy + (0.34 - entity.energy) * dt * 0.18 - cell.hazard * 0.0022, 0.2, 0.54);
+      } else if (entity.role === 'anomaly') {
+        const jitter = 18 + cell.hazard * 10;
+        entity.velocity.x += Math.sin(entity.phase * 4 + this.time * 6 + entity.id) * jitter * dt;
+        entity.velocity.y += Math.cos(entity.phase * 3.6 + this.time * 6.5 + entity.id) * jitter * dt;
+        entity.velocity.x += cell.flow.x * 14 * dt;
+        entity.velocity.y += cell.flow.y * 14 * dt;
+        entity.instability = clamp(entity.instability + cell.hazard * dt * 0.05, 0, 1.2);
+        entity.energy = clamp(entity.energy + 0.01 * dt + cell.hazard * 0.008 * dt, 0.28, 0.75);
+      } else {
+        const hotspot = this.hotspots[0];
+        const targetX = hotspot?.x ?? cell.center.x;
+        const targetY = hotspot?.y ?? cell.center.y;
+        const dx = targetX - entity.position.x;
+        const dy = targetY - entity.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        entity.velocity.x += (dx / dist) * (18 + cell.hazard * 16) * dt + Math.cos(driftAngle * 1.6) * 4.5 * dt;
+        entity.velocity.y += (dy / dist) * (18 + cell.hazard * 16) * dt + Math.sin(driftAngle * 1.6) * 4.5 * dt;
+        entity.charge = clamp(entity.charge + dt * (0.035 + this.phaseState.blend.breach * 0.06 + cell.hazard * 0.02), 0, 1.8);
+        entity.pulse = Math.max(entity.pulse, this.rhythmicPressure * 0.45 + cell.hazard * 0.2);
+        entity.energy = clamp(entity.energy + dt * 0.022 + cell.hazard * 0.012 * dt, 0.58, 1.12);
       }
 
-      for (const entity of criticalEntities) {
-        entity.charge = clamp(entity.charge + cell.hazard * dt * 0.32, 0, 1.9);
-        entity.resonance += cell.hazard * dt * 0.014;
+      if (this.zone.charge > 0.001) {
+        const dx = entity.position.x - this.zone.position.x;
+        const dy = entity.position.y - this.zone.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < this.zone.radius) {
+          const influence = 1 - dist / this.zone.radius;
+          entity.velocity.x += (dx / dist) * STABILIZER_STRENGTH * influence * dt;
+          entity.velocity.y += (dy / dist) * STABILIZER_STRENGTH * influence * dt;
+          entity.energy *= 1 - (1 - STABILIZER_HEAT_DAMPING) * influence * 0.14;
+          entity.charge *= 1 - influence * 0.26;
+          entity.instability *= 1 - influence * 0.34;
+          entity.resonance *= 1 - influence * 0.3;
+          cell.instability = Math.max(0, cell.instability - influence * dt * 0.2);
+          this.stability += STABILIZER_RECOVERY * influence * dt;
+          this.zone.recovery += influence * 0.007;
+          this.zone.pulse = Math.min(1.3, this.zone.pulse + influence * 0.05);
+        }
+      }
+
+      this.applyBarrierInfluence(entity, dt);
+
+      const drag = entity.role === 'breach' ? 0.989 : entity.role === 'anomaly' ? 0.982 : 0.992;
+      entity.velocity.x *= drag;
+      entity.velocity.y *= drag;
+      entity.position.x += entity.velocity.x * dt;
+      entity.position.y += entity.velocity.y * dt;
+
+      if (entity.position.x < 0 || entity.position.x > WORLD_WIDTH) {
+        entity.position.x = clamp(entity.position.x, 0, WORLD_WIDTH);
+        entity.velocity.x *= -0.8;
+      }
+      if (entity.position.y < 0 || entity.position.y > WORLD_HEIGHT) {
+        entity.position.y = clamp(entity.position.y, 0, WORLD_HEIGHT);
+        entity.velocity.y *= -0.8;
+      }
+
+      entity.lifespan -= dt;
+      const shouldDecay = entity.role !== 'harmonic' && entity.lifespan <= 0 && this.rng.next() < 0.2;
+      if (!shouldDecay) {
+        survivors.push(entity);
       }
     }
 
-    return spawnBudget;
+    this.entities = survivors;
+    if (this.zone.charge > 0) {
+      const discharge = this.zone.active ? 0.28 : 0.65;
+      this.zone.charge = Math.max(0, this.zone.charge - dt * discharge);
+    }
+  }
+
+  private spawnByPhase(dt: number): void {
+    const anomalyChance = (0.006 + this.phaseState.blend.anomaly * 0.026 + this.phaseState.blend.emergence * 0.018) * dt;
+    const breachChance = (this.phaseState.blend.emergence * 0.006 + this.phaseState.blend.pressure * 0.016 + this.phaseState.blend.breach * 0.024) * dt;
+    const harmonicChance = Math.max(0, (0.01 - this.entities.length * 0.00005) * dt);
+
+    if (this.entities.length < INITIAL_HARMONIC_COUNT + 6 && this.rng.next() < harmonicChance) {
+      this.entities.push(this.createEntity('harmonic', this.pickFieldAnchor()));
+    }
+
+    if (this.entities.length < MAX_ENTITIES && this.rng.next() < anomalyChance) {
+      const cell = this.pickHazardCell(this.phaseState.blend.anomaly > 0.3 ? 0.18 : 0.12);
+      if (cell) {
+        this.entities.push(this.createEntity('anomaly', cell.center, cell));
+        cell.instability = clamp(cell.instability + 0.04, 0, 1.4);
+      }
+    }
+
+    if (this.entities.length < MAX_ENTITIES && this.rng.next() < breachChance) {
+      const cell = this.pickHazardCell(0.28);
+      if (cell) {
+        const anchor = this.findRoleInCell('anomaly', cell.index)?.position ?? cell.center;
+        this.entities.push(this.createEntity('breach', anchor, cell));
+        cell.instability = clamp(cell.instability + 0.08, 0, 1.4);
+        this.stability = clamp(this.stability - 0.012, 0, 1);
+      }
+    }
+
+    const pressureGrowth = this.phaseState.blend.pressure * 0.004 + this.phaseState.blend.breach * 0.01;
+    if (this.entities.length < MAX_ENTITIES && pressureGrowth > 0 && this.rng.next() < pressureGrowth * dt * 60) {
+      const breeder = this.entities.find((entity) => entity.role === 'breach' && entity.charge > 0.55);
+      if (breeder) {
+        const cell = this.getCellAt(breeder.position.x, breeder.position.y);
+        this.entities.push(this.createEntity('breach', breeder.position, cell));
+        breeder.charge *= 0.72;
+        breeder.pulse = 1;
+      }
+    }
   }
 
   private computeHotspots(): Hotspot[] {
     return [...this.field]
       .sort((a, b) => b.hazard - a.hazard)
       .slice(0, MAX_POCKET_INDICATORS)
-      .filter((cell) => cell.hazard > 0.42)
+      .filter((cell) => cell.hazard > 0.18)
       .map((cell) => ({
         x: cell.center.x,
         y: cell.center.y,
         intensity: clamp(cell.hazard, 0, 1.4),
-        radius: Math.min(cell.bounds.width, cell.bounds.height) * (0.22 + cell.hazard * 0.16),
+        radius: Math.min(cell.bounds.width, cell.bounds.height) * (0.14 + cell.hazard * 0.12),
       }));
   }
 
@@ -444,29 +555,26 @@ export class Simulation {
         const offsetToGate = Math.abs(entity.position.y - barrier.gateCenter);
         if (offsetToGate < barrier.gateSize * 0.5) continue;
         const dist = Math.abs(entity.position.x - barrier.position);
-        if (dist > 28) continue;
-        const push = (1 - dist / 28) * barrier.strength * 90;
+        if (dist > 22) continue;
+        const push = (1 - dist / 22) * barrier.strength * 40;
         const direction = entity.position.x < barrier.position ? -1 : 1;
         entity.velocity.x += direction * push * dt;
-        entity.velocity.y += (entity.position.y < barrier.gateCenter ? -1 : 1) * push * 0.18 * dt;
       } else {
         if (entity.position.x < barrier.spanStart || entity.position.x > barrier.spanEnd) continue;
         const offsetToGate = Math.abs(entity.position.x - barrier.gateCenter);
         if (offsetToGate < barrier.gateSize * 0.5) continue;
         const dist = Math.abs(entity.position.y - barrier.position);
-        if (dist > 28) continue;
-        const push = (1 - dist / 28) * barrier.strength * 76;
+        if (dist > 22) continue;
+        const push = (1 - dist / 22) * barrier.strength * 34;
         const direction = entity.position.y < barrier.position ? -1 : 1;
         entity.velocity.y += direction * push * dt;
-        entity.velocity.x += (entity.position.x < barrier.gateCenter ? -1 : 1) * push * 0.15 * dt;
       }
     }
   }
 
-  private createEntity(anchor?: { x: number; y: number }, preferredCell?: FieldCell): Entity {
-    const type = this.pickType();
+  private createEntity(role: EntityRole, anchor?: { x: number; y: number }, preferredCell?: FieldCell): Entity {
     const cell = preferredCell ?? this.getCellAt(anchor?.x ?? WORLD_WIDTH * 0.5, anchor?.y ?? WORLD_HEIGHT * 0.5);
-    const scatter = Math.min(cell.bounds.width, cell.bounds.height) * 0.28;
+    const scatter = Math.min(cell.bounds.width, cell.bounds.height) * (role === 'harmonic' ? 0.32 : 0.18);
     const x = anchor
       ? clamp(anchor.x + this.rng.range(-scatter, scatter), cell.bounds.x + 12, cell.bounds.x + cell.bounds.width - 12)
       : this.rng.range(cell.bounds.x + 24, cell.bounds.x + cell.bounds.width - 24);
@@ -474,28 +582,37 @@ export class Simulation {
       ? clamp(anchor.y + this.rng.range(-scatter, scatter), cell.bounds.y + 12, cell.bounds.y + cell.bounds.height - 12)
       : this.rng.range(cell.bounds.y + 24, cell.bounds.y + cell.bounds.height - 24);
     const angle = this.rng.range(0, TWO_PI);
-    const speed = this.rng.range(10, 36);
+    const speed = role === 'breach' ? this.rng.range(12, 22) : role === 'anomaly' ? this.rng.range(8, 18) : this.rng.range(4, 14);
 
     return {
       id: this.nextId += 1,
-      type,
+      role,
       position: { x, y },
       velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
-      energy: clamp(entityTypeEnergy[type] + this.rng.range(-0.1, 0.14), 0.24, 1.2),
+      energy: clamp(roleEnergy[role] + this.rng.range(-0.08, 0.08), 0.18, 1.15),
       phase: this.rng.range(0, TWO_PI),
-      resonance: this.rng.range(0, 0.03),
-      charge: this.rng.range(0, 0.12),
+      resonance: role === 'harmonic' ? this.rng.range(0.01, 0.06) : this.rng.range(0.02, 0.12),
+      charge: role === 'breach' ? this.rng.range(0.16, 0.42) : this.rng.range(0, 0.12),
       cluster: 0,
-      driftBias: this.rng.range(-0.8, 0.8),
-      age: this.rng.range(0, 5),
+      driftBias: this.rng.range(-0.7, 0.7),
+      age: this.rng.range(0, 8),
+      pulse: role === 'breach' ? 0.4 : 0,
+      instability: role === 'harmonic' ? 0.02 : role === 'anomaly' ? 0.28 : 0.52,
+      lifespan: role === 'harmonic' ? Number.POSITIVE_INFINITY : role === 'anomaly' ? this.rng.range(18, 44) : this.rng.range(34, 72),
     };
   }
 
-  private pickType(): EntityType {
-    const roll = this.rng.next();
-    if (roll < 0.48) return 'seed';
-    if (roll < 0.84) return 'wave';
-    return 'fracture';
+  private pickHazardCell(minHazard: number): FieldCell | undefined {
+    const ranked = [...this.field].sort((a, b) => b.hazard - a.hazard);
+    const candidates = ranked.filter((cell) => cell.hazard >= minHazard);
+    if (candidates.length === 0) {
+      return ranked[0];
+    }
+    return candidates[Math.floor(this.rng.range(0, Math.max(0.999, candidates.length - 0.001)))];
+  }
+
+  private findRoleInCell(role: EntityRole, cellIndex: number): Entity | undefined {
+    return this.entities.find((entity) => entity.role === role && this.getCellAt(entity.position.x, entity.position.y).index === cellIndex);
   }
 
   private pickFieldAnchor(): { x: number; y: number } {
@@ -524,13 +641,5 @@ export class Simulation {
       }
     }
     return neighbors;
-  }
-
-  private highestCellHazard(): number {
-    let highest = 0;
-    for (const cell of this.field) {
-      if (cell.hazard > highest) highest = cell.hazard;
-    }
-    return highest;
   }
 }
