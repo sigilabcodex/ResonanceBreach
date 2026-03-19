@@ -20,8 +20,9 @@ body,
 body {
   overflow: hidden;
   background:
-    radial-gradient(circle at top, rgba(29, 54, 88, 0.22), transparent 45%),
-    linear-gradient(180deg, #04070d 0%, #02050a 100%);
+    radial-gradient(circle at top, rgba(34, 71, 118, 0.2), transparent 42%),
+    radial-gradient(circle at 80% 20%, rgba(37, 92, 121, 0.08), transparent 32%),
+    linear-gradient(180deg, #050912 0%, #02050a 100%);
 }
 
 button,
@@ -33,6 +34,17 @@ canvas {
   position: relative;
   width: 100vw;
   height: 100vh;
+}
+
+.shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(72, 136, 179, 0.08), transparent 40%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.02), transparent 32%, rgba(255, 255, 255, 0.01) 48%, transparent 68%);
+  mix-blend-mode: screen;
 }
 
 .sim-canvas {
@@ -52,12 +64,12 @@ canvas {
 }
 
 .hud__panel {
-  width: min(380px, calc(100vw - 36px));
+  width: min(400px, calc(100vw - 36px));
   padding: 14px 16px;
   border: 1px solid rgba(168, 205, 255, 0.12);
   border-radius: 18px;
-  background: rgba(5, 10, 17, 0.62);
-  backdrop-filter: blur(12px);
+  background: rgba(5, 10, 17, 0.56);
+  backdrop-filter: blur(14px);
   box-shadow: 0 0 45px rgba(0, 0, 0, 0.24);
 }
 
@@ -95,13 +107,16 @@ canvas {
   color: rgba(230, 240, 255, 0.88);
 }
 
-.hud__row--hint {
+.hud__row + .hud__row {
   margin-top: 10px;
+}
+
+.hud__row--hint {
   align-items: flex-start;
 }
 
 .hud__row--hint span:last-child {
-  max-width: 210px;
+  max-width: 250px;
   text-align: right;
   color: rgba(202, 215, 236, 0.72);
 }

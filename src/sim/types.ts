@@ -13,6 +13,9 @@ export interface Entity {
   energy: number;
   phase: number;
   resonance: number;
+  charge: number;
+  cluster: number;
+  driftBias: number;
   age: number;
 }
 
@@ -21,13 +24,55 @@ export interface StabilizerZone {
   position: Vec2;
   radius: number;
   charge: number;
+  pulse: number;
+  recovery: number;
+}
+
+export interface FieldCell {
+  index: number;
+  col: number;
+  row: number;
+  center: Vec2;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  flow: Vec2;
+  containment: number;
+  instability: number;
+  resonance: number;
+  density: number;
+  hazard: number;
+}
+
+export interface BarrierSegment {
+  axis: 'vertical' | 'horizontal';
+  position: number;
+  spanStart: number;
+  spanEnd: number;
+  gateCenter: number;
+  gateSize: number;
+  strength: number;
+}
+
+export interface Hotspot {
+  x: number;
+  y: number;
+  intensity: number;
+  radius: number;
 }
 
 export interface SimulationSnapshot {
   entities: Entity[];
+  field: FieldCell[];
+  barriers: BarrierSegment[];
+  hotspots: Hotspot[];
   stability: number;
   pressure: number;
   avgResonance: number;
+  outbreakRisk: number;
   zone: StabilizerZone;
   time: number;
   lost: boolean;
