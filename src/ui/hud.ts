@@ -2,19 +2,19 @@ import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import type { SimulationSnapshot } from '../sim/types';
 
 const toolLabels: Record<ToolType, string> = {
-  observe: 'Observe',
-  grow: 'Grow',
-  feed: 'Feed',
-  repel: 'Repel',
-  disrupt: 'Disrupt',
+  observe: 'Resonance Focus',
+  grow: 'Grow Field',
+  feed: 'Feed Bloom',
+  repel: 'Repel Wave',
+  disrupt: 'Disrupt Field',
 };
 
 const toolDescriptions: Record<ToolType, string> = {
-  observe: 'Survey terrain and local harmony',
-  grow: 'Pull nearby life into clusters',
-  feed: 'Release absorbable energy particles',
-  repel: 'Push entities outward immediately',
-  disrupt: 'Break rigid groups and stability',
+  observe: 'Dim the world and isolate a local pocket of motion and sound',
+  grow: 'Temporary growth basin that attracts life and strengthens clustering',
+  feed: 'Emit consumable particles that visibly fuel growth',
+  repel: 'Expanding radial push that creates breathing room',
+  disrupt: 'Destabilize rigid groups and unravel local order over time',
 };
 
 const timeLabels: Record<string, string> = {
@@ -44,9 +44,9 @@ export class Hud {
       <div class="hud__top">
         <div class="hud__panel hud__panel--title">
           <div>
-            <p class="hud__eyebrow">Interactive ecology layer</p>
+            <p class="hud__eyebrow">Continuous organic ecosystem</p>
             <h1>${GAME_TITLE}</h1>
-            <p class="hud__subtle">A living field of terrain, lifecycles, energy, and resonance tradeoffs.</p>
+            <p class="hud__subtle">Force fields, drifting zones, soft boundaries, and readable ecological cause and effect.</p>
           </div>
           <button class="hud__restart" type="button">Reseed</button>
         </div>
@@ -62,15 +62,15 @@ export class Hud {
       <div class="hud__bottom">
         <div class="hud__panel hud__panel--tools">
           <div class="hud__row hud__row--tools-head">
-            <span>Tool palette</span>
-            <span data-tool-hint>1–5 · drag to apply</span>
+            <span>Field tools</span>
+            <span data-tool-hint>1–5 · click or paint to place fields</span>
           </div>
           <div class="hud__tool-grid"></div>
         </div>
         <div class="hud__panel hud__panel--status">
           <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
           <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
-          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Pan, zoom, and test different regions to learn which systems stay stable.</span></div>
+          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Watch how attractors, currents, and local density shape clusters before you intervene.</span></div>
         </div>
       </div>
     `;
@@ -122,28 +122,28 @@ export class Hud {
       button.classList.toggle('is-blocked', snapshot.tool.active === tool && snapshot.tool.blocked);
       const label = button.querySelector('small');
       if (label) {
-        if (!unlocked) label.textContent = 'Locked by progression';
-        else if (snapshot.tool.active === tool && snapshot.tool.blocked) label.textContent = 'Need more energy';
+        if (!unlocked) label.textContent = 'Locked by ecosystem progression';
+        else if (snapshot.tool.active === tool && snapshot.tool.blocked) label.textContent = 'Need more Resonance Energy';
         else label.textContent = toolDescriptions[tool];
       }
     }
 
     if (snapshot.tool.blocked) {
-      this.hintValue.textContent = 'Tools draw from Resonance Energy. Let stable regions recover before forcing another intervention.';
-    } else if (snapshot.stats.energy < 0.22) {
-      this.hintValue.textContent = 'Energy is draining. Protect harmonious fluid and dense regions to recharge the garden.';
+      this.hintValue.textContent = 'Fields persist after placement, so wait for energy to recover before stacking too many interventions.';
+    } else if (snapshot.stats.focus > 0.18 || snapshot.tool.active === 'observe') {
+      this.hintValue.textContent = 'Resonance Focus slows local motion, dims the wider garden, and lets you hear and inspect nearby interactions.';
     } else if (snapshot.tool.active === 'grow') {
-      this.hintValue.textContent = 'Grow is strongest in stable dense pockets: it pulls mature entities together and encourages reproduction.';
+      this.hintValue.textContent = 'Grow bends local motion inward, amplifies clustering, and helps orbits lock into readable communities.';
     } else if (snapshot.tool.active === 'feed') {
-      this.hintValue.textContent = 'Feed creates visible absorption bursts. Use it to push young entities through growth into maturity.';
+      this.hintValue.textContent = 'Feed releases bright particles. Watch mobile entities seek them out and trigger visible growth pulses when consumed.';
     } else if (snapshot.tool.active === 'repel') {
-      this.hintValue.textContent = 'Repel creates immediate spacing. Use it to protect fragile clusters or steer flocks out of danger.';
+      this.hintValue.textContent = 'Repel creates a clean shockwave. Use it to open space around predators or over-compressed groups.';
     } else if (snapshot.tool.active === 'disrupt') {
-      this.hintValue.textContent = 'Disrupt breaks rigid groups, but it also lowers stability and can starve your energy economy.';
-    } else if (snapshot.stats.threat > 0.34) {
-      this.hintValue.textContent = 'Predators are actively consuming flockers. Repel them or rebuild safer dense corridors.';
+      this.hintValue.textContent = 'Disrupt injects instability over time, teasing apart clusters without a single violent break.';
+    } else if (snapshot.stats.threat > 0.28) {
+      this.hintValue.textContent = 'Predators are finding flockers. Softly redirect them with fields instead of relying on rigid boundaries.';
     } else {
-      this.hintValue.textContent = 'Fluid lanes accelerate flockers, dense zones grow clusters and plants, and hard ground shapes navigation.';
+      this.hintValue.textContent = 'Attractors, currents, and density gradients now shape the world continuously, so scan before acting.';
     }
   }
 }
