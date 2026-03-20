@@ -8,6 +8,7 @@ import { Hud } from '../ui/hud';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const wrap = (value: number, size: number) => ((value % size) + size) % size;
 
 export class App {
   private readonly simulation = new Simulation();
@@ -92,8 +93,8 @@ export class App {
   };
 
   private panCamera(deltaX: number, deltaY: number): void {
-    this.cameraTarget.center.x = clamp(this.cameraTarget.center.x + deltaX, 0, WORLD_WIDTH);
-    this.cameraTarget.center.y = clamp(this.cameraTarget.center.y + deltaY, 0, WORLD_HEIGHT);
+    this.cameraTarget.center.x = wrap(this.cameraTarget.center.x + deltaX, WORLD_WIDTH);
+    this.cameraTarget.center.y = wrap(this.cameraTarget.center.y + deltaY, WORLD_HEIGHT);
   }
 
   private zoomCamera(deltaY: number, clientX: number, clientY: number, canvas: HTMLCanvasElement): void {
@@ -106,13 +107,15 @@ export class App {
     const afterScale = baseScale * newZoom;
 
     this.cameraTarget.zoom = newZoom;
-    this.cameraTarget.center.x = clamp(worldX - (clientX - rect.left - rect.width * 0.5) / afterScale, 0, WORLD_WIDTH);
-    this.cameraTarget.center.y = clamp(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, 0, WORLD_HEIGHT);
+    this.cameraTarget.center.x = wrap(worldX - (clientX - rect.left - rect.width * 0.5) / afterScale, WORLD_WIDTH);
+    this.cameraTarget.center.y = wrap(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, WORLD_HEIGHT);
   }
 
   private syncCamera(): void {
-    this.camera.center.x = lerp(this.camera.center.x, this.cameraTarget.center.x, CAMERA_SMOOTHING);
-    this.camera.center.y = lerp(this.camera.center.y, this.cameraTarget.center.y, CAMERA_SMOOTHING);
+    const deltaX = ((((this.cameraTarget.center.x - this.camera.center.x) % WORLD_WIDTH) + WORLD_WIDTH * 1.5) % WORLD_WIDTH) - WORLD_WIDTH * 0.5;
+    const deltaY = ((((this.cameraTarget.center.y - this.camera.center.y) % WORLD_HEIGHT) + WORLD_HEIGHT * 1.5) % WORLD_HEIGHT) - WORLD_HEIGHT * 0.5;
+    this.camera.center.x = wrap(this.camera.center.x + deltaX * CAMERA_SMOOTHING, WORLD_WIDTH);
+    this.camera.center.y = wrap(this.camera.center.y + deltaY * CAMERA_SMOOTHING, WORLD_HEIGHT);
     this.camera.zoom = lerp(this.camera.zoom, this.cameraTarget.zoom, CAMERA_SMOOTHING);
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
   }
