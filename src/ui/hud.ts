@@ -3,18 +3,18 @@ import type { SimulationSnapshot } from '../sim/types';
 
 const toolLabels: Record<ToolType, string> = {
   observe: 'Resonance Focus',
-  grow: 'Grow Field',
-  feed: 'Feed Bloom',
-  repel: 'Repel Wave',
-  disrupt: 'Disrupt Field',
+  grow: 'Grow',
+  feed: 'Feed',
+  repel: 'Repel',
+  disrupt: 'Disrupt',
 };
 
 const toolDescriptions: Record<ToolType, string> = {
-  observe: 'Dim the world and isolate a local pocket of motion and sound',
-  grow: 'Temporary growth basin that attracts life and strengthens clustering',
-  feed: 'Emit consumable particles that visibly fuel growth',
-  repel: 'Expanding radial push that creates breathing room',
-  disrupt: 'Destabilize rigid groups and unravel local order over time',
+  observe: 'Hold to isolate a quiet local pocket of sound and motion',
+  grow: 'Persistent fertility field that supports slow plant expansion',
+  feed: 'Release visible food particles that creatures can consume',
+  repel: 'A gentle wave that opens breathing room without chaos',
+  disrupt: 'Delayed charge that bursts outward, removes some life, and scars terrain',
 };
 
 const timeLabels: Record<string, string> = {
@@ -32,6 +32,8 @@ export class Hud {
   private readonly energyValue: HTMLSpanElement;
   private readonly stabilityValue: HTMLSpanElement;
   private readonly biodiversityValue: HTMLSpanElement;
+  private readonly nutrientsValue: HTMLSpanElement;
+  private readonly fruitValue: HTMLSpanElement;
   private readonly unlockValue: HTMLSpanElement;
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
@@ -44,9 +46,9 @@ export class Hud {
       <div class="hud__top">
         <div class="hud__panel hud__panel--title">
           <div>
-            <p class="hud__eyebrow">Continuous organic ecosystem</p>
+            <p class="hud__eyebrow">Calm ecological sandbox</p>
             <h1>${GAME_TITLE}</h1>
-            <p class="hud__subtle">Force fields, drifting zones, soft boundaries, and readable ecological cause and effect.</p>
+            <p class="hud__subtle">Water, fertile soil, and solid ground drift slowly while plants, creatures, fruit, and residue form a closed loop.</p>
           </div>
           <button class="hud__restart" type="button">Reseed</button>
         </div>
@@ -55,22 +57,24 @@ export class Hud {
           <div class="hud__row"><span>Harmony</span><span data-harmony>0%</span></div>
           <div class="hud__row"><span>Stability</span><span data-stability>0%</span></div>
           <div class="hud__row"><span>Growth</span><span data-growth>0%</span></div>
-          <div class="hud__row"><span>Threat</span><span data-threat>0%</span></div>
+          <div class="hud__row"><span>Nutrients</span><span data-nutrients>0%</span></div>
+          <div class="hud__row"><span>Fruit</span><span data-fruit>0%</span></div>
           <div class="hud__row"><span>Diversity</span><span data-biodiversity>0%</span></div>
+          <div class="hud__row"><span>Threat</span><span data-threat>0%</span></div>
         </div>
       </div>
       <div class="hud__bottom">
         <div class="hud__panel hud__panel--tools">
           <div class="hud__row hud__row--tools-head">
             <span>Field tools</span>
-            <span data-tool-hint>1–5 · click or paint to place fields</span>
+            <span data-tool-hint>1–5 · hold focus, click to place other fields</span>
           </div>
           <div class="hud__tool-grid"></div>
         </div>
         <div class="hud__panel hud__panel--status">
           <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
           <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
-          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Watch how attractors, currents, and local density shape clusters before you intervene.</span></div>
+          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see fruit, feeding, death, and residue fold back into soil.</span></div>
         </div>
       </div>
     `;
@@ -82,6 +86,8 @@ export class Hud {
     this.growthValue = this.element.querySelector('[data-growth]') as HTMLSpanElement;
     this.threatValue = this.element.querySelector('[data-threat]') as HTMLSpanElement;
     this.biodiversityValue = this.element.querySelector('[data-biodiversity]') as HTMLSpanElement;
+    this.nutrientsValue = this.element.querySelector('[data-nutrients]') as HTMLSpanElement;
+    this.fruitValue = this.element.querySelector('[data-fruit]') as HTMLSpanElement;
     this.unlockValue = this.element.querySelector('[data-unlocked]') as HTMLSpanElement;
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
@@ -109,6 +115,8 @@ export class Hud {
     this.growthValue.textContent = `${Math.round(snapshot.stats.growth * 100)}%`;
     this.threatValue.textContent = `${Math.round(snapshot.stats.threat * 100)}%`;
     this.biodiversityValue.textContent = `${Math.round(snapshot.stats.biodiversity * 100)}%`;
+    this.nutrientsValue.textContent = `${Math.round(snapshot.stats.nutrients * 100)}%`;
+    this.fruitValue.textContent = `${Math.round(snapshot.stats.fruit * 100)}%`;
     this.unlockValue.textContent = `${Math.round(snapshot.unlockedProgress * 100)}%`;
     this.flowValue.textContent = timeLabels[String(snapshot.timeScale)] ?? `Flow ${snapshot.timeScale.toFixed(1)}×`;
 
@@ -129,21 +137,21 @@ export class Hud {
     }
 
     if (snapshot.tool.blocked) {
-      this.hintValue.textContent = 'Fields persist after placement, so wait for energy to recover before stacking too many interventions.';
-    } else if (snapshot.stats.focus > 0.18 || snapshot.tool.active === 'observe') {
-      this.hintValue.textContent = 'Resonance Focus slows local motion, dims the wider garden, and lets you hear and inspect nearby interactions.';
+      this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
+    } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
+      this.hintValue.textContent = 'Hold Resonance Focus to dim the wider garden and hear nearby life more clearly.';
     } else if (snapshot.tool.active === 'grow') {
-      this.hintValue.textContent = 'Grow bends local motion inward, amplifies clustering, and helps orbits lock into readable communities.';
+      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping plants mature and fruit.';
     } else if (snapshot.tool.active === 'feed') {
-      this.hintValue.textContent = 'Feed releases bright particles. Watch mobile entities seek them out and trigger visible growth pulses when consumed.';
+      this.hintValue.textContent = 'Feed releases visible particles. Watch creatures move toward them and reproduce after sustained feeding.';
     } else if (snapshot.tool.active === 'repel') {
-      this.hintValue.textContent = 'Repel creates a clean shockwave. Use it to open space around predators or over-compressed groups.';
+      this.hintValue.textContent = 'Repel opens calm empty space without introducing jitter or abrupt flashes.';
     } else if (snapshot.tool.active === 'disrupt') {
-      this.hintValue.textContent = 'Disrupt injects instability over time, teasing apart clusters without a single violent break.';
-    } else if (snapshot.stats.threat > 0.28) {
-      this.hintValue.textContent = 'Predators are finding flockers. Softly redirect them with fields instead of relying on rigid boundaries.';
+      this.hintValue.textContent = 'Disrupt waits, then bursts outward: some entities die into nutrient residue while terrain shifts slightly.';
+    } else if (snapshot.stats.nutrients > 0.42) {
+      this.hintValue.textContent = 'Residue is feeding the soil. Mature plants in fertile patches should begin producing fruit.';
     } else {
-      this.hintValue.textContent = 'Attractors, currents, and density gradients now shape the world continuously, so scan before acting.';
+      this.hintValue.textContent = 'Observe the garden long enough to see fruit, feeding, death, and residue fold back into soil.';
     }
   }
 }

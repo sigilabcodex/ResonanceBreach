@@ -1,37 +1,40 @@
 # ResonanceBreach
 
-ResonanceBreach is a minimalist browser-based prototype about observing, containing, and navigating an abstract systemic breach. This pass slows the simulation down, introduces readable temporal phases, differentiates entity roles, and adds direct control over camera space and simulation time.
+ResonanceBreach is a minimalist browser-based ecosystem prototype. This iteration turns the scene into a calmer Resonance Garden: fewer active entities, softer terrain, slower motion, clearer cause and effect, and a closed ecological loop built around fruit, feeding, death, residue, and soil renewal.
 
 ## What changed in this iteration
 
-- **Continuous phase progression:** the field now evolves through calm, anomaly, emergence, pressure, and breach states with gradual blending instead of hard mode switches.
-- **Clear entity roles:** harmonic nodes stabilize space, anomalies appear first as flickering distortions, and breach entities arrive later as rhythmic propagators with distinct motion and structure.
-- **Slower pacing:** spawn rates, escalation, and motion have all been reduced to create more contemplative observation windows.
-- **Camera navigation:** the field can now be explored with zoom and panning for local inspection or strategic overview.
-- **Time control:** players can temporarily slow the system down or accelerate it to study phase changes and pressure spikes.
-- **Rhythmic pressure audio:** once breach entities emerge, the soundscape gains a subtle pulse that intensifies with instability.
+- **Calmer motion and visuals:** high-frequency pulsing, jitter, and dense overlays have been replaced with slower fades, softer gradients, and lower-frequency movement.
+- **Organic topography:** the world now drifts through water, fertile, and solid regions with contour-like outlines and soft boundaries rather than grid-like or boxed structure.
+- **Reduced density:** fewer entities are active at once, empty space is preserved, and only a subset of creatures visibly animate or sonify strongly at any given moment.
+- **Closed ecological loop:** plants slowly produce fruit, creatures consume it and reproduce when fed, death leaves nutrient residue, and residue enriches the soil that supports later growth.
+- **Tool redesign:** Resonance Focus is now hold-to-observe, Grow creates a persistent fertility field, Feed emits visible particles, Repel remains wave-like, and Disrupt is a delayed charge that bursts outward and perturbs terrain.
+- **Audio hierarchy:** a quiet ambient bed sits underneath restrained plant drones and a small set of primary creature voices, with focus-based isolation and positional panning.
 
-## System phases
+## Ecological loop
 
-The simulation continuously blends between five phases:
+The garden now behaves as a slow closed loop:
 
-1. **Calm** – mostly harmonic nodes, slow drift, low distortion.
-2. **Anomaly** – rare distortions begin to flicker into the field.
-3. **Emergence** – the first breach entities appear.
-4. **Pressure** – breach reproduction increases and rhythmic pulsing becomes more present.
-5. **Breach** – instability dominates and containment becomes fragile.
+1. **Plants** root in fertile zones and mature over time.
+2. **Fruit** is produced gradually by healthy mature plants.
+3. **Creatures** drift, seek fruit or feed particles, and reproduce after sustained feeding.
+4. **Death** creates nutrient residue in place.
+5. **Soil** absorbs that residue, improving local fertility and helping future plants grow.
 
-These phases are not discrete levels. They overlap and crossfade based on elapsed time, field instability, and containment pressure.
+## Terrain model
 
-## Entity roles
+The terrain continuously drifts through three soft region types:
 
-- **Harmonic nodes** – ambient and stable. They drift gently and reinforce coherence.
-- **Anomalies** – subtle distortions rather than full circles. They flicker, shear, and mark unstable emergence points.
-- **Breach entities** – visually and behaviorally distinct geometric intrusions that propagate more aggressively and pulse with the rising system rhythm.
+- **Water** – gentle flow fields and looser movement.
+- **Fertile soil** – supports plant growth and nutrient retention.
+- **Solid ground** – resists life and behaves as a soft impassable region.
+
+Each region is rendered with soft gradients and subtle contour-like outlines rather than hard edges or visible cells.
 
 ## Controls
 
-- **Left click / drag:** project the containment zone.
+- **Left click + hold with Resonance Focus:** isolate a local area visually and sonically.
+- **Left click with other tools:** place a persistent intervention field.
 - **Mouse wheel:** zoom in and out.
 - **Right click / drag:** pan the camera.
 - **WASD / Arrow keys:** pan the camera.
@@ -58,15 +61,15 @@ npm run build
 ## Architecture overview
 
 - `src/app.ts` – app bootstrap, camera/time controls, and fixed-timestep loop.
-- `src/sim/simulation.ts` – phase blending, entity role behavior, spawning, stability, and containment response.
-- `src/render/renderer.ts` – camera-aware canvas rendering for field regions, anomalies, breach forms, and containment feedback.
-- `src/audio/audioEngine.ts` – generative ambient audio with rhythmic pressure mapped to breach escalation.
+- `src/sim/simulation.ts` – terrain drift, ecological loop, tools, and systemic state updates.
+- `src/render/renderer.ts` – terrain gradients, contour rendering, field overlays, entity drawing, and focus masking.
+- `src/audio/audioEngine.ts` – restrained ambient, plant, and creature audio with focus isolation.
 - `src/input/playerInput.ts` – pointer, wheel, keyboard camera movement, and time-control handling.
-- `src/ui/hud.ts` – HUD for stability, current phase, entities, and controls.
-- `src/config.ts` – global simulation, camera, and timing constants.
+- `src/ui/hud.ts` – ecological HUD, tool explanations, and guidance hints.
+- `src/config.ts` – global simulation, camera, timing, terrain, and tool constants.
 
 ## Design notes
 
-- The prototype remains abstract, geometric, and continuous.
-- The focus of this pass is clarity, pacing, and readable evolution rather than feature complexity.
-- Future iterations can deepen intervention mechanics without losing the minimal visual direction.
+- The experience is meant to feel comfortable to observe for long stretches.
+- Visual and audio density are intentionally constrained.
+- Interactions should be legible: feeding, growth, reproduction, disruption, death, and nutrient return are all surfaced more clearly.

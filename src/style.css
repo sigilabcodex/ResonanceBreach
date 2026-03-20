@@ -20,10 +20,10 @@ body,
 body {
   overflow: hidden;
   background:
-    radial-gradient(circle at top, rgba(64, 110, 141, 0.18), transparent 38%),
-    radial-gradient(circle at 72% 18%, rgba(86, 140, 112, 0.12), transparent 32%),
-    radial-gradient(circle at 25% 80%, rgba(110, 86, 148, 0.1), transparent 30%),
-    linear-gradient(180deg, #07111a 0%, #02050a 100%);
+    radial-gradient(circle at top, rgba(68, 108, 124, 0.16), transparent 42%),
+    radial-gradient(circle at 72% 18%, rgba(82, 120, 102, 0.12), transparent 34%),
+    radial-gradient(circle at 25% 80%, rgba(86, 78, 114, 0.08), transparent 30%),
+    linear-gradient(180deg, #061017 0%, #02050a 100%);
 }
 
 button,
@@ -43,8 +43,8 @@ canvas {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 50%, rgba(126, 201, 216, 0.08), transparent 36%),
-    linear-gradient(120deg, rgba(255, 255, 255, 0.02), transparent 28%, rgba(255, 255, 255, 0.01) 48%, transparent 66%);
+    radial-gradient(circle at 50% 50%, rgba(126, 201, 216, 0.05), transparent 40%),
+    radial-gradient(circle at 18% 72%, rgba(124, 182, 146, 0.04), transparent 30%);
   mix-blend-mode: screen;
 }
 
@@ -77,11 +77,11 @@ canvas {
 .hud__panel {
   width: min(440px, calc(100vw - 36px));
   padding: 14px 16px;
-  border: 1px solid rgba(168, 205, 255, 0.12);
-  border-radius: 20px;
-  background: rgba(5, 10, 17, 0.56);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 0 45px rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(168, 205, 255, 0.08);
+  border-radius: 28px;
+  background: rgba(5, 11, 16, 0.46);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.18);
 }
 
 .hud__panel--title {
@@ -116,6 +116,7 @@ canvas {
 .hud__subtle {
   margin-top: 8px;
   font-size: 0.9rem;
+  line-height: 1.45;
   color: rgba(212, 226, 240, 0.72);
 }
 
@@ -158,10 +159,10 @@ canvas {
 }
 
 .hud__tool {
-  border: 1px solid rgba(167, 208, 255, 0.14);
-  border-radius: 16px;
+  border: 1px solid rgba(167, 208, 255, 0.1);
+  border-radius: 22px;
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -178,14 +179,14 @@ canvas {
 }
 
 .hud__tool.is-active {
-  border-color: rgba(143, 225, 186, 0.42);
-  background: rgba(143, 225, 186, 0.12);
+  border-color: rgba(143, 225, 186, 0.28);
+  background: rgba(143, 225, 186, 0.08);
   transform: translateY(-1px);
 }
 
 .hud__tool.is-blocked {
-  border-color: rgba(255, 154, 186, 0.44);
-  background: rgba(255, 154, 186, 0.12);
+  border-color: rgba(255, 154, 186, 0.28);
+  background: rgba(255, 154, 186, 0.08);
 }
 
 .hud__tool.is-locked {
@@ -196,17 +197,17 @@ canvas {
 .hud__tool:focus-visible:enabled,
 .hud__restart:hover,
 .hud__restart:focus-visible {
-  background: rgba(113, 209, 255, 0.12);
-  border-color: rgba(113, 209, 255, 0.34);
+  background: rgba(113, 209, 255, 0.08);
+  border-color: rgba(113, 209, 255, 0.24);
   transform: translateY(-1px);
 }
 
 .hud__restart {
   pointer-events: auto;
-  border: 1px solid rgba(167, 208, 255, 0.18);
+  border: 1px solid rgba(167, 208, 255, 0.14);
   border-radius: 999px;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.035);
   color: inherit;
   font: inherit;
   cursor: pointer;

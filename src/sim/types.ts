@@ -18,6 +18,7 @@ export interface TerrainCell {
   height: number;
   roughness: number;
   hue: number;
+  nutrient: number;
 }
 
 export interface Attractor {
@@ -58,6 +59,10 @@ export interface Entity {
   visualState: 'idle' | 'feeding' | 'reproducing' | 'dying';
   visualPulse: number;
   boundaryFade: number;
+  activity: number;
+  activityBias: number;
+  food: number;
+  fruitCooldown: number;
 }
 
 export interface ToolFeedback {
@@ -76,20 +81,33 @@ export interface ToolField {
   duration: number;
   age: number;
   pulse: number;
+  delay?: number;
+  exploded?: boolean;
 }
 
 export interface FeedParticle {
   id: number;
+  kind: 'fruit' | 'feed';
   position: Vec2;
   velocity: Vec2;
   energy: number;
   age: number;
   duration: number;
+  radius: number;
+}
+
+export interface Residue {
+  id: number;
+  position: Vec2;
+  nutrient: number;
+  age: number;
+  duration: number;
+  radius: number;
 }
 
 export interface EventBurst {
   id: number;
-  type: 'feed' | 'birth' | 'death';
+  type: 'feed' | 'birth' | 'death' | 'disrupt';
   position: Vec2;
   radius: number;
   age: number;
@@ -123,6 +141,8 @@ export interface GardenStats {
   stability: number;
   biodiversity: number;
   focus: number;
+  nutrients: number;
+  fruit: number;
 }
 
 export interface SimulationSnapshot {
@@ -131,6 +151,7 @@ export interface SimulationSnapshot {
   attractors: Attractor[];
   fields: ToolField[];
   particles: FeedParticle[];
+  residues: Residue[];
   bursts: EventBurst[];
   stats: GardenStats;
   tool: ToolState;
