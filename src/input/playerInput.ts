@@ -1,17 +1,19 @@
-import { CAMERA_PAN_SPEED, WORLD_HEIGHT, WORLD_WIDTH } from '../config';
+import { CAMERA_PAN_SPEED, TIME_SCALE_FAST, TIME_SCALE_SLOW, WORLD_HEIGHT, WORLD_WIDTH, type ToolType } from '../config';
 import type { CameraState } from '../sim/types';
 
 export interface InputCallbacks {
-  onZone(active: boolean, x: number, y: number): void;
+  onTool(active: boolean, x: number, y: number): void;
+  onToolHover(x: number, y: number): void;
   onInteract(): void;
   onRestart(): void;
   onPan(deltaX: number, deltaY: number): void;
   onZoom(deltaY: number, clientX: number, clientY: number): void;
+  onSelectTool(tool: ToolType): void;
   getCamera(): CameraState;
 }
 
 export class PlayerInput {
-  private zonePointerId: number | null = null;
+  private toolPointerId: number | null = null;
   private panPointerId: number | null = null;
   private lastPan = { x: 0, y: 0 };
   private readonly keys = new Set<string>();
@@ -28,6 +30,7 @@ export class PlayerInput {
     window.addEventListener('keyup', this.handleKeyUp);
     canvas.addEventListener('wheel', this.handleWheel, { passive: false });
     canvas.addEventListener('contextmenu', this.handleContextMenu);
+    canvas.addEventListener('pointerleave', this.handlePointerLeave);
   }
 
   dispose(): void {
@@ -39,6 +42,7 @@ export class PlayerInput {
     window.removeEventListener('keyup', this.handleKeyUp);
     this.canvas.removeEventListener('wheel', this.handleWheel);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
+    this.canvas.removeEventListener('pointerleave', this.handlePointerLeave);
   }
 
   update(dt: number): void {
@@ -59,8 +63,8 @@ export class PlayerInput {
   getTimeScale(): number {
     const slow = this.keys.has('shift');
     const fast = this.keys.has(' ');
-    if (slow && !fast) return 0.5;
-    if (fast && !slow) return 2;
+    if (slow && !fast) return TIME_SCALE_SLOW;
+    if (fast && !slow) return TIME_SCALE_FAST;
     return 1;
   }
 
@@ -74,13 +78,16 @@ export class PlayerInput {
     }
 
     if (event.button !== 0) return;
-    this.zonePointerId = event.pointerId;
+    this.toolPointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.project(event.clientX, event.clientY);
-    this.callbacks.onZone(true, point.x, point.y);
+    this.callbacks.onTool(true, point.x, point.y);
   };
 
   private handlePointerMove = (event: PointerEvent): void => {
+    const point = this.project(event.clientX, event.clientY);
+    this.callbacks.onToolHover(point.x, point.y);
+
     if (this.panPointerId === event.pointerId) {
       const camera = this.callbacks.getCamera();
       const rect = this.canvas.getBoundingClientRect();
@@ -92,33 +99,42 @@ export class PlayerInput {
       return;
     }
 
-    if (this.zonePointerId !== event.pointerId) return;
-    const point = this.project(event.clientX, event.clientY);
-    this.callbacks.onZone(true, point.x, point.y);
+    if (this.toolPointerId !== event.pointerId) return;
+    this.callbacks.onTool(true, point.x, point.y);
   };
 
   private handlePointerUp = (event: PointerEvent): void => {
     if (this.panPointerId === event.pointerId) {
       this.panPointerId = null;
-      if (this.canvas.hasPointerCapture(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
+      if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
       return;
     }
 
-    if (this.zonePointerId !== event.pointerId) return;
-    this.zonePointerId = null;
-    if (this.canvas.hasPointerCapture(event.pointerId)) {
-      this.canvas.releasePointerCapture(event.pointerId);
-    }
+    if (this.toolPointerId !== event.pointerId) return;
+    this.toolPointerId = null;
+    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
     const point = this.project(event.clientX, event.clientY);
-    this.callbacks.onZone(false, point.x, point.y);
+    this.callbacks.onTool(false, point.x, point.y);
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
     const key = event.key.toLowerCase();
     if (key === 'r') {
       this.callbacks.onRestart();
+      return;
+    }
+
+    const toolMap: Record<string, ToolType> = {
+      '1': 'observe',
+      '2': 'grow',
+      '3': 'feed',
+      '4': 'repel',
+      '5': 'disrupt',
+    };
+
+    if (toolMap[key]) {
+      this.callbacks.onSelectTool(toolMap[key]);
+      this.callbacks.onInteract();
       return;
     }
 
@@ -138,6 +154,12 @@ export class PlayerInput {
 
   private handleContextMenu = (event: MouseEvent): void => {
     event.preventDefault();
+  };
+
+  private handlePointerLeave = (): void => {
+    if (this.toolPointerId === null) {
+      this.callbacks.onTool(false, -1, -1);
+    }
   };
 
   private project(clientX: number, clientY: number): { x: number; y: number } {
