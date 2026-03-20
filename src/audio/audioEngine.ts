@@ -1,4 +1,5 @@
-import type { Entity, SimulationSnapshot } from '../sim/types';
+import type { WorldEvent } from '../sim/events';
+import type { Entity, SimulationSnapshot } from '../types/world';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const MAJOR_PENTATONIC = [0, 2, 4, 7, 9];
@@ -22,6 +23,7 @@ export class AudioEngine {
   private focusOsc?: OscillatorNode;
   private toolBus?: GainNode;
   private lastFeedbackId = 0;
+  private lastEventId = 0;
   private started = false;
 
   async ensureStarted(): Promise<void> {
@@ -173,6 +175,12 @@ export class AudioEngine {
       this.lastFeedbackId = snapshot.tool.feedback.id;
       this.triggerToolTone(snapshot.tool.feedback.tool, snapshot.tool.feedback.intensity);
     }
+
+    for (const event of snapshot.events) {
+      if (event.id <= this.lastEventId) continue;
+      this.lastEventId = event.id;
+      this.triggerEventTone(event);
+    }
   }
 
   private computeCentroid(entities: Entity[]): { x: number; y: number } {
@@ -211,6 +219,41 @@ export class AudioEngine {
     return {
       activity: clamp(activity / 6, 0, 1),
     };
+  }
+
+  private triggerEventTone(event: WorldEvent): void {
+    if (!this.context || !this.toolBus) return;
+    if (event.type === 'toolUsed') {
+      this.triggerToolTone(event.tool, event.blocked ? 0.22 : 0.5);
+      return;
+    }
+
+    const now = this.context.currentTime;
+    const gain = this.context.createGain();
+    const osc = this.context.createOscillator();
+    const filter = this.context.createBiquadFilter();
+    const settings = {
+      entityBorn: { freq: 294, dur: 0.24, type: 'triangle' as OscillatorType },
+      entityFed: { freq: 370, dur: 0.18, type: 'sine' as OscillatorType },
+      entityDied: { freq: 196, dur: 0.46, type: 'sine' as OscillatorType },
+      residueCreated: { freq: 220, dur: 0.34, type: 'triangle' as OscillatorType },
+    }[event.type];
+
+    osc.type = settings.type;
+    osc.frequency.value = settings.freq;
+    filter.type = event.type === 'entityDied' ? 'lowpass' : 'bandpass';
+    filter.frequency.value = event.type === 'entityDied' ? 460 : settings.freq * 1.35;
+    filter.Q.value = event.type === 'entityFed' ? 2.3 : 1.2;
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(event.type === 'entityDied' ? 0.009 : 0.012, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + settings.dur);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.toolBus);
+    osc.start(now);
+    osc.stop(now + settings.dur + 0.06);
   }
 
   private triggerToolTone(tool: SimulationSnapshot['tool']['active'], intensity: number): void {

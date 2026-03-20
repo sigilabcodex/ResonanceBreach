@@ -1,21 +1,6 @@
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
-import type { SimulationSnapshot } from '../sim/types';
-
-const toolLabels: Record<ToolType, string> = {
-  observe: 'Resonance Focus',
-  grow: 'Grow',
-  feed: 'Feed',
-  repel: 'Repel',
-  disrupt: 'Disrupt',
-};
-
-const toolDescriptions: Record<ToolType, string> = {
-  observe: 'Hold to isolate a quiet local pocket of sound and motion',
-  grow: 'Persistent fertility field that supports slow plant expansion',
-  feed: 'Release visible food particles that creatures can consume',
-  repel: 'A gentle wave that opens breathing room without chaos',
-  disrupt: 'Delayed charge that bursts outward, removes some life, and scars terrain',
-};
+import { TOOL_DEFINITIONS } from '../interaction/tools';
+import type { SimulationSnapshot } from '../types/world';
 
 const timeLabels: Record<string, string> = {
   '0.5': 'Slow 0.5×',
@@ -97,7 +82,7 @@ export class Hud {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'hud__tool';
-      button.innerHTML = `<span>${index + 1}. ${toolLabels[tool]}</span><small>${toolDescriptions[tool]}</small>`;
+      button.innerHTML = `<span>${index + 1}. ${TOOL_DEFINITIONS[tool].label}</span><small>${TOOL_DEFINITIONS[tool].description}</small>`;
       button.addEventListener('click', () => onToolSelect(tool));
       this.toolButtons.set(tool, button);
       toolGrid.append(button);
@@ -132,11 +117,16 @@ export class Hud {
       if (label) {
         if (!unlocked) label.textContent = 'Locked by ecosystem progression';
         else if (snapshot.tool.active === tool && snapshot.tool.blocked) label.textContent = 'Need more Resonance Energy';
-        else label.textContent = toolDescriptions[tool];
+        else label.textContent = TOOL_DEFINITIONS[tool].description;
+
       }
     }
 
-    if (snapshot.tool.blocked) {
+    const latestNotification = snapshot.notifications.recent[0];
+
+    if (latestNotification) {
+      this.hintValue.textContent = latestNotification;
+    } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
     } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
       this.hintValue.textContent = 'Hold Resonance Focus to dim the wider garden and hear nearby life more clearly.';
