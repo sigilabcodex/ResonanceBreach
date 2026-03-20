@@ -1,34 +1,29 @@
-import type { Entity } from '../sim/types';
-import type { SimulationSnapshot } from '../sim/types';
+import type { Entity, SimulationSnapshot } from '../sim/types';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const createNoiseBuffer = (context: AudioContext, seconds: number): AudioBuffer => {
   const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i += 1) {
-    data[i] = (Math.random() * 2 - 1) * 0.7;
-  }
+  for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.45;
   return buffer;
 };
 
 export class AudioEngine {
   private context?: AudioContext;
   private master?: GainNode;
-  private ambientGain?: GainNode;
-  private shimmerGain?: GainNode;
+  private bedGain?: GainNode;
   private clusterGain?: GainNode;
-  private pulseGain?: GainNode;
-  private anomalyGain?: GainNode;
-  private localFocusGain?: GainNode;
-  private ambientOscA?: OscillatorNode;
-  private ambientOscB?: OscillatorNode;
-  private shimmerOsc?: OscillatorNode;
+  private individualGain?: GainNode;
+  private terrainGain?: GainNode;
+  private threatGain?: GainNode;
+  private bedOscA?: OscillatorNode;
+  private bedOscB?: OscillatorNode;
   private clusterOsc?: OscillatorNode;
-  private pulseOsc?: OscillatorNode;
-  private breathLfo?: OscillatorNode;
-  private localOsc?: OscillatorNode;
-  private anomalyNoiseFilter?: BiquadFilterNode;
+  private individualOsc?: OscillatorNode;
+  private terrainNoiseFilter?: BiquadFilterNode;
+  private toolBus?: GainNode;
+  private lastFeedbackId = 0;
   private started = false;
 
   async ensureStarted(): Promise<void> {
@@ -42,126 +37,93 @@ export class AudioEngine {
     master.gain.value = 0.0001;
     master.connect(context.destination);
 
-    const ambientGain = context.createGain();
-    ambientGain.gain.value = 0.0001;
-    ambientGain.connect(master);
+    const bedGain = context.createGain();
+    bedGain.gain.value = 0.0001;
+    bedGain.connect(master);
+    const bedFilter = context.createBiquadFilter();
+    bedFilter.type = 'lowpass';
+    bedFilter.frequency.value = 1400;
+    bedFilter.connect(bedGain);
 
-    const ambientFilter = context.createBiquadFilter();
-    ambientFilter.type = 'lowpass';
-    ambientFilter.frequency.value = 1200;
-    ambientFilter.Q.value = 0.6;
-    ambientFilter.connect(ambientGain);
+    const bedOscA = context.createOscillator();
+    bedOscA.type = 'sine';
+    bedOscA.frequency.value = 164.81;
+    bedOscA.connect(bedFilter);
+    bedOscA.start();
 
-    const ambientOscA = context.createOscillator();
-    ambientOscA.type = 'sine';
-    ambientOscA.frequency.value = 174.61;
-    ambientOscA.connect(ambientFilter);
-    ambientOscA.start();
-
-    const ambientOscB = context.createOscillator();
-    ambientOscB.type = 'triangle';
-    ambientOscB.frequency.value = 261.63;
-    ambientOscB.detune.value = 3;
-    ambientOscB.connect(ambientFilter);
-    ambientOscB.start();
-
-    const shimmerGain = context.createGain();
-    shimmerGain.gain.value = 0.0001;
-    shimmerGain.connect(master);
-
-    const shimmerOsc = context.createOscillator();
-    shimmerOsc.type = 'triangle';
-    shimmerOsc.frequency.value = 392;
-    const shimmerFilter = context.createBiquadFilter();
-    shimmerFilter.type = 'bandpass';
-    shimmerFilter.frequency.value = 980;
-    shimmerFilter.Q.value = 0.8;
-    shimmerOsc.connect(shimmerFilter);
-    shimmerFilter.connect(shimmerGain);
-    shimmerOsc.start();
+    const bedOscB = context.createOscillator();
+    bedOscB.type = 'triangle';
+    bedOscB.frequency.value = 247.5;
+    bedOscB.connect(bedFilter);
+    bedOscB.start();
 
     const clusterGain = context.createGain();
     clusterGain.gain.value = 0.0001;
     clusterGain.connect(master);
-
     const clusterOsc = context.createOscillator();
     clusterOsc.type = 'sine';
     clusterOsc.frequency.value = 220;
-    const clusterFilter = context.createBiquadFilter();
-    clusterFilter.type = 'lowpass';
-    clusterFilter.frequency.value = 900;
-    clusterOsc.connect(clusterFilter);
-    clusterFilter.connect(clusterGain);
+    clusterOsc.connect(clusterGain);
     clusterOsc.start();
 
-    const pulseGain = context.createGain();
-    pulseGain.gain.value = 0.0001;
-    pulseGain.connect(master);
+    const individualGain = context.createGain();
+    individualGain.gain.value = 0.0001;
+    individualGain.connect(master);
+    const individualOsc = context.createOscillator();
+    individualOsc.type = 'triangle';
+    individualOsc.frequency.value = 330;
+    const individualFilter = context.createBiquadFilter();
+    individualFilter.type = 'bandpass';
+    individualFilter.frequency.value = 1200;
+    individualFilter.Q.value = 1.3;
+    individualOsc.connect(individualFilter);
+    individualFilter.connect(individualGain);
+    individualOsc.start();
 
-    const pulseOsc = context.createOscillator();
-    pulseOsc.type = 'triangle';
-    pulseOsc.frequency.value = 52;
-    const pulseFilter = context.createBiquadFilter();
-    pulseFilter.type = 'bandpass';
-    pulseFilter.frequency.value = 180;
-    pulseFilter.Q.value = 1.4;
-    pulseOsc.connect(pulseFilter);
-    pulseFilter.connect(pulseGain);
-    pulseOsc.start();
+    const terrainGain = context.createGain();
+    terrainGain.gain.value = 0.0001;
+    terrainGain.connect(master);
+    const terrainNoise = context.createBufferSource();
+    terrainNoise.buffer = createNoiseBuffer(context, 2.2);
+    terrainNoise.loop = true;
+    const terrainNoiseFilter = context.createBiquadFilter();
+    terrainNoiseFilter.type = 'bandpass';
+    terrainNoiseFilter.frequency.value = 900;
+    terrainNoiseFilter.Q.value = 1.1;
+    terrainNoise.connect(terrainNoiseFilter);
+    terrainNoiseFilter.connect(terrainGain);
+    terrainNoise.start();
 
-    const breathLfo = context.createOscillator();
-    breathLfo.type = 'sine';
-    breathLfo.frequency.value = 0.12;
-    const breathDepth = context.createGain();
-    breathDepth.gain.value = 18;
-    breathLfo.connect(breathDepth);
-    breathDepth.connect(ambientOscB.frequency);
-    breathLfo.start();
+    const threatGain = context.createGain();
+    threatGain.gain.value = 0.0001;
+    threatGain.connect(master);
+    const threatOsc = context.createOscillator();
+    threatOsc.type = 'sawtooth';
+    threatOsc.frequency.value = 72;
+    const threatFilter = context.createBiquadFilter();
+    threatFilter.type = 'lowpass';
+    threatFilter.frequency.value = 320;
+    threatOsc.connect(threatFilter);
+    threatFilter.connect(threatGain);
+    threatOsc.start();
 
-    const localFocusGain = context.createGain();
-    localFocusGain.gain.value = 0.0001;
-    localFocusGain.connect(master);
-    const localOsc = context.createOscillator();
-    localOsc.type = 'sine';
-    localOsc.frequency.value = 330;
-    const localFilter = context.createBiquadFilter();
-    localFilter.type = 'bandpass';
-    localFilter.frequency.value = 1400;
-    localFilter.Q.value = 1.8;
-    localOsc.connect(localFilter);
-    localFilter.connect(localFocusGain);
-    localOsc.start();
-
-    const anomalyNoise = context.createBufferSource();
-    anomalyNoise.buffer = createNoiseBuffer(context, 2.5);
-    anomalyNoise.loop = true;
-    const anomalyNoiseFilter = context.createBiquadFilter();
-    anomalyNoiseFilter.type = 'bandpass';
-    anomalyNoiseFilter.frequency.value = 860;
-    anomalyNoiseFilter.Q.value = 1.2;
-    const anomalyGain = context.createGain();
-    anomalyGain.gain.value = 0.0001;
-    anomalyNoise.connect(anomalyNoiseFilter);
-    anomalyNoiseFilter.connect(anomalyGain);
-    anomalyGain.connect(master);
-    anomalyNoise.start();
+    const toolBus = context.createGain();
+    toolBus.gain.value = 0.22;
+    toolBus.connect(master);
 
     this.context = context;
     this.master = master;
-    this.ambientGain = ambientGain;
-    this.shimmerGain = shimmerGain;
+    this.bedGain = bedGain;
     this.clusterGain = clusterGain;
-    this.pulseGain = pulseGain;
-    this.anomalyGain = anomalyGain;
-    this.localFocusGain = localFocusGain;
-    this.ambientOscA = ambientOscA;
-    this.ambientOscB = ambientOscB;
-    this.shimmerOsc = shimmerOsc;
+    this.individualGain = individualGain;
+    this.terrainGain = terrainGain;
+    this.threatGain = threatGain;
+    this.bedOscA = bedOscA;
+    this.bedOscB = bedOscB;
     this.clusterOsc = clusterOsc;
-    this.pulseOsc = pulseOsc;
-    this.breathLfo = breathLfo;
-    this.localOsc = localOsc;
-    this.anomalyNoiseFilter = anomalyNoiseFilter;
+    this.individualOsc = individualOsc;
+    this.terrainNoiseFilter = terrainNoiseFilter;
+    this.toolBus = toolBus;
     this.started = true;
   }
 
@@ -169,57 +131,78 @@ export class AudioEngine {
     if (
       !this.context ||
       !this.master ||
-      !this.ambientGain ||
-      !this.shimmerGain ||
+      !this.bedGain ||
       !this.clusterGain ||
-      !this.pulseGain ||
-      !this.anomalyGain ||
-      !this.localFocusGain ||
-      !this.ambientOscA ||
-      !this.ambientOscB ||
-      !this.shimmerOsc ||
+      !this.individualGain ||
+      !this.terrainGain ||
+      !this.threatGain ||
+      !this.bedOscA ||
+      !this.bedOscB ||
       !this.clusterOsc ||
-      !this.pulseOsc ||
-      !this.breathLfo ||
-      !this.localOsc ||
-      !this.anomalyNoiseFilter
+      !this.individualOsc ||
+      !this.terrainNoiseFilter
     ) {
       return;
     }
 
     const now = this.context.currentTime;
+    const zoomNorm = clamp((snapshot.camera.zoom - 0.32) / (2.8 - 0.32), 0, 1);
     const counts = this.countEntities(snapshot.entities);
-    const localMix = this.computeLocalMix(snapshot);
-    const zoomNorm = clamp((snapshot.camera.zoom - 0.42) / (2.85 - 0.42), 0, 1);
-    const harmony = snapshot.stats.harmony;
-    const mystery = snapshot.stats.mystery;
-    const growth = snapshot.stats.growth;
-    const activity = snapshot.stats.activity;
+    const focus = this.computeFocus(snapshot);
+    const root = 154 + snapshot.stats.harmony * 36 + snapshot.stats.energy * 18;
+    const harmonic = root * (1.25 + snapshot.stats.growth * 0.1);
+    const clusterFreq = root * (0.5 + focus.cluster * 0.4) + counts.cluster * 1.7;
+    const individualFreq = 310 + focus.flocker * 90 + focus.plant * 40 + zoomNorm * 55;
 
-    const root = 174.61 + harmony * 22 + growth * 8 - mystery * 6;
-    const third = root * 1.25;
-    const fifth = root * 1.5;
-    const localPitch = 261.63 + localMix.seed * 42 + localMix.filament * 26 + localMix.cluster * 18;
+    this.bedOscA.frequency.setTargetAtTime(root, now, 0.6);
+    this.bedOscB.frequency.setTargetAtTime(harmonic, now, 0.7);
+    this.clusterOsc.frequency.setTargetAtTime(clusterFreq, now, 0.45);
+    this.individualOsc.frequency.setTargetAtTime(individualFreq, now, 0.28);
+    this.terrainNoiseFilter.frequency.setTargetAtTime(620 + focus.fluid * 340 + focus.dense * 170 - focus.hard * 160, now, 0.35);
+    this.terrainNoiseFilter.Q.setTargetAtTime(1 + focus.hard * 1.4 + snapshot.stats.threat * 1.2, now, 0.4);
 
-    this.ambientOscA.frequency.setTargetAtTime(root, now, 0.8);
-    this.ambientOscB.frequency.setTargetAtTime(fifth + harmony * 8, now, 0.7);
-    this.shimmerOsc.frequency.setTargetAtTime(third + counts.seed * 0.8 + localMix.seed * 34, now, 0.6);
-    this.clusterOsc.frequency.setTargetAtTime(root * 0.75 + counts.cluster * 2.4 + harmony * 18, now, 0.6);
-    this.pulseOsc.frequency.setTargetAtTime(46 + activity * 18 + growth * 12, now, 0.25);
-    this.localOsc.frequency.setTargetAtTime(localPitch + zoomNorm * 60, now, 0.3);
-    this.breathLfo.frequency.setTargetAtTime(0.08 + activity * 0.18 + zoomNorm * 0.05, now, 0.8);
-    this.anomalyNoiseFilter.frequency.setTargetAtTime(780 + mystery * 740 + snapshot.anomalyPulse * 180, now, 0.3);
-    this.anomalyNoiseFilter.Q.setTargetAtTime(1.1 + mystery * 2.3, now, 0.25);
+    this.bedGain.gain.setTargetAtTime(0.018 + snapshot.stats.energy * 0.024 + (1 - zoomNorm) * 0.02, now, 0.5);
+    this.clusterGain.gain.setTargetAtTime(0.003 + counts.cluster * 0.0005 + snapshot.stats.harmony * 0.015 + zoomNorm * 0.009, now, 0.3);
+    this.individualGain.gain.setTargetAtTime(0.004 + counts.flocker * 0.00014 + focus.total * 0.016 + zoomNorm * 0.02, now, 0.22);
+    this.terrainGain.gain.setTargetAtTime(0.001 + focus.fluid * 0.01 + focus.dense * 0.005 + (1 - zoomNorm) * 0.007, now, 0.4);
+    this.threatGain.gain.setTargetAtTime(0.0001 + snapshot.stats.threat * 0.012 + counts.predator * 0.0009, now, 0.18);
+    this.master.gain.setTargetAtTime(0.08 + snapshot.stats.energy * 0.04, now, 0.7);
 
-    const pulseShape = 0.35 + 0.65 * Math.max(0, Math.sin(snapshot.time * (1.8 + activity * 2.4)));
+    if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
+      this.lastFeedbackId = snapshot.tool.feedback.id;
+      this.triggerToolTone(snapshot.tool.feedback.tool, snapshot.tool.feedback.intensity);
+    }
+  }
 
-    this.ambientGain.gain.setTargetAtTime(0.018 + (1 - zoomNorm) * 0.024 + harmony * 0.014, now, 0.6);
-    this.shimmerGain.gain.setTargetAtTime(0.004 + counts.seed * 0.00022 + harmony * 0.008, now, 0.45);
-    this.clusterGain.gain.setTargetAtTime(0.005 + counts.cluster * 0.0012 + growth * 0.014, now, 0.42);
-    this.pulseGain.gain.setTargetAtTime(0.001 + activity * 0.01 * pulseShape, now, 0.12);
-    this.localFocusGain.gain.setTargetAtTime(0.001 + zoomNorm * 0.028 + localMix.total * 0.016, now, 0.25);
-    this.anomalyGain.gain.setTargetAtTime(0.0004 + mystery * 0.004 + snapshot.anomalyPulse * 0.006, now, 0.2);
-    this.master.gain.setTargetAtTime(0.1 + harmony * 0.025 + zoomNorm * 0.01, now, 0.8);
+  private triggerToolTone(tool: SimulationSnapshot['tool']['active'], intensity: number): void {
+    if (!this.context || !this.toolBus) return;
+    const now = this.context.currentTime;
+    const gain = this.context.createGain();
+    const osc = this.context.createOscillator();
+    const filter = this.context.createBiquadFilter();
+    const settings = {
+      observe: { type: 'sine' as OscillatorType, freq: 260, q: 1.2 },
+      grow: { type: 'triangle' as OscillatorType, freq: 330, q: 1.7 },
+      feed: { type: 'sine' as OscillatorType, freq: 420, q: 2.2 },
+      repel: { type: 'square' as OscillatorType, freq: 180, q: 0.8 },
+      disrupt: { type: 'sawtooth' as OscillatorType, freq: 144, q: 3.2 },
+    }[tool];
+
+    osc.type = settings.type;
+    osc.frequency.value = settings.freq + intensity * 70;
+    filter.type = 'bandpass';
+    filter.frequency.value = settings.freq * (1.2 + intensity * 0.4);
+    filter.Q.value = settings.q;
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.03 + intensity * 0.05, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.toolBus);
+    osc.start(now);
+    osc.stop(now + 0.36);
   }
 
   private countEntities(entities: Entity[]): Record<Entity['type'], number> {
@@ -228,36 +211,53 @@ export class AudioEngine {
         acc[entity.type] += 1;
         return acc;
       },
-      { seed: 0, cluster: 0, filament: 0, alien: 0 } as Record<Entity['type'], number>,
+      { flocker: 0, cluster: 0, plant: 0, predator: 0 } as Record<Entity['type'], number>,
     );
   }
 
-  private computeLocalMix(snapshot: SimulationSnapshot) {
-    const radius = 210 / snapshot.camera.zoom;
+  private computeFocus(snapshot: SimulationSnapshot) {
+    const radius = 260 / snapshot.camera.zoom;
     const center = snapshot.camera.center;
     let total = 0;
-    let seed = 0;
+    let flocker = 0;
     let cluster = 0;
-    let filament = 0;
+    let plant = 0;
+    let fluid = 0;
+    let dense = 0;
+    let hard = 0;
 
     for (const entity of snapshot.entities) {
       const dx = entity.position.x - center.x;
       const dy = entity.position.y - center.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dist = Math.hypot(dx, dy);
       if (dist > radius) continue;
       const weight = 1 - dist / radius;
       total += weight;
-      if (entity.type === 'seed') seed += weight;
+      if (entity.type === 'flocker') flocker += weight;
       if (entity.type === 'cluster') cluster += weight;
-      if (entity.type === 'filament') filament += weight;
+      if (entity.type === 'plant') plant += weight;
+    }
+
+    for (const cell of snapshot.terrain) {
+      const dx = cell.center.x - center.x;
+      const dy = cell.center.y - center.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > radius * 1.2) continue;
+      const weight = clamp(1 - dist / (radius * 1.2), 0, 1);
+      if (cell.terrain === 'fluid') fluid += weight;
+      if (cell.terrain === 'dense') dense += weight;
+      if (cell.terrain === 'hard') hard += weight;
     }
 
     const normalizer = Math.max(total, 1);
     return {
-      total: clamp(total / 10, 0, 1),
-      seed: seed / normalizer,
+      total: clamp(total / 12, 0, 1),
+      flocker: flocker / normalizer,
       cluster: cluster / normalizer,
-      filament: filament / normalizer,
+      plant: plant / normalizer,
+      fluid: clamp(fluid / 10, 0, 1),
+      dense: clamp(dense / 10, 0, 1),
+      hard: clamp(hard / 10, 0, 1),
     };
   }
 }
