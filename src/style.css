@@ -75,11 +75,11 @@ canvas {
 }
 
 .hud__panel {
-  width: min(420px, calc(100vw - 36px));
+  width: min(440px, calc(100vw - 36px));
   padding: 14px 16px;
   border: 1px solid rgba(168, 205, 255, 0.12);
   border-radius: 20px;
-  background: rgba(5, 10, 17, 0.5);
+  background: rgba(5, 10, 17, 0.56);
   backdrop-filter: blur(14px);
   box-shadow: 0 0 45px rgba(0, 0, 0, 0.22);
 }
@@ -93,11 +93,11 @@ canvas {
 
 .hud__panel--stats,
 .hud__panel--status {
-  width: min(280px, calc(100vw - 36px));
+  width: min(320px, calc(100vw - 36px));
 }
 
 .hud__panel--tools {
-  width: min(560px, calc(100vw - 36px));
+  width: min(620px, calc(100vw - 36px));
 }
 
 .hud__eyebrow,
@@ -144,7 +144,7 @@ canvas {
 }
 
 .hud__row--hint span:last-child {
-  max-width: 240px;
+  max-width: 260px;
   text-align: right;
   color: rgba(202, 215, 236, 0.72);
 }
@@ -152,7 +152,7 @@ canvas {
 .hud__tool-grid {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   pointer-events: auto;
 }
@@ -174,6 +174,7 @@ canvas {
 
 .hud__tool small {
   color: rgba(202, 215, 236, 0.62);
+  line-height: 1.35;
 }
 
 .hud__tool.is-active {
@@ -182,8 +183,13 @@ canvas {
   transform: translateY(-1px);
 }
 
+.hud__tool.is-blocked {
+  border-color: rgba(255, 154, 186, 0.44);
+  background: rgba(255, 154, 186, 0.12);
+}
+
 .hud__tool.is-locked {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
 .hud__tool:hover:enabled,
