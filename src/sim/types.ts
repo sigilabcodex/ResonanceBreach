@@ -7,10 +7,8 @@ export interface Vec2 {
 
 export interface TerrainCell {
   index: number;
-  col: number;
-  row: number;
   center: Vec2;
-  bounds: { x: number; y: number; width: number; height: number };
+  radius: number;
   terrain: TerrainType;
   density: number;
   fertility: number;
@@ -19,6 +17,16 @@ export interface TerrainCell {
   resonance: number;
   height: number;
   roughness: number;
+  hue: number;
+}
+
+export interface Attractor {
+  id: number;
+  position: Vec2;
+  strength: number;
+  orbit: number;
+  radius: number;
+  hue: number;
 }
 
 export interface Entity {
@@ -47,6 +55,9 @@ export interface Entity {
   clusterId: number;
   appetite: number;
   anchor?: Vec2;
+  visualState: 'idle' | 'feeding' | 'reproducing' | 'dying';
+  visualPulse: number;
+  boundaryFade: number;
 }
 
 export interface ToolFeedback {
@@ -54,6 +65,36 @@ export interface ToolFeedback {
   tool: ToolType;
   position: Vec2;
   intensity: number;
+}
+
+export interface ToolField {
+  id: number;
+  tool: ToolType;
+  position: Vec2;
+  radius: number;
+  strength: number;
+  duration: number;
+  age: number;
+  pulse: number;
+}
+
+export interface FeedParticle {
+  id: number;
+  position: Vec2;
+  velocity: Vec2;
+  energy: number;
+  age: number;
+  duration: number;
+}
+
+export interface EventBurst {
+  id: number;
+  type: 'feed' | 'birth' | 'death';
+  position: Vec2;
+  radius: number;
+  age: number;
+  duration: number;
+  hue: number;
 }
 
 export interface ToolState {
@@ -81,11 +122,16 @@ export interface GardenStats {
   energy: number;
   stability: number;
   biodiversity: number;
+  focus: number;
 }
 
 export interface SimulationSnapshot {
   entities: Entity[];
   terrain: TerrainCell[];
+  attractors: Attractor[];
+  fields: ToolField[];
+  particles: FeedParticle[];
+  bursts: EventBurst[];
   stats: GardenStats;
   tool: ToolState;
   camera: CameraState;

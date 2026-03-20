@@ -16,6 +16,7 @@ export class PlayerInput {
   private toolPointerId: number | null = null;
   private panPointerId: number | null = null;
   private lastPan = { x: 0, y: 0 };
+  private lastToolStamp = { x: 0, y: 0 };
   private readonly keys = new Set<string>();
 
   constructor(
@@ -81,6 +82,7 @@ export class PlayerInput {
     this.toolPointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.project(event.clientX, event.clientY);
+    this.lastToolStamp = point;
     this.callbacks.onTool(true, point.x, point.y);
   };
 
@@ -100,7 +102,11 @@ export class PlayerInput {
     }
 
     if (this.toolPointerId !== event.pointerId) return;
-    this.callbacks.onTool(true, point.x, point.y);
+    const dist = Math.hypot(point.x - this.lastToolStamp.x, point.y - this.lastToolStamp.y);
+    if (dist > 72) {
+      this.lastToolStamp = point;
+      this.callbacks.onTool(true, point.x, point.y);
+    }
   };
 
   private handlePointerUp = (event: PointerEvent): void => {
@@ -158,6 +164,7 @@ export class PlayerInput {
 
   private handlePointerLeave = (): void => {
     if (this.toolPointerId === null) {
+      this.callbacks.onToolHover(-1, -1);
       this.callbacks.onTool(false, -1, -1);
     }
   };

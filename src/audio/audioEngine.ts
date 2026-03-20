@@ -1,27 +1,31 @@
 import type { Entity, SimulationSnapshot } from '../sim/types';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const MAJOR_PENTATONIC = [0, 2, 4, 7, 9];
 
 const createNoiseBuffer = (context: AudioContext, seconds: number): AudioBuffer => {
   const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.45;
+  for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.42;
   return buffer;
 };
+
+const quantizeToScale = (root: number, octave: number, degree: number) => root * 2 ** (octave + MAJOR_PENTATONIC[degree % MAJOR_PENTATONIC.length] / 12);
 
 export class AudioEngine {
   private context?: AudioContext;
   private master?: GainNode;
-  private bedGain?: GainNode;
-  private clusterGain?: GainNode;
-  private individualGain?: GainNode;
-  private terrainGain?: GainNode;
-  private threatGain?: GainNode;
-  private bedOscA?: OscillatorNode;
-  private bedOscB?: OscillatorNode;
-  private clusterOsc?: OscillatorNode;
-  private individualOsc?: OscillatorNode;
-  private terrainNoiseFilter?: BiquadFilterNode;
+  private droneGain?: GainNode;
+  private mobileGain?: GainNode;
+  private rhythmGain?: GainNode;
+  private zoneGain?: GainNode;
+  private focusGain?: GainNode;
+  private droneA?: OscillatorNode;
+  private droneB?: OscillatorNode;
+  private mobileOsc?: OscillatorNode;
+  private rhythmOsc?: OscillatorNode;
+  private zoneNoiseFilter?: BiquadFilterNode;
+  private focusOsc?: OscillatorNode;
   private toolBus?: GainNode;
   private lastFeedbackId = 0;
   private started = false;
@@ -37,75 +41,79 @@ export class AudioEngine {
     master.gain.value = 0.0001;
     master.connect(context.destination);
 
-    const bedGain = context.createGain();
-    bedGain.gain.value = 0.0001;
-    bedGain.connect(master);
-    const bedFilter = context.createBiquadFilter();
-    bedFilter.type = 'lowpass';
-    bedFilter.frequency.value = 1400;
-    bedFilter.connect(bedGain);
+    const droneGain = context.createGain();
+    droneGain.gain.value = 0.0001;
+    droneGain.connect(master);
+    const droneFilter = context.createBiquadFilter();
+    droneFilter.type = 'lowpass';
+    droneFilter.frequency.value = 1100;
+    droneFilter.connect(droneGain);
 
-    const bedOscA = context.createOscillator();
-    bedOscA.type = 'sine';
-    bedOscA.frequency.value = 164.81;
-    bedOscA.connect(bedFilter);
-    bedOscA.start();
+    const droneA = context.createOscillator();
+    droneA.type = 'sine';
+    droneA.frequency.value = 130.81;
+    droneA.connect(droneFilter);
+    droneA.start();
 
-    const bedOscB = context.createOscillator();
-    bedOscB.type = 'triangle';
-    bedOscB.frequency.value = 247.5;
-    bedOscB.connect(bedFilter);
-    bedOscB.start();
+    const droneB = context.createOscillator();
+    droneB.type = 'triangle';
+    droneB.frequency.value = 196;
+    droneB.connect(droneFilter);
+    droneB.start();
 
-    const clusterGain = context.createGain();
-    clusterGain.gain.value = 0.0001;
-    clusterGain.connect(master);
-    const clusterOsc = context.createOscillator();
-    clusterOsc.type = 'sine';
-    clusterOsc.frequency.value = 220;
-    clusterOsc.connect(clusterGain);
-    clusterOsc.start();
+    const mobileGain = context.createGain();
+    mobileGain.gain.value = 0.0001;
+    mobileGain.connect(master);
+    const mobileOsc = context.createOscillator();
+    mobileOsc.type = 'triangle';
+    const mobileFilter = context.createBiquadFilter();
+    mobileFilter.type = 'bandpass';
+    mobileFilter.frequency.value = 950;
+    mobileFilter.Q.value = 1.4;
+    mobileOsc.connect(mobileFilter);
+    mobileFilter.connect(mobileGain);
+    mobileOsc.start();
 
-    const individualGain = context.createGain();
-    individualGain.gain.value = 0.0001;
-    individualGain.connect(master);
-    const individualOsc = context.createOscillator();
-    individualOsc.type = 'triangle';
-    individualOsc.frequency.value = 330;
-    const individualFilter = context.createBiquadFilter();
-    individualFilter.type = 'bandpass';
-    individualFilter.frequency.value = 1200;
-    individualFilter.Q.value = 1.3;
-    individualOsc.connect(individualFilter);
-    individualFilter.connect(individualGain);
-    individualOsc.start();
+    const rhythmGain = context.createGain();
+    rhythmGain.gain.value = 0.0001;
+    rhythmGain.connect(master);
+    const rhythmOsc = context.createOscillator();
+    rhythmOsc.type = 'sawtooth';
+    const rhythmFilter = context.createBiquadFilter();
+    rhythmFilter.type = 'lowpass';
+    rhythmFilter.frequency.value = 300;
+    rhythmOsc.frequency.value = 72;
+    rhythmOsc.connect(rhythmFilter);
+    rhythmFilter.connect(rhythmGain);
+    rhythmOsc.start();
 
-    const terrainGain = context.createGain();
-    terrainGain.gain.value = 0.0001;
-    terrainGain.connect(master);
-    const terrainNoise = context.createBufferSource();
-    terrainNoise.buffer = createNoiseBuffer(context, 2.2);
-    terrainNoise.loop = true;
-    const terrainNoiseFilter = context.createBiquadFilter();
-    terrainNoiseFilter.type = 'bandpass';
-    terrainNoiseFilter.frequency.value = 900;
-    terrainNoiseFilter.Q.value = 1.1;
-    terrainNoise.connect(terrainNoiseFilter);
-    terrainNoiseFilter.connect(terrainGain);
-    terrainNoise.start();
+    const zoneGain = context.createGain();
+    zoneGain.gain.value = 0.0001;
+    zoneGain.connect(master);
+    const zoneNoise = context.createBufferSource();
+    zoneNoise.buffer = createNoiseBuffer(context, 2.4);
+    zoneNoise.loop = true;
+    const zoneNoiseFilter = context.createBiquadFilter();
+    zoneNoiseFilter.type = 'bandpass';
+    zoneNoiseFilter.frequency.value = 780;
+    zoneNoiseFilter.Q.value = 1.1;
+    zoneNoise.connect(zoneNoiseFilter);
+    zoneNoiseFilter.connect(zoneGain);
+    zoneNoise.start();
 
-    const threatGain = context.createGain();
-    threatGain.gain.value = 0.0001;
-    threatGain.connect(master);
-    const threatOsc = context.createOscillator();
-    threatOsc.type = 'sawtooth';
-    threatOsc.frequency.value = 72;
-    const threatFilter = context.createBiquadFilter();
-    threatFilter.type = 'lowpass';
-    threatFilter.frequency.value = 320;
-    threatOsc.connect(threatFilter);
-    threatFilter.connect(threatGain);
-    threatOsc.start();
+    const focusGain = context.createGain();
+    focusGain.gain.value = 0.0001;
+    focusGain.connect(master);
+    const focusOsc = context.createOscillator();
+    focusOsc.type = 'sine';
+    focusOsc.frequency.value = 392;
+    const focusFilter = context.createBiquadFilter();
+    focusFilter.type = 'bandpass';
+    focusFilter.frequency.value = 1200;
+    focusFilter.Q.value = 2.4;
+    focusOsc.connect(focusFilter);
+    focusFilter.connect(focusGain);
+    focusOsc.start();
 
     const toolBus = context.createGain();
     toolBus.gain.value = 0.22;
@@ -113,16 +121,17 @@ export class AudioEngine {
 
     this.context = context;
     this.master = master;
-    this.bedGain = bedGain;
-    this.clusterGain = clusterGain;
-    this.individualGain = individualGain;
-    this.terrainGain = terrainGain;
-    this.threatGain = threatGain;
-    this.bedOscA = bedOscA;
-    this.bedOscB = bedOscB;
-    this.clusterOsc = clusterOsc;
-    this.individualOsc = individualOsc;
-    this.terrainNoiseFilter = terrainNoiseFilter;
+    this.droneGain = droneGain;
+    this.mobileGain = mobileGain;
+    this.rhythmGain = rhythmGain;
+    this.zoneGain = zoneGain;
+    this.focusGain = focusGain;
+    this.droneA = droneA;
+    this.droneB = droneB;
+    this.mobileOsc = mobileOsc;
+    this.rhythmOsc = rhythmOsc;
+    this.zoneNoiseFilter = zoneNoiseFilter;
+    this.focusOsc = focusOsc;
     this.toolBus = toolBus;
     this.started = true;
   }
@@ -131,16 +140,17 @@ export class AudioEngine {
     if (
       !this.context ||
       !this.master ||
-      !this.bedGain ||
-      !this.clusterGain ||
-      !this.individualGain ||
-      !this.terrainGain ||
-      !this.threatGain ||
-      !this.bedOscA ||
-      !this.bedOscB ||
-      !this.clusterOsc ||
-      !this.individualOsc ||
-      !this.terrainNoiseFilter
+      !this.droneGain ||
+      !this.mobileGain ||
+      !this.rhythmGain ||
+      !this.zoneGain ||
+      !this.focusGain ||
+      !this.droneA ||
+      !this.droneB ||
+      !this.mobileOsc ||
+      !this.rhythmOsc ||
+      !this.zoneNoiseFilter ||
+      !this.focusOsc
     ) {
       return;
     }
@@ -149,23 +159,28 @@ export class AudioEngine {
     const zoomNorm = clamp((snapshot.camera.zoom - 0.32) / (2.8 - 0.32), 0, 1);
     const counts = this.countEntities(snapshot.entities);
     const focus = this.computeFocus(snapshot);
-    const root = 154 + snapshot.stats.harmony * 36 + snapshot.stats.energy * 18;
-    const harmonic = root * (1.25 + snapshot.stats.growth * 0.1);
-    const clusterFreq = root * (0.5 + focus.cluster * 0.4) + counts.cluster * 1.7;
-    const individualFreq = 310 + focus.flocker * 90 + focus.plant * 40 + zoomNorm * 55;
+    const root = 110 + snapshot.stats.harmony * 28 + snapshot.stats.energy * 16;
+    const droneRoot = quantizeToScale(root, 0, 0);
+    const droneFifth = quantizeToScale(root, 0, 3);
+    const mobileDegree = Math.round(clamp(focus.flocker * 4 + focus.cluster * 2, 0, 4));
+    const mobileFreq = quantizeToScale(root * (1 + zoomNorm * 0.14), 1, mobileDegree);
+    const rhythmFreq = quantizeToScale(root * 0.5, -1, 0) + snapshot.stats.threat * 12;
+    const zoneFreq = 380 + focus.fluid * 240 + focus.dense * 180 - focus.hard * 120;
+    const focusFreq = quantizeToScale(root * 1.5, 1, 4);
 
-    this.bedOscA.frequency.setTargetAtTime(root, now, 0.6);
-    this.bedOscB.frequency.setTargetAtTime(harmonic, now, 0.7);
-    this.clusterOsc.frequency.setTargetAtTime(clusterFreq, now, 0.45);
-    this.individualOsc.frequency.setTargetAtTime(individualFreq, now, 0.28);
-    this.terrainNoiseFilter.frequency.setTargetAtTime(620 + focus.fluid * 340 + focus.dense * 170 - focus.hard * 160, now, 0.35);
-    this.terrainNoiseFilter.Q.setTargetAtTime(1 + focus.hard * 1.4 + snapshot.stats.threat * 1.2, now, 0.4);
+    this.droneA.frequency.setTargetAtTime(droneRoot, now, 0.7);
+    this.droneB.frequency.setTargetAtTime(droneFifth, now, 0.7);
+    this.mobileOsc.frequency.setTargetAtTime(mobileFreq, now, 0.28);
+    this.rhythmOsc.frequency.setTargetAtTime(rhythmFreq, now, 0.18);
+    this.zoneNoiseFilter.frequency.setTargetAtTime(zoneFreq, now, 0.35);
+    this.zoneNoiseFilter.Q.setTargetAtTime(1 + focus.hard * 1.3 + snapshot.stats.focus * 0.8, now, 0.3);
+    this.focusOsc.frequency.setTargetAtTime(focusFreq, now, 0.24);
 
-    this.bedGain.gain.setTargetAtTime(0.018 + snapshot.stats.energy * 0.024 + (1 - zoomNorm) * 0.02, now, 0.5);
-    this.clusterGain.gain.setTargetAtTime(0.003 + counts.cluster * 0.0005 + snapshot.stats.harmony * 0.015 + zoomNorm * 0.009, now, 0.3);
-    this.individualGain.gain.setTargetAtTime(0.004 + counts.flocker * 0.00014 + focus.total * 0.016 + zoomNorm * 0.02, now, 0.22);
-    this.terrainGain.gain.setTargetAtTime(0.001 + focus.fluid * 0.01 + focus.dense * 0.005 + (1 - zoomNorm) * 0.007, now, 0.4);
-    this.threatGain.gain.setTargetAtTime(0.0001 + snapshot.stats.threat * 0.012 + counts.predator * 0.0009, now, 0.18);
+    this.droneGain.gain.setTargetAtTime(0.015 + counts.plant * 0.00018 + snapshot.stats.energy * 0.018 + (1 - zoomNorm) * 0.012, now, 0.45);
+    this.mobileGain.gain.setTargetAtTime(0.004 + counts.flocker * 0.00016 + counts.cluster * 0.0001 + focus.total * 0.012 + zoomNorm * 0.022, now, 0.22);
+    this.rhythmGain.gain.setTargetAtTime(0.0001 + counts.predator * 0.0012 + snapshot.stats.threat * 0.016 + zoomNorm * 0.004, now, 0.16);
+    this.zoneGain.gain.setTargetAtTime(0.002 + focus.fluid * 0.01 + focus.dense * 0.008 + (1 - zoomNorm) * 0.01, now, 0.4);
+    this.focusGain.gain.setTargetAtTime(0.0001 + snapshot.stats.focus * 0.025, now, 0.2);
     this.master.gain.setTargetAtTime(0.08 + snapshot.stats.energy * 0.04, now, 0.7);
 
     if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
@@ -181,28 +196,28 @@ export class AudioEngine {
     const osc = this.context.createOscillator();
     const filter = this.context.createBiquadFilter();
     const settings = {
-      observe: { type: 'sine' as OscillatorType, freq: 260, q: 1.2 },
-      grow: { type: 'triangle' as OscillatorType, freq: 330, q: 1.7 },
-      feed: { type: 'sine' as OscillatorType, freq: 420, q: 2.2 },
-      repel: { type: 'square' as OscillatorType, freq: 180, q: 0.8 },
-      disrupt: { type: 'sawtooth' as OscillatorType, freq: 144, q: 3.2 },
+      observe: { type: 'sine' as OscillatorType, freq: 392, q: 2.2 },
+      grow: { type: 'triangle' as OscillatorType, freq: 294, q: 1.8 },
+      feed: { type: 'sine' as OscillatorType, freq: 440, q: 2.4 },
+      repel: { type: 'square' as OscillatorType, freq: 196, q: 1.1 },
+      disrupt: { type: 'sawtooth' as OscillatorType, freq: 174, q: 3 },
     }[tool];
 
     osc.type = settings.type;
     osc.frequency.value = settings.freq + intensity * 70;
     filter.type = 'bandpass';
-    filter.frequency.value = settings.freq * (1.2 + intensity * 0.4);
+    filter.frequency.value = settings.freq * (1.15 + intensity * 0.35);
     filter.Q.value = settings.q;
 
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.03 + intensity * 0.05, now + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    gain.gain.exponentialRampToValueAtTime(0.025 + intensity * 0.05, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (tool === 'observe' ? 0.42 : 0.36));
 
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(this.toolBus);
     osc.start(now);
-    osc.stop(now + 0.36);
+    osc.stop(now + 0.46);
   }
 
   private countEntities(entities: Entity[]): Record<Entity['type'], number> {
@@ -238,15 +253,15 @@ export class AudioEngine {
       if (entity.type === 'plant') plant += weight;
     }
 
-    for (const cell of snapshot.terrain) {
-      const dx = cell.center.x - center.x;
-      const dy = cell.center.y - center.y;
+    for (const sample of snapshot.terrain) {
+      const dx = sample.center.x - center.x;
+      const dy = sample.center.y - center.y;
       const dist = Math.hypot(dx, dy);
-      if (dist > radius * 1.2) continue;
-      const weight = clamp(1 - dist / (radius * 1.2), 0, 1);
-      if (cell.terrain === 'fluid') fluid += weight;
-      if (cell.terrain === 'dense') dense += weight;
-      if (cell.terrain === 'hard') hard += weight;
+      if (dist > radius * 1.3) continue;
+      const weight = clamp(1 - dist / (radius * 1.3), 0, 1);
+      if (sample.terrain === 'fluid') fluid += weight;
+      if (sample.terrain === 'dense') dense += weight;
+      if (sample.terrain === 'hard') hard += weight;
     }
 
     const normalizer = Math.max(total, 1);
