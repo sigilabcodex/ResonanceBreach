@@ -2,66 +2,173 @@
 
 ## Goal
 
-The audio system should feel ecological, perceptual, and musically coherent. It should summarize the world, not narrate every particle or entity literally.
+The audio system should feel like an ecological listening model instead of a literal one-sound-per-entity simulation. The player should hear a quiet world bed, a few grouped zone textures, a tightly capped foreground, and event-driven accents that remain harmonically coherent.
 
-## Core constraints
+## Implemented layer stack
 
-- **Perceptual filtering:** not every organism deserves an isolated voice.
-- **Grouped voices:** distant or low-salience activity should collapse into shared layers.
-- **Salience-based foreground:** only the most important local activity should surface as detail.
-- **Harmonic coherence:** the world should sit inside a constrained tonal language.
-- **Focus isolation:** the focus tool should clarify a local pocket and reduce wider clutter.
+### 1. Global bed
 
-## Current layering direction
+A very quiet always-on layer summarizes the whole garden state.
 
-### 1. Ambient bed
-A quiet continuous layer that tracks overall ecological stability and world mood.
+- two low-cost oscillators provide the stable foundation
+- pitch follows the current harmony root and mode
+- filter motion follows stability, harmony, growth, and threat
+- the bed ducks slightly when the focus tool is isolating a local pocket
 
-### 2. Plant / field layer
-A grouped harmonic layer for rooted life and nutrient-rich zones.
+### 2. Grouped zone / cluster voices
 
-### 3. Creature layer
-A capped foreground layer for the most active non-plant entities near the player context.
+Low-salience entities are collapsed into composite zone summaries instead of getting individual synths.
 
-### 4. Event layer
-Short transient sounds driven by typed world events such as feeding, births, deaths, residue creation, and tool use.
+- entities are bucketed into spatial cells
+- grouping separates rooted, mobile, cluster, predator, and water-like regions
+- only the strongest grouped zones are rendered at once
+- distant or low-detail zones become softer, darker, and more merged
+- water terrain also contributes a single grouped texture derived from terrain flow and resonance
+
+### 3. Foreground salient voices
+
+Only a small number of entities are allowed to speak individually.
+
+- the foreground voice pool is capped at **3**
+- candidates are scored every update
+- only scores above the foreground threshold are eligible
+- all remaining activity is grouped, attenuated, or omitted
+
+### 4. Event sounds
+
+Short transient sounds are driven by the world event layer.
+
+Supported event types:
+
+- `entityFed`
+- `entityDied`
+- `residueCreated`
+- `toolUsed`
+
+The audio engine also keeps observe-tool feedback so the focus tool still feels like a listening instrument while held.
 
 ## Salience model
 
-Near-term salience should consider:
+Foreground selection is explicit and efficient. Each entity gets a salience score using:
 
-- camera distance
-- focus-circle inclusion
-- organism activity
-- species role
-- ecological rarity
-- immediate interaction relevance
+- **distance to camera** via camera closeness within a hearing radius
+- **focus-circle inclusion** and focus closeness when the observe tool is active
+- **current activity** from the sim state
+- **species importance** using fixed per-type importance weights
+- **ecological importance** from growth, resonance, harmony, and energy
+- **interaction relevance** from visual state and pulse
+- **event priority** from recent event-driven salience bumps
 
-This keeps the audible scene readable even as the ecosystem grows.
+### Resulting behavior
 
-## Harmonic approach
+- nearby, active, rare, or recently involved entities rise into the foreground
+- entities inside the focus circle receive a strong salience bonus
+- entities outside the focus circle are explicitly penalized when focus is active
+- event-linked entities temporarily become more likely to surface
 
-The garden should prefer a stable harmonic palette with small shifts based on nutrients, growth, focus, and tension.
+## Harmony system
 
-Suggested mapping:
+The garden now uses a small explicit tonal vocabulary.
 
-- **rooted bloom:** low, stable, consonant tones
-- **pollinator drifter:** short bright gestures and fluttering motion
-- **decomposer:** muted, textural, granular, or filtered tones
-- **later grazer:** midrange pulse or soft motif
-- **later predator:** sparse tension-bearing accents
+### Mode selection
 
-## Focus tool behavior
+The harmony module chooses one of a few constrained pentatonic-style modes based on garden state:
 
-When focus is active:
+- `ionianPentatonic`
+- `suspendedPentatonic`
+- `dorianPentatonic`
 
-- local detail becomes brighter and clearer
-- grouped outer layers are damped or filtered
-- the foreground should feel more isolated, not louder in every band
+### Root selection
 
-## Future work
+The root shifts slowly using:
 
-1. Separate harmony and salience logic into dedicated modules.
-2. Add biome grouping so water, fertile zones, and dense terrain have clearer shared identities.
-3. Introduce decomposer and residue textures.
-4. Add bubble/breach anomaly voicing without abandoning perceptual restraint.
+- nutrients
+- growth
+- harmony
+- threat
+
+### Layer mapping
+
+- **global bed:** low stable scale degrees
+- **plants / rooted life:** lower sustained tones
+- **clusters / grouped zones:** averaged middle textures
+- **mobile life:** brighter upper tones
+- **event sounds:** short gestures quantized to the same note pool
+- **water texture:** low filtered tones constrained to the active mode
+
+This keeps the result calm and prevents arbitrary dissonance.
+
+## Grouping by distance and attention
+
+Distance now changes more than volume.
+
+### At low detail / far camera
+
+- many entities collapse into grouped zone summaries
+- transient density is reduced
+- filtering becomes darker
+- fewer individual voices survive foreground selection
+
+### At high detail / near camera
+
+- local entities gain more detail weight
+- individual foreground voices are more likely to emerge
+- grouped layers become brighter and less smeared
+
+### Focus interaction
+
+The observe tool acts like a listening microscope.
+
+Inside the focus circle:
+
+- louder
+- brighter
+- more detailed
+- less likely to be collapsed into grouped ambience
+
+Outside the focus circle:
+
+- quieter
+- lower-passed
+- less likely to win foreground selection
+- more likely to merge into zone textures or disappear into the bed
+
+## Event integration
+
+The engine responds to world events instead of relying only on raw polling.
+
+- recent `entityFed` and `entityDied` events add temporary salience priority to the involved entity
+- `residueCreated` produces a short constrained residue gesture
+- `toolUsed` produces a harmonically constrained tool accent
+- observe-tool feedback remains lightweight and separate so the microscope interaction is still tactile
+
+This gives short-lived importance spikes without adding permanent voice cost.
+
+## Performance strategy
+
+The system avoids uncontrolled WebAudio growth.
+
+### Voice limits
+
+- **global bed:** 2 always-on oscillators
+- **grouped zones:** 3 pooled voices max
+- **foreground salient voices:** 3 pooled voices max
+- **events:** short-lived transient nodes only when events fire
+
+### Efficiency rules
+
+- no always-on synth per entity
+- pooled oscillator voices are retuned instead of recreated every frame
+- low-salience entities are summarized into groups
+- recent event salience is stored in a tiny decaying map keyed by entity id
+- spatial grouping uses simple fixed-size buckets
+
+## Current files
+
+Core implementation lives in:
+
+- `src/audio/audioEngine.ts`
+- `src/audio/harmony.ts`
+- `src/audio/salience.ts`
+
+These modules separate harmony selection, salience scoring, and pooled voice rendering so future audio passes can remain focused instead of sprawling.
