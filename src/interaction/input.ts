@@ -1,6 +1,8 @@
 import { CAMERA_PAN_SPEED, WORLD_HEIGHT, WORLD_WIDTH, type ToolType } from '../config';
 import type { CameraState } from '../types/world';
 
+const wrap = (value: number, size: number) => ((value % size) + size) % size;
+
 export interface InputCallbacks {
   onTool(active: boolean, x: number, y: number): void;
   onToolHover(x: number, y: number): void;
@@ -177,8 +179,8 @@ export class PlayerInput {
     const offsetY = rect.height * 0.5 - camera.center.y * scale;
 
     return {
-      x: Math.max(0, Math.min(WORLD_WIDTH, (clientX - rect.left - offsetX) / scale)),
-      y: Math.max(0, Math.min(WORLD_HEIGHT, (clientY - rect.top - offsetY) / scale)),
+      x: wrap((clientX - rect.left - offsetX) / scale, WORLD_WIDTH),
+      y: wrap((clientY - rect.top - offsetY) / scale, WORLD_HEIGHT),
     };
   }
 }
