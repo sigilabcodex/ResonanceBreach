@@ -1,11 +1,3 @@
-import './style.css';
-import { App } from './app';
+import { bootstrap } from './app/bootstrap';
 
-const mount = document.querySelector<HTMLDivElement>('#app');
-
-if (!mount) {
-  throw new Error('App mount not found.');
-}
-
-const app = new App(mount);
-app.start();
+bootstrap();

@@ -1,154 +1,99 @@
-# ResonanceBreach — Architecture Notes
+# ResonanceBreach Architecture
 
-## Purpose
+## Current intent
 
-ResonanceBreach is a world-driven simulation game built around:
+ResonanceBreach is moving from a fast prototype toward a more disciplined simulation architecture. The immediate goal is not to solve every ecological or gameplay problem at once. The goal is to make future iteration safer by clarifying ownership, boundaries, and extension points.
 
-- a continuous wrapped world ("bubble" topology)
-- ecological entities with lifecycles
-- field-based movement and terrain influence
-- perceptual audio instead of one-sound-per-entity
-- tool-based interaction layered on top of a living system
+## Directional principles
 
-This document defines the architectural direction so future work remains coherent.
+- **Continuous wrapped world:** the long-term world model is a continuous wrapped space rather than a visible grid. Internal sampling structures are allowed, but they should remain implementation details.
+- **Field-based ecology:** organisms react to terrain, nutrients, flow, attractors, tools, and later anomaly fields.
+- **Lifecycle-driven entities:** species are defined by growth, feeding, reproduction, death, and return to residue.
+- **Modular subsystems:** simulation, rendering, audio, and interaction should be independently understandable.
+- **Future breach cosmology:** the current garden is a local layer inside a broader bubble/breach cosmology that can add stranger fields and species later.
 
----
-
-## Core Principles
-
-1. **Simulation first**
-   The world must behave meaningfully even without rendering or audio.
-
-2. **Separation of concerns**
-   Simulation, rendering, audio, and interaction should be modular.
-
-3. **Field-based world**
-   The world is not a grid. Internally, helper sampling structures are allowed, but the user-facing world must feel continuous and organic.
-
-4. **Perceptual layering**
-   Audio and rendering should emphasize salience, grouping, and clarity rather than raw quantity.
-
-5. **Gradual complexity**
-   Start with a few species and systems, then expand.
-
----
-
-## High-Level Subsystems
-
-### 1. World Simulation
-Responsible for:
-- entity state
-- lifecycle updates
-- movement
-- feeding
-- reproduction
-- death and residue
-- field sampling
-
-### 2. Fields
-Continuous or sampled layers that influence behavior:
-- nutrient field
-- moisture field
-- flow field
-- gravity / attractor field
-- terrain resistance / density field
-
-### 3. Rendering
-Responsible for:
-- topography visualization
-- organism glyph rendering
-- camera and zoom
-- focus tool visualization
-- effects and subtle feedback
-
-### 4. Audio
-Responsible for:
-- global ambience
-- grouped biome/cluster voices
-- salient entity voices
-- interaction/event sounds
-- harmonic coherence
-- perceptual filtering by distance/focus/salience
-
-### 5. Interaction
-Responsible for:
-- focus tool
-- grow/feed/repel/disrupt tools
-- tool costs
-- future progression and unlocks
-
----
-
-## Proposed Directory Structure
+## Implemented module layout
 
 ```text
 src/
   app/
-    bootstrap.ts
-    game.ts
-    config.ts
+    bootstrap.ts      # application startup
+    game.ts           # frame loop and subsystem orchestration
+    config.ts         # compatibility export for shared config
 
   sim/
-    world.ts
-    update.ts
-    clock.ts
-    events.ts
-
-    fields/
-      fieldTypes.ts
-      nutrientField.ts
-      moistureField.ts
-      flowField.ts
-      attractorField.ts
-      terrainField.ts
-
     ecology/
-      feeding.ts
-      reproduction.ts
-      lifecycle.ts
-      death.ts
-      flocking.ts
-
-    species/
-      speciesRegistry.ts
-      plant.ts
-      grazer.ts
-      pollinator.ts
-      decomposer.ts
-      predator.ts
-
-  render/
-    renderer.ts
-    camera.ts
-    palette.ts
-    terrainRenderer.ts
-    contourRenderer.ts
-    organismRenderer.ts
-    effectsRenderer.ts
-    uiRenderer.ts
-
-  audio/
-    audioEngine.ts
-    mixer.ts
-    salience.ts
-    harmony.ts
-    groupedVoices.ts
-    eventSounds.ts
-    spatial.ts
+      simulation.ts   # main simulation update pipeline
+    fields/
+      types.ts        # field sampler and terrain modifier types
+    events.ts         # typed world events and notification helpers
+    random.ts         # seeded RNG
+    simulation.ts     # compatibility export
+    types.ts          # compatibility export
+    world.ts          # central world model factories
 
   interaction/
-    input.ts
-    tools.ts
-    focusTool.ts
-    growTool.ts
-    feedTool.ts
-    repelTool.ts
-    disruptTool.ts
+    input.ts          # input handling mapped to world-space intents
+    tools.ts          # tool metadata shared by UI and systems
+
+  render/
+    renderer.ts       # rendering consumes snapshots only
+
+  audio/
+    audioEngine.ts    # audio reacts to snapshots and events
 
   types/
-    entity.ts
-    world.ts
-    fields.ts
-    audio.ts
-    tools.ts
-    species.ts
+    world.ts          # shared world-facing types
+```
+
+## World model
+
+The central world model now owns:
+
+- world dimensions and wrap intent
+- entities
+- sampled terrain cells
+- attractors and tool fields
+- particles, residue, and visual bursts
+- camera and tool state
+- simulation time, time scale, and energy
+- lightweight typed events and derived notifications
+
+This keeps the simulation state explicit and makes it easier for future agents to inspect or extend one part of the world without reverse-engineering the whole app.
+
+## Subsystem boundaries
+
+### App / bootstrap
+Responsible for startup, the fixed timestep loop, camera smoothing, and wiring subsystems together.
+
+### Simulation
+Owns the evolving world state. Simulation should be able to step forward without a renderer or audio engine attached.
+
+### Rendering
+Consumes world snapshots. It should visualize terrain, organisms, tools, and feedback, but it should not author simulation state.
+
+### Audio
+Consumes world snapshots and event streams. Audio should interpret salience and state, not drive births, deaths, or movement directly.
+
+### Interaction
+Translates user intent into tool and camera actions. Interaction should not contain ecological rules.
+
+## Event layer
+
+A lightweight typed event queue now exists for world-facing events such as:
+
+- `entityBorn`
+- `entityFed`
+- `entityDied`
+- `toolUsed`
+- `residueCreated`
+
+These events are intentionally small. They are primarily for audio, HUD messaging, and future logging, replay, analytics, or species debugging.
+
+## Near-term follow-up work
+
+1. Split the large simulation update into field, lifecycle, feeding, reproduction, and death modules.
+2. Replace prototype entity labels with clearer species modules and registries.
+3. Gradually move terrain sampling into dedicated field modules.
+4. Introduce decomposer-specific behavior and richer residue flow.
+5. Add bubble/breach event types without leaking those concerns into rendering.

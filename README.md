@@ -2,6 +2,10 @@
 
 ResonanceBreach is a minimalist browser-based ecosystem prototype. This iteration turns the scene into a calmer Resonance Garden: fewer active entities, softer terrain, slower motion, clearer cause and effect, and a closed ecological loop built around fruit, feeding, death, residue, and soil renewal.
 
+## Modular architecture phase
+
+The project is now entering a more disciplined modular architecture phase. Current refactors are focused on clarifying subsystem boundaries, introducing an explicit world model and lightweight event layer, and making future ecology, rendering, and audio work easier to extend without re-entangling the prototype.
+
 ## What changed in this iteration
 
 - **Calmer motion and visuals:** high-frequency pulsing, jitter, and dense overlays have been replaced with slower fades, softer gradients, and lower-frequency movement.
@@ -60,12 +64,14 @@ npm run build
 
 ## Architecture overview
 
-- `src/app.ts` – app bootstrap, camera/time controls, and fixed-timestep loop.
-- `src/sim/simulation.ts` – terrain drift, ecological loop, tools, and systemic state updates.
+- `src/app/bootstrap.ts` and `src/app/game.ts` – startup, fixed-timestep loop, and subsystem orchestration.
+- `src/sim/world.ts` and `src/sim/ecology/simulation.ts` – explicit world state ownership and systemic updates.
+- `src/sim/events.ts` – lightweight typed world events and notifications.
+- `src/types/world.ts` – shared world-facing types used across systems.
 - `src/render/renderer.ts` – terrain gradients, contour rendering, field overlays, entity drawing, and focus masking.
-- `src/audio/audioEngine.ts` – restrained ambient, plant, and creature audio with focus isolation.
-- `src/input/playerInput.ts` – pointer, wheel, keyboard camera movement, and time-control handling.
-- `src/ui/hud.ts` – ecological HUD, tool explanations, and guidance hints.
+- `src/audio/audioEngine.ts` – restrained ambient, grouped layers, and event-reactive audio.
+- `src/interaction/input.ts` and `src/interaction/tools.ts` – player input and shared tool metadata.
+- `src/ui/hud.ts` – ecological HUD, tool explanations, and field notes.
 - `src/config.ts` – global simulation, camera, timing, terrain, and tool constants.
 
 ## Design notes
