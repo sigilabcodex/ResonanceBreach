@@ -1,4 +1,4 @@
-import { CAMERA_MAX_ZOOM, CAMERA_MIN_ZOOM, CAMERA_ZOOM_SPEED, FIXED_TIMESTEP, MAX_FRAME_DELTA, WORLD_HEIGHT, WORLD_WIDTH } from './config';
+import { CAMERA_MAX_ZOOM, CAMERA_MIN_ZOOM, CAMERA_SMOOTHING, CAMERA_ZOOM_SPEED, FIXED_TIMESTEP, MAX_FRAME_DELTA, WORLD_HEIGHT, WORLD_WIDTH, type ToolType } from './config';
 import { AudioEngine } from './audio/audioEngine';
 import { PlayerInput } from './input/playerInput';
 import { Renderer } from './render/renderer';
@@ -7,14 +7,19 @@ import type { CameraState } from './sim/types';
 import { Hud } from './ui/hud';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 export class App {
   private readonly simulation = new Simulation();
   private readonly renderer: Renderer;
   private readonly audio = new AudioEngine();
-  private readonly hud = new Hud();
+  private readonly hud = new Hud((tool) => this.selectTool(tool));
   private readonly input: PlayerInput;
   private readonly camera: CameraState = {
+    center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+    zoom: 1,
+  };
+  private readonly cameraTarget: CameraState = {
     center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
     zoom: 1,
   };
@@ -39,13 +44,15 @@ export class App {
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
 
     this.input = new PlayerInput(canvas, {
-      onZone: (active, x, y) => this.simulation.setZone(active, x, y),
+      onTool: (active, x, y) => this.simulation.setToolEngaged(active, x, y),
+      onToolHover: (x, y) => this.simulation.hoverTool(x, y),
       onInteract: () => {
         void this.audio.ensureStarted();
       },
       onRestart: () => this.restart(),
       onPan: (deltaX, deltaY) => this.panCamera(deltaX, deltaY),
       onZoom: (deltaY, clientX, clientY) => this.zoomCamera(deltaY, clientX, clientY, canvas),
+      onSelectTool: (tool) => this.selectTool(tool),
       getCamera: () => this.camera,
     });
 
@@ -69,7 +76,15 @@ export class App {
     this.camera.center.x = WORLD_WIDTH / 2;
     this.camera.center.y = WORLD_HEIGHT / 2;
     this.camera.zoom = 1;
+    this.cameraTarget.center.x = WORLD_WIDTH / 2;
+    this.cameraTarget.center.y = WORLD_HEIGHT / 2;
+    this.cameraTarget.zoom = 1;
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
+  }
+
+  private selectTool(tool: ToolType): void {
+    this.simulation.setTool(tool);
+    void this.audio.ensureStarted();
   }
 
   private handleResize = (): void => {
@@ -77,23 +92,28 @@ export class App {
   };
 
   private panCamera(deltaX: number, deltaY: number): void {
-    this.camera.center.x = clamp(this.camera.center.x + deltaX, 0, WORLD_WIDTH);
-    this.camera.center.y = clamp(this.camera.center.y + deltaY, 0, WORLD_HEIGHT);
-    this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
+    this.cameraTarget.center.x = clamp(this.cameraTarget.center.x + deltaX, 0, WORLD_WIDTH);
+    this.cameraTarget.center.y = clamp(this.cameraTarget.center.y + deltaY, 0, WORLD_HEIGHT);
   }
 
   private zoomCamera(deltaY: number, clientX: number, clientY: number, canvas: HTMLCanvasElement): void {
     const rect = canvas.getBoundingClientRect();
     const baseScale = Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT);
-    const beforeScale = baseScale * this.camera.zoom;
-    const worldX = this.camera.center.x + (clientX - rect.left - rect.width * 0.5) / beforeScale;
-    const worldY = this.camera.center.y + (clientY - rect.top - rect.height * 0.5) / beforeScale;
-    const newZoom = clamp(this.camera.zoom * (1 - deltaY * CAMERA_ZOOM_SPEED), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
+    const beforeScale = baseScale * this.cameraTarget.zoom;
+    const worldX = this.cameraTarget.center.x + (clientX - rect.left - rect.width * 0.5) / beforeScale;
+    const worldY = this.cameraTarget.center.y + (clientY - rect.top - rect.height * 0.5) / beforeScale;
+    const newZoom = clamp(this.cameraTarget.zoom * (1 - deltaY * CAMERA_ZOOM_SPEED), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
     const afterScale = baseScale * newZoom;
 
-    this.camera.zoom = newZoom;
-    this.camera.center.x = clamp(worldX - (clientX - rect.left - rect.width * 0.5) / afterScale, 0, WORLD_WIDTH);
-    this.camera.center.y = clamp(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, 0, WORLD_HEIGHT);
+    this.cameraTarget.zoom = newZoom;
+    this.cameraTarget.center.x = clamp(worldX - (clientX - rect.left - rect.width * 0.5) / afterScale, 0, WORLD_WIDTH);
+    this.cameraTarget.center.y = clamp(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, 0, WORLD_HEIGHT);
+  }
+
+  private syncCamera(): void {
+    this.camera.center.x = lerp(this.camera.center.x, this.cameraTarget.center.x, CAMERA_SMOOTHING);
+    this.camera.center.y = lerp(this.camera.center.y, this.cameraTarget.center.y, CAMERA_SMOOTHING);
+    this.camera.zoom = lerp(this.camera.zoom, this.cameraTarget.zoom, CAMERA_SMOOTHING);
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
   }
 
@@ -102,6 +122,8 @@ export class App {
     this.lastTime = timestamp;
 
     this.input.update(rawDelta);
+    this.syncCamera();
+
     const timeScale = this.input.getTimeScale();
     this.simulation.setTimeScale(timeScale);
     this.accumulator += rawDelta * timeScale;
@@ -114,7 +136,7 @@ export class App {
     const snapshot = this.simulation.getSnapshot();
     this.audio.update(snapshot);
     this.hud.update(snapshot);
-    this.renderer.render(snapshot, this.accumulator / FIXED_TIMESTEP);
+    this.renderer.render(snapshot);
 
     this.animationFrame = window.requestAnimationFrame(this.frame);
   };

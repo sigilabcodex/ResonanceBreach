@@ -1,37 +1,38 @@
-export const GAME_TITLE = 'ResonanceBreach';
+export const GAME_TITLE = 'Resonance Garden';
 export const WORLD_WIDTH = 1280;
 export const WORLD_HEIGHT = 720;
 
 export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_DELTA = 0.1;
 
-export const INITIAL_HARMONIC_COUNT = 18;
-export const MAX_ENTITIES = 96;
-export const BASE_STABILITY_DRAIN = 0.0028;
-export const STABILITY_RECOVERY = 0.022;
-export const RESONANCE_RANGE = 122;
-export const ENTITY_LINK_DISTANCE = 148;
-export const STABILIZER_RADIUS = 118;
-export const STABILIZER_STRENGTH = 170;
-export const STABILIZER_RECOVERY = 0.18;
-export const STABILIZER_HEAT_DAMPING = 0.84;
-export const STABILIZER_MAX_CHARGE = 1.8;
+export const INITIAL_SEED_COUNT = 44;
+export const INITIAL_CLUSTER_COUNT = 5;
+export const INITIAL_FILAMENT_COUNT = 7;
+export const MAX_SEEDS = 96;
+export const MAX_CLUSTERS = 12;
+export const MAX_FILAMENTS = 14;
+export const MAX_ALIENS = 5;
+
+export const NEIGHBOR_RADIUS = 132;
+export const CAMERA_MIN_ZOOM = 0.42;
+export const CAMERA_MAX_ZOOM = 2.85;
+export const CAMERA_ZOOM_SPEED = 0.00115;
+export const CAMERA_PAN_SPEED = 420;
+export const CAMERA_SMOOTHING = 0.12;
 
 export const HUD_REFRESH_RATE = 6;
-export const TOPOLOGY_COLS = 6;
-export const TOPOLOGY_ROWS = 4;
-export const MAX_POCKET_INDICATORS = 3;
-
-export const CAMERA_MIN_ZOOM = 0.45;
-export const CAMERA_MAX_ZOOM = 2.35;
-export const CAMERA_ZOOM_SPEED = 0.0012;
-export const CAMERA_PAN_SPEED = 420;
+export const ZONE_GRID_COLS = 10;
+export const ZONE_GRID_ROWS = 6;
+export const TOOL_RADIUS = 118;
 
 export const TIME_SCALE_SLOW = 0.5;
 export const TIME_SCALE_FAST = 2;
 
-export const PHASE_SEQUENCE = ['calm', 'anomaly', 'emergence', 'pressure', 'breach'] as const;
-export type SystemPhase = (typeof PHASE_SEQUENCE)[number];
+export const TOOLS = ['observe', 'grow', 'feed', 'repel', 'disrupt'] as const;
+export type ToolType = (typeof TOOLS)[number];
 
-export const ENTITY_ROLES = ['harmonic', 'anomaly', 'breach'] as const;
-export type EntityRole = (typeof ENTITY_ROLES)[number];
+export const ENTITY_TYPES = ['seed', 'cluster', 'filament', 'alien'] as const;
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
+export const ZONE_TYPES = ['drift', 'resonant', 'fertile', 'unstable'] as const;
+export type ZoneType = (typeof ZONE_TYPES)[number];

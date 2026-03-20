@@ -1,76 +1,56 @@
-import type { EntityRole, SystemPhase } from '../config';
+import type { EntityType, ToolType, ZoneType } from '../config';
 
 export interface Vec2 {
   x: number;
   y: number;
 }
 
+export interface ResonanceState {
+  alignment: number;
+  harmony: number;
+  dissonance: number;
+}
+
 export interface Entity {
   id: number;
-  role: EntityRole;
+  type: EntityType;
   position: Vec2;
   velocity: Vec2;
+  heading: number;
+  size: number;
   energy: number;
-  phase: number;
+  growth: number;
   resonance: number;
-  charge: number;
-  cluster: number;
-  driftBias: number;
+  phase: number;
+  pulse: number;
+  tone: number;
   age: number;
-  pulse: number;
-  instability: number;
-  lifespan: number;
+  life: number;
+  zoneAffinity: number;
+  wander: number;
+  anchor?: Vec2;
+  cooldown?: number;
 }
 
-export interface StabilizerZone {
-  active: boolean;
-  position: Vec2;
-  radius: number;
-  charge: number;
-  pulse: number;
-  recovery: number;
-}
-
-export interface FieldCell {
+export interface ZoneCell {
   index: number;
   col: number;
   row: number;
   center: Vec2;
-  bounds: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+  bounds: { x: number; y: number; width: number; height: number };
+  weights: Record<ZoneType, number>;
   flow: Vec2;
-  containment: number;
-  instability: number;
-  resonance: number;
-  density: number;
-  hazard: number;
+  shimmer: number;
 }
 
-export interface BarrierSegment {
-  axis: 'vertical' | 'horizontal';
-  position: number;
-  spanStart: number;
-  spanEnd: number;
-  gateCenter: number;
-  gateSize: number;
-  strength: number;
-}
-
-export interface Hotspot {
-  x: number;
-  y: number;
-  intensity: number;
+export interface ToolState {
+  active: ToolType;
+  unlocked: ToolType[];
+  pulse: number;
+  worldPosition: Vec2;
   radius: number;
-}
-
-export interface PhaseState {
-  current: SystemPhase;
-  progress: number;
-  blend: Record<SystemPhase, number>;
+  strength: number;
+  visible: boolean;
 }
 
 export interface CameraState {
@@ -78,20 +58,21 @@ export interface CameraState {
   zoom: number;
 }
 
+export interface GardenStats {
+  harmony: number;
+  activity: number;
+  mystery: number;
+  growth: number;
+}
+
 export interface SimulationSnapshot {
   entities: Entity[];
-  field: FieldCell[];
-  barriers: BarrierSegment[];
-  hotspots: Hotspot[];
-  stability: number;
-  pressure: number;
-  avgResonance: number;
-  outbreakRisk: number;
-  zone: StabilizerZone;
-  time: number;
-  lost: boolean;
-  phaseState: PhaseState;
-  rhythmicPressure: number;
+  zones: ZoneCell[];
+  stats: GardenStats;
+  tool: ToolState;
   camera: CameraState;
+  time: number;
   timeScale: number;
+  anomalyPulse: number;
+  narrativeHint: number;
 }
