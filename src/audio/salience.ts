@@ -54,11 +54,11 @@ export interface ZoneSummary {
 
 export const createAudioFocusContext = (snapshot: SimulationSnapshot): AudioFocusContext => {
   const active = snapshot.tool.active === 'observe' && (snapshot.tool.visible || snapshot.tool.strength > 0.18 || snapshot.stats.focus > 0.04);
-  const intensity = active ? clamp(snapshot.tool.strength * 0.7 + snapshot.stats.focus * 0.8 + (snapshot.tool.visible ? 0.15 : 0), 0, 1) : 0;
+  const intensity = active ? clamp(snapshot.tool.strength * 0.82 + snapshot.stats.focus * 0.92 + (snapshot.tool.visible ? 0.18 : 0), 0, 1) : 0;
   return {
     active,
     center: active ? { ...snapshot.tool.worldPosition } : { ...snapshot.camera.center },
-    radius: active ? snapshot.tool.radius * (0.92 + intensity * 0.28) : 0,
+    radius: active ? snapshot.tool.radius * (0.96 + intensity * 0.24) : 0,
     intensity,
   };
 };
@@ -68,8 +68,8 @@ export const scoreEntities = (
   focus: AudioFocusContext,
   entityPriority: ReadonlyMap<number, number>,
 ): ScoredEntity[] => {
-  const hearingRadius = 300 + 420 / snapshot.camera.zoom;
-  const zoomDetail = clamp((snapshot.camera.zoom - 0.32) / (2.8 - 0.32), 0, 1);
+  const hearingRadius = 340 + 520 / snapshot.camera.zoom;
+  const zoomDetail = clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1);
 
   return snapshot.entities.map((entity) => {
     const distance = wrappedDistance(entity.position, snapshot.camera.center, snapshot.dimensions.width, snapshot.dimensions.height);
@@ -92,28 +92,28 @@ export const scoreEntities = (
           ? 0.78
           : 0.66;
     const priorityScore = clamp(entityPriority.get(entity.id) ?? 0, 0, 1);
-    const focusBonus = insideFocus ? 0.42 + focus.intensity * 0.42 : focus.active ? -0.14 - focus.intensity * 0.22 : 0;
+    const focusBonus = insideFocus ? 0.52 + focus.intensity * 0.54 : focus.active ? -0.18 - focus.intensity * 0.28 : 0;
     const score = clamp(
-      cameraCloseness * 0.36
-        + activityScore * 0.18
-        + ENTITY_IMPORTANCE[entity.type] * 0.12
-        + rarityScore * 0.1
-        + ecologicalScore * 0.12
-        + interactionScore * 0.1
-        + priorityScore * 0.18
-        + focusCloseness * 0.16
+      cameraCloseness * 0.34
+        + activityScore * 0.16
+        + ENTITY_IMPORTANCE[entity.type] * 0.1
+        + rarityScore * 0.08
+        + ecologicalScore * 0.11
+        + interactionScore * 0.09
+        + priorityScore * 0.22
+        + focusCloseness * 0.26
         + focusBonus,
       0,
       2,
     );
-    const detail = clamp(cameraCloseness * 0.72 + focusCloseness * 0.68 + zoomDetail * 0.52, 0, 1.6);
+    const detail = clamp(cameraCloseness * 0.76 + focusCloseness * 0.94 + zoomDetail * 0.58, 0, 1.8);
 
     return { entity, distance, cameraCloseness, focusCloseness, insideFocus, score, detail };
   });
 };
 
 export const selectForegroundVoices = (scored: ScoredEntity[], maxVoices: number): ScoredEntity[] => scored
-  .filter((entry) => entry.score > 0.48)
+  .filter((entry) => entry.score > 0.42)
   .sort((a, b) => b.score - a.score)
   .slice(0, maxVoices);
 
@@ -131,7 +131,7 @@ export const buildZoneSummaries = (
 ): ZoneSummary[] => {
   const foregroundIds = new Set(foreground.map((entry) => entry.entity.id));
   const buckets = new Map<string, ZoneSummary>();
-  const bucketSize = 240;
+  const bucketSize = 260;
 
   for (const entry of scored) {
     if (foregroundIds.has(entry.entity.id)) continue;
@@ -155,7 +155,7 @@ export const buildZoneSummaries = (
     existing.position.x += entry.entity.position.x;
     existing.position.y += entry.entity.position.y;
     existing.activity += entry.entity.activity;
-    existing.density += entry.score * (1.1 - clamp(entry.detail * 0.45, 0, 0.55));
+    existing.density += entry.score * (1.08 - clamp(entry.detail * 0.52, 0, 0.6));
     existing.detail += entry.detail;
     existing.tone += entry.entity.tone;
     existing.resonance += entry.entity.resonance;

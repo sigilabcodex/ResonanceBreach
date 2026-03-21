@@ -149,7 +149,7 @@ export class App {
     const snapshot = this.simulation.getSnapshot();
     this.audio.update(snapshot, this.settings);
     this.hud.update(snapshot);
-    this.renderer.render(snapshot, this.settings);
+    this.renderer.render(snapshot, this.settings, this.audio.getDebugState());
 
     this.animationFrame = window.requestAnimationFrame(this.frame);
   };
