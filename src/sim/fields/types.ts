@@ -11,7 +11,17 @@ export interface FieldSample {
   flow: Vec2;
   hue: number;
   nutrient: number;
+  elevation: number;
+  moisture: number;
+  slope: number;
+  traversability: number;
+  flowTendency: Vec2;
+  gradient: Vec2;
+  fertilityGradient: Vec2;
+  moistureGradient: Vec2;
 }
+
+export interface WorldFieldSample extends FieldSample {}
 
 export interface TerrainModifier {
   id: number;

@@ -19,8 +19,15 @@ export interface TerrainCell {
   terrain: TerrainType;
   density: number;
   fertility: number;
+  moisture: number;
+  traversability: number;
+  slope: number;
   stability: number;
   flow: Vec2;
+  flowTendency: Vec2;
+  gradient: Vec2;
+  fertilityGradient: Vec2;
+  moistureGradient: Vec2;
   resonance: number;
   height: number;
   roughness: number;

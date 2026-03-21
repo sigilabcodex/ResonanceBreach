@@ -4,6 +4,19 @@
 
 Resonance Garden now presents the world as a wrapped continuous surface made primarily from lines. The terrain pass no longer relies on pulsing shaded blobs or circular interference patterns. Instead, the world reads through contour-like bands, flow lines, and slow field drift so the camera feels embedded inside a larger living substrate rather than pointed at a rectangular board.
 
+## Continuous world field
+
+The simulation substrate is now driven by an explicit **world field** abstraction instead of a visible terrain lattice.
+
+### Structural layers
+
+- **Elevation field** drives basins, ridges, slope, and traversability.
+- **Moisture field** determines wet channels, water-biased movement, and calmer lowlands.
+- **Fertility field** determines growth potential, bloom-rich zones, and nutrient-friendly spawning.
+- **Flow field** is derived from directional noise and downhill tendencies so motion follows the terrain instead of a repeated interference pattern.
+
+These layers are sampled continuously at entity positions, terrain sample points, residue zones, and tool interactions. The renderer only draws line work, but ecology reads the same scalar/vector field that visuals are derived from.
+
 ## Wrapped world topology
 
 The world is toroidal on both axes.
