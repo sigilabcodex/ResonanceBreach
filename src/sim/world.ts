@@ -1,5 +1,5 @@
 import { ENERGY_MAX, ENERGY_START, TOOL_RADIUS, WORLD_HEIGHT, WORLD_WIDTH } from '../config';
-import type { CameraState, GardenStats, ToolState, WorldState } from '../types/world';
+import type { AttentionState, CameraState, GardenStats, ToolState, WorldState } from '../types/world';
 
 export const createDefaultCamera = (): CameraState => ({
   center: { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.5 },
@@ -15,6 +15,19 @@ export const createDefaultToolState = (): ToolState => ({
   strength: 0,
   visible: false,
   blocked: false,
+});
+
+
+export const createDefaultAttentionState = (): AttentionState => ({
+  mode: 'none',
+  entityId: null,
+  position: { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.5 },
+  radius: TOOL_RADIUS.observe,
+  strength: 0,
+  relatedEntityIds: [],
+  dragging: false,
+  dragStart: null,
+  dragCurrent: null,
 });
 
 export const createDefaultStats = (): GardenStats => ({
@@ -45,6 +58,7 @@ export const createWorldState = (): WorldState => ({
   bursts: [],
   stats: createDefaultStats(),
   tool: createDefaultToolState(),
+  attention: createDefaultAttentionState(),
   camera: createDefaultCamera(),
   time: 0,
   timeScale: 1,

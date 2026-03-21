@@ -123,6 +123,16 @@ export class App {
     this.cameraTarget.center.y = wrap(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, WORLD_HEIGHT);
   }
 
+  private updateAttentionCameraTarget(): void {
+    const followTarget = this.simulation.getCameraFollowTarget();
+    if (!followTarget) return;
+
+    const deltaX = ((((followTarget.x - this.cameraTarget.center.x) % WORLD_WIDTH) + WORLD_WIDTH * 1.5) % WORLD_WIDTH) - WORLD_WIDTH * 0.5;
+    const deltaY = ((((followTarget.y - this.cameraTarget.center.y) % WORLD_HEIGHT) + WORLD_HEIGHT * 1.5) % WORLD_HEIGHT) - WORLD_HEIGHT * 0.5;
+    this.cameraTarget.center.x = wrap(this.cameraTarget.center.x + deltaX * 0.08, WORLD_WIDTH);
+    this.cameraTarget.center.y = wrap(this.cameraTarget.center.y + deltaY * 0.08, WORLD_HEIGHT);
+  }
+
   private syncCamera(): void {
     const deltaX = ((((this.cameraTarget.center.x - this.camera.center.x) % WORLD_WIDTH) + WORLD_WIDTH * 1.5) % WORLD_WIDTH) - WORLD_WIDTH * 0.5;
     const deltaY = ((((this.cameraTarget.center.y - this.camera.center.y) % WORLD_HEIGHT) + WORLD_HEIGHT * 1.5) % WORLD_HEIGHT) - WORLD_HEIGHT * 0.5;
@@ -137,7 +147,6 @@ export class App {
     this.lastTime = timestamp;
 
     this.input.update(rawDelta);
-    this.syncCamera();
 
     const timeScale = this.input.getTimeScale();
     this.simulation.setTimeScale(timeScale);
@@ -147,6 +156,9 @@ export class App {
       this.simulation.update(FIXED_TIMESTEP);
       this.accumulator -= FIXED_TIMESTEP;
     }
+
+    this.updateAttentionCameraTarget();
+    this.syncCamera();
 
     const snapshot = this.simulation.getSnapshot();
     this.audio.update(snapshot, this.settings);

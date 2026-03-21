@@ -171,7 +171,7 @@ export class AudioEngine {
 
     const entityPresence = 0.18 + settings.audio.entityVolume * 0.36;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
-    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.03 : 1;
+    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.02 : 1;
     const masterTarget = (0.3 + snapshot.stats.energy * 0.2) * focusMasterDip * this.mapVolume(settings.audio.masterVolume);
     this.master.gain.setTargetAtTime(masterTarget, now, 0.22);
     this.updateDebugState(snapshot, foreground, zones, focus, masterTarget);
@@ -221,7 +221,7 @@ export class AudioEngine {
     const midFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.harmony, 0);
     const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
     const bedLevel = (0.045 + snapshot.stats.stability * 0.03 + (1 - zoomNorm) * 0.018) * ambienceLevel;
-    const focusDuck = focus.active ? 1 - focus.intensity * 0.2 : 1;
+    const focusDuck = focus.mode === 'entity' ? 1 - focus.intensity * 0.12 : focus.active ? 1 - focus.intensity * 0.18 : 1;
 
     this.bedLowOsc.frequency.setTargetAtTime(lowFreq, now, 1.8);
     this.bedMidOsc.frequency.setTargetAtTime(midFreq, now, 1.6);
@@ -247,7 +247,9 @@ export class AudioEngine {
       }
 
       const inFocus = focus.active && this.distance(zone.position, focus.center, snapshot) <= focus.radius;
-      const focusBoost = inFocus ? 0.42 + focus.intensity * 0.62 : focus.active ? -0.22 - focus.intensity * 0.26 : 0;
+      const focusBoost = focus.mode === 'entity'
+        ? inFocus ? 0.18 + focus.intensity * 0.28 : -0.05
+        : inFocus ? 0.34 + focus.intensity * 0.42 : focus.active ? -0.16 - focus.intensity * 0.18 : 0;
       const densitySuppression = clamp((1 - zoomNorm) * 0.42 + (1 - zone.detail) * 0.28, 0.26, 0.86);
       const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
       const gain = clamp(0.014 + zone.density * 0.016 + zone.count * 0.0011, 0.009, 0.068) * densitySuppression * (1 + focusBoost) * ambienceLevel;
@@ -286,15 +288,27 @@ export class AudioEngine {
       }
 
       const detailLift = clamp(candidate.detail, 0, 1.4);
-      const focusLift = candidate.insideFocus ? 0.58 + focus.intensity * 0.78 : focus.active ? -0.2 - focus.intensity * 0.3 : 0;
+      const focusLift = focus.mode === 'entity'
+        ? candidate.isPrimary
+          ? 1.02 + focus.intensity * 0.54
+          : candidate.isRelated
+            ? 0.26 + focus.intensity * 0.18
+            : candidate.insideAttention
+              ? 0.1
+              : -0.06
+        : candidate.insideAttention
+          ? 0.36 + focus.intensity * 0.34
+          : focus.active ? -0.16 - focus.intensity * 0.18 : 0;
       const entityLevel = this.mapVolume(settings.audio.entityVolume);
       const gain = clamp(0.016 + candidate.score * 0.026 + detailLift * 0.011, 0.014, 0.11) * (0.78 + zoomNorm * 0.34 + focusLift) * entityLevel;
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);
-      const filterFrequency = candidate.insideFocus
-        ? 1320 + detailLift * 1480 + focus.intensity * 880
-        : focus.active
-          ? 280 + detailLift * 340
-          : 760 + detailLift * 920;
+      const filterFrequency = candidate.isPrimary
+        ? 1560 + detailLift * 1520 + focus.intensity * 620
+        : candidate.insideAttention
+          ? 1120 + detailLift * 1180 + focus.intensity * 520
+          : focus.active
+            ? 340 + detailLift * 360
+            : 760 + detailLift * 920;
       const layer = candidate.entity.type === 'plant' ? 'plant' : candidate.entity.type === 'cluster' ? 'cluster' : 'mobile';
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
@@ -358,6 +372,7 @@ export class AudioEngine {
         fruit: event.tool === 'feed' ? 0.44 : 0.14,
       },
       tool: { active: event.tool, unlocked: [event.tool], pulse: 0, worldPosition: event.position, radius: 0, strength: 0, visible: false, blocked: event.blocked },
+      attention: { mode: 'none', entityId: null, position: event.position, radius: 0, strength: 0, relatedEntityIds: [], dragging: false, dragStart: null, dragCurrent: null },
       camera: { center: event.position, zoom: 1 },
       time: 0,
       timeScale: 1,
@@ -406,6 +421,7 @@ export class AudioEngine {
         fruit: event.type === 'entityFed' ? 0.46 : 0.18,
       },
       tool: { active: 'observe', unlocked: ['observe'], pulse: 0, worldPosition: event.position, radius: 0, strength: 0, visible: false, blocked: false },
+      attention: { mode: 'none', entityId: null, position: event.position, radius: 0, strength: 0, relatedEntityIds: [], dragging: false, dragStart: null, dragCurrent: null },
       camera: { center: event.position, zoom: 1 },
       time: 0,
       timeScale: 1,
@@ -493,7 +509,7 @@ export class AudioEngine {
     focus: AudioFocusContext,
     masterGain: number,
   ): void {
-    const focusedVoiceCount = foreground.filter((entry) => entry.insideFocus).length
+    const focusedVoiceCount = foreground.filter((entry) => entry.insideAttention || entry.isPrimary || entry.isRelated).length
       + zones.filter((zone) => focus.active && this.distance(zone.position, focus.center, snapshot) <= focus.radius).length;
     this.debugState.masterGain = masterGain;
     this.debugState.foregroundVoiceCount = foreground.length;

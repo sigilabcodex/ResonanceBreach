@@ -9,8 +9,8 @@ export interface ToolDefinition {
 export const TOOL_DEFINITIONS: Record<ToolType, ToolDefinition> = {
   observe: {
     id: 'observe',
-    label: 'Resonance Focus',
-    description: 'Hold to sharpen a local pocket of sight and sound like a perceptual microscope',
+    label: 'ATTENTION',
+    description: 'Click an entity to follow it or drag to define a listening region',
   },
   grow: {
     id: 'grow',
