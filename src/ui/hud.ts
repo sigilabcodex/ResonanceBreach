@@ -120,7 +120,7 @@ export class Hud {
             <div class="hud__panel-section">
               <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
               <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
-              <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.</span></div>
+              <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, grazers feed, residue linger, and decomposers return it to the soil.</span></div>
             </div>
           </div>
         </section>
@@ -291,7 +291,7 @@ export class Hud {
     } else if (snapshot.tool.active === 'observe') {
       this.hintValue.textContent = 'ATTENTION mode: click an entity to follow and clarify it, drag to create a listening region, and click empty space to clear.';
     } else if (snapshot.tool.active === 'grow') {
-      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and hold pollination.';
+      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and keep grazers supplied.';
     } else if (snapshot.tool.active === 'feed') {
       this.hintValue.textContent = 'Feed releases visible particles. Watch Pollinator Drifters curve toward them and nearby blooms.';
     } else if (snapshot.tool.active === 'repel') {
@@ -299,9 +299,9 @@ export class Hud {
     } else if (snapshot.tool.active === 'disrupt') {
       this.hintValue.textContent = 'Disrupt waits, then bursts outward: some entities die into nutrient residue while terrain shifts slightly.';
     } else if (snapshot.stats.nutrients > 0.42) {
-      this.hintValue.textContent = 'Residue is feeding the soil. Fertile bloom patches should start fruiting while Decomposers work the substrate.';
+      this.hintValue.textContent = 'Residue is feeding the soil. Fertile bloom patches should fruit while grazers and Decomposers work the substrate.';
     } else {
-      this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.';
+      this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, grazers feed, residue linger, and decomposers return it to the soil.';
     }
 
     this.minimalHintValue.textContent = this.settings.visuals.minimalHud

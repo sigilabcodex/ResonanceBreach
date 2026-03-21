@@ -5,6 +5,7 @@ const speciesName = (entityType: EntityType) => ({
   plant: 'Rooted Bloom',
   flocker: 'Pollinator Drifter',
   cluster: 'Decomposer',
+  grazer: 'Grazer',
   predator: 'Predator',
 }[entityType]);
 
@@ -44,8 +45,20 @@ export interface ResidueCreatedEvent extends WorldEventBase {
   nutrient: number;
 }
 
-export type WorldEvent = EntityBornEvent | EntityFedEvent | EntityDiedEvent | ToolUsedEvent | ResidueCreatedEvent;
-export type WorldEventInput = Omit<EntityBornEvent, 'id'> | Omit<EntityFedEvent, 'id'> | Omit<EntityDiedEvent, 'id'> | Omit<ToolUsedEvent, 'id'> | Omit<ResidueCreatedEvent, 'id'>;
+export interface FruitCreatedEvent extends WorldEventBase {
+  type: 'fruitCreated';
+  sourceEntityId: number;
+  count: number;
+}
+
+export type WorldEvent = EntityBornEvent | EntityFedEvent | EntityDiedEvent | ToolUsedEvent | ResidueCreatedEvent | FruitCreatedEvent;
+export type WorldEventInput =
+  | Omit<EntityBornEvent, 'id'>
+  | Omit<EntityFedEvent, 'id'>
+  | Omit<EntityDiedEvent, 'id'>
+  | Omit<ToolUsedEvent, 'id'>
+  | Omit<ResidueCreatedEvent, 'id'>
+  | Omit<FruitCreatedEvent, 'id'>;
 
 export class WorldEventQueue {
   private nextId = 1;
@@ -80,6 +93,8 @@ export const buildNotifications = (events: WorldEvent[]): WorldNotifications => 
           return event.blocked ? `${event.tool} blocked by low resonance energy` : `${event.tool} tool applied`;
         case 'residueCreated':
           return 'residue created and feeding nearby nutrients';
+        case 'fruitCreated':
+          return `Rooted Bloom fruited into the field (${event.count})`;
       }
     });
 

@@ -102,4 +102,25 @@ This pass intentionally does **not** yet introduce:
 - a larger species roster
 - highly specialized predator-prey loops
 
-Later species such as grazers or predators should build on this clearer three-species ecological foundation rather than replacing it.
+## Canonical species pass 02
+
+### Grazer
+
+**Role**
+- grounded mobile forager
+- consumes bloom fruit and edible growth
+- converts producer surplus into visible mortality / residue
+
+**Implemented behavior**
+- seeks persistent fruit first, then browses mature productive blooms
+- loses energy and food steadily when it cannot feed
+- reproduces only after sustained successful grazing
+- dies into residue rather than disappearing instantly
+
+**Implemented visual direction**
+- heavier, ribbed glyph with low trail
+- warm, substrate-adjacent tone distinct from drifters
+
+**Implemented audio role**
+- midrange pulses and soft body movement tones
+- quiet feeding ticks and calmer starvation/death falloff
