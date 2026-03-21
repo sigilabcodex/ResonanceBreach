@@ -114,6 +114,7 @@ export interface FeedParticle {
   age: number;
   duration: number;
   radius: number;
+  sourceEntityId?: number;
 }
 
 export interface Residue {

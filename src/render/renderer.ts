@@ -18,6 +18,7 @@ const entityPalette: Record<EntityType, readonly [number, number, number]> = {
   flocker: [220, 235, 244],
   cluster: [170, 206, 182],
   plant: [140, 212, 160],
+  grazer: [214, 196, 164],
   predator: [244, 176, 202],
 };
 
@@ -285,7 +286,7 @@ export class Renderer {
       const position = this.wrappedPoint(residue.position, camera);
       if (!this.isVisible(position, residue.radius * this.view.scale + 24)) continue;
       const alpha = (1 - residue.age / residue.duration) * (0.12 + residue.richness * 0.16);
-      const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'cluster' ? 122 : 102;
+      const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'grazer' ? 18 : residue.sourceType === 'cluster' ? 122 : 102;
       ctx.strokeStyle = hsla(hue, 22, 70, alpha * 0.62);
       ctx.lineWidth = 0.7;
       for (let i = 0; i < 3; i += 1) {
@@ -368,17 +369,31 @@ export class Renderer {
       const position = this.wrappedPoint(particle.position, camera);
       if (!this.isVisible(position, 18)) continue;
       const alpha = 1 - particle.age / particle.duration;
-      const hue = particle.kind === 'feed' ? 42 : 24;
-      ctx.fillStyle = hsla(hue, particle.kind === 'feed' ? 82 : 70, particle.kind === 'feed' ? 74 : 66, 0.1 + alpha * 0.3);
-      ctx.beginPath();
       if (particle.kind === 'fruit') {
+        ctx.strokeStyle = hsla(36, 84, 74, 0.18 + alpha * 0.34);
+        ctx.lineWidth = 0.9;
+        ctx.fillStyle = hsla(24 + alpha * 8, 74, 68, 0.14 + alpha * 0.34);
+        ctx.beginPath();
         ctx.moveTo(position.x, position.y - particle.radius * 1.3);
         ctx.quadraticCurveTo(position.x + particle.radius * 1.4, position.y - particle.radius * 0.2, position.x, position.y + particle.radius * 1.3);
         ctx.quadraticCurveTo(position.x - particle.radius * 1.4, position.y - particle.radius * 0.2, position.x, position.y - particle.radius * 1.3);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(position.x, position.y - particle.radius * 1.15);
+        ctx.lineTo(position.x + particle.radius * 0.16, position.y - particle.radius * 1.9);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(position.x, position.y + particle.radius * 0.1, particle.radius * (1.5 + alpha * 0.4), 0, Math.PI * 2);
+        ctx.strokeStyle = hsla(44, 70, 76, 0.06 + alpha * 0.12);
+        ctx.stroke();
       } else {
+        const hue = 42;
+        ctx.fillStyle = hsla(hue, 82, 74, 0.1 + alpha * 0.3);
+        ctx.beginPath();
         ctx.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
+        ctx.fill();
       }
-      ctx.fill();
       this.drawCallEstimate += 1;
     }
     ctx.restore();
@@ -411,7 +426,7 @@ export class Renderer {
       const position = this.wrappedPoint(entity.position, camera);
       if (!this.isVisible(position, entity.size * this.view.scale * 4 + 24)) continue;
       const color = entityPalette[entity.type];
-      const radius = entity.size * (entity.type === 'plant' ? 2.8 : entity.type === 'cluster' ? 2.3 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
+      const radius = entity.size * (entity.type === 'plant' ? 2.8 : entity.type === 'cluster' ? 2.3 : entity.type === 'grazer' ? 2.7 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
       const gradient = ctx.createRadialGradient(position.x, position.y, entity.size * 0.1, position.x, position.y, radius);
       gradient.addColorStop(0, rgba(color, 0.04 + entity.activity * 0.06 + entity.pollination * 0.03));
       gradient.addColorStop(0.65, rgba(color, 0.02 + entity.visualPulse * 0.06));
@@ -431,6 +446,7 @@ export class Renderer {
       if (!this.isVisible(position, entity.size * this.view.scale * 4 + 28)) continue;
       if (entity.type === 'flocker') this.drawFlocker(entity, position, time, camera, settings);
       else if (entity.type === 'cluster') this.drawCluster(entity, position, time, camera, settings);
+      else if (entity.type === 'grazer') this.drawGrazer(entity, position, time, camera, settings);
       else if (entity.type === 'plant') this.drawPlant(entity, position, time);
       else this.drawPredator(entity, position, time);
     }
@@ -522,6 +538,60 @@ export class Renderer {
     ctx.arc(0, 0, entity.size * (0.24 + maturity * 0.12), 0, Math.PI * 2);
     ctx.fill();
     this.drawCallEstimate += 1;
+    ctx.restore();
+  }
+
+  private drawGrazer(entity: Entity, position: Vec2, time: number, camera: CameraState, settings: GameSettings): void {
+    const { ctx } = this;
+    const color = entityPalette.grazer;
+    const maturity = Math.min(1, entity.stageProgress * 1.1 + entity.growth * 0.26 + entity.food * 0.18);
+    ctx.save();
+    if (settings.visuals.motionTrails) {
+      for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
+        const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
+        if (!this.isVisible(trailPoint, 14)) continue;
+        const alpha = ((entity.trail.length - i) / Math.max(1, entity.trail.length)) * (settings.visuals.reduceMotion ? 0.022 : 0.042);
+        ctx.strokeStyle = rgba(color, alpha);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(trailPoint.x - 1.1, trailPoint.y);
+        ctx.lineTo(trailPoint.x + 1.1, trailPoint.y);
+        ctx.stroke();
+        this.drawCallEstimate += 1;
+      }
+    }
+
+    ctx.translate(position.x, position.y);
+    ctx.rotate(entity.heading + Math.sin(time * 0.05 + entity.id) * (settings.visuals.reduceMotion ? 0.02 : 0.05));
+    ctx.globalAlpha = entity.boundaryFade * (0.48 + entity.activity * 0.5);
+    ctx.strokeStyle = rgba(color, 0.88);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(entity.size * 1.1, 0);
+    ctx.lineTo(entity.size * 0.3, -entity.size * (0.58 + maturity * 0.08));
+    ctx.lineTo(-entity.size * 0.74, -entity.size * 0.42);
+    ctx.lineTo(-entity.size * 1.02, 0);
+    ctx.lineTo(-entity.size * 0.74, entity.size * 0.42);
+    ctx.lineTo(entity.size * 0.3, entity.size * (0.58 + maturity * 0.08));
+    ctx.closePath();
+    ctx.stroke();
+    this.drawCallEstimate += 1;
+
+    ctx.beginPath();
+    ctx.moveTo(-entity.size * 0.42, -entity.size * 0.18);
+    ctx.lineTo(entity.size * 0.52, -entity.size * 0.18);
+    ctx.moveTo(-entity.size * 0.42, entity.size * 0.18);
+    ctx.lineTo(entity.size * 0.52, entity.size * 0.18);
+    ctx.stroke();
+    this.drawCallEstimate += 1;
+
+    if (entity.visualState === 'feeding' || entity.food > 0.72) {
+      ctx.fillStyle = rgba([236, 212, 162], 0.18 + Math.min(0.24, entity.visualPulse * 0.22));
+      ctx.beginPath();
+      ctx.arc(entity.size * 0.92, 0, entity.size * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      this.drawCallEstimate += 1;
+    }
     ctx.restore();
   }
 
@@ -639,7 +709,42 @@ export class Renderer {
 
     const position = this.wrappedPoint(selected.position, snapshot.camera);
     if (!this.isVisible(position, selected.size * this.view.scale * 3 + 20)) return;
+    this.drawAttentionTarget(snapshot, selected);
     this.drawAttentionEntityMarker(position, selected.size * 2.8, 0.42, true);
+    this.drawAttentionInfoLabel(selected, position);
+  }
+
+  private drawAttentionTarget(snapshot: SimulationSnapshot, entity: Entity): void {
+    if (entity.targetId === undefined || !entity.targetKind) return;
+    let position: Vec2 | undefined;
+    if (entity.targetKind === 'bloom') {
+      position = snapshot.entities.find((candidate) => candidate.id === entity.targetId)?.position;
+    } else if (entity.targetKind === 'fruit' || entity.targetKind === 'feed') {
+      position = snapshot.particles.find((particle) => particle.id === entity.targetId)?.position;
+    } else if (entity.targetKind === 'residue') {
+      position = snapshot.residues.find((residue) => residue.id === entity.targetId)?.position;
+    }
+    if (!position) return;
+
+    const a = this.wrappedPoint(entity.position, snapshot.camera);
+    const b = this.wrappedPoint(position, snapshot.camera);
+    if (!this.isVisible(b, 24)) return;
+    const { ctx } = this;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(216, 232, 238, 0.18)';
+    ctx.lineWidth = 0.9;
+    ctx.setLineDash([8, 10]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, entity.targetKind === 'residue' ? 10 : 8, 0, Math.PI * 2);
+    ctx.strokeStyle = entity.targetKind === 'residue' ? 'rgba(170, 206, 182, 0.32)' : entity.targetKind === 'bloom' ? 'rgba(140, 212, 160, 0.28)' : 'rgba(236, 208, 156, 0.34)';
+    ctx.stroke();
+    this.drawCallEstimate += 2;
+    ctx.restore();
   }
 
   private drawAttentionEntityMarker(position: Vec2, radius: number, alpha: number, primary: boolean): void {
@@ -720,6 +825,43 @@ export class Renderer {
       x: wrap(position.x, WORLD_WIDTH),
       y: wrap(position.y, WORLD_HEIGHT),
     };
+  }
+
+  private drawAttentionInfoLabel(entity: Entity, position: Vec2): void {
+    const { ctx } = this;
+    const status = entity.type === 'grazer'
+      ? entity.visualState === 'feeding'
+        ? 'feeding'
+        : entity.energy < 0.22 || entity.food < 0.18
+          ? 'weakening'
+          : entity.targetKind === 'fruit' || entity.targetKind === 'bloom'
+            ? `seeking ${entity.targetKind}`
+            : 'ranging'
+      : entity.visualState === 'feeding'
+        ? 'active'
+        : entity.visualState;
+    const label = entity.type === 'grazer'
+      ? `Grazer · ${status}`
+      : entity.type === 'plant'
+        ? `Bloom · ${entity.targetKind === 'bloom' ? 'visited' : entity.visualState}`
+        : entity.type === 'cluster'
+          ? `Decomposer · ${status}`
+          : 'Drifter';
+
+    ctx.save();
+    ctx.font = '500 11px Inter, system-ui, sans-serif';
+    const textWidth = ctx.measureText(label).width;
+    const x = position.x - textWidth * 0.5 - 8;
+    const y = position.y - entity.size * 3.4;
+    ctx.fillStyle = 'rgba(10, 16, 20, 0.72)';
+    ctx.fillRect(x, y - 11, textWidth + 16, 18);
+    ctx.strokeStyle = 'rgba(218, 232, 238, 0.16)';
+    ctx.strokeRect(x, y - 11, textWidth + 16, 18);
+    ctx.fillStyle = 'rgba(228, 238, 242, 0.88)';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, x + 8, y + 2);
+    this.drawCallEstimate += 3;
+    ctx.restore();
   }
 
 

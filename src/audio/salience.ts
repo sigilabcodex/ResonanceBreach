@@ -13,6 +13,7 @@ const ENTITY_IMPORTANCE: Record<Entity['type'], number> = {
   plant: 0.58,
   flocker: 0.78,
   cluster: 0.48,
+  grazer: 0.88,
   predator: 0.95,
 };
 
@@ -20,6 +21,7 @@ const ECOLOGICAL_WEIGHT: Record<Entity['type'], number> = {
   plant: 0.84,
   flocker: 0.56,
   cluster: 0.72,
+  grazer: 0.78,
   predator: 0.82,
 };
 
@@ -87,7 +89,7 @@ export const scoreEntities = (
     const isPrimary = focus.mode === 'entity' && focus.entityId === entity.id;
     const isRelated = focus.mode === 'entity' && focus.relatedEntityIds.has(entity.id);
     const activityScore = clamp(entity.activity, 0, 1);
-    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'cluster' ? 0.52 : entity.type === 'plant' ? 0.58 : 0.64;
+    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'grazer' ? 0.82 : entity.type === 'cluster' ? 0.52 : entity.type === 'plant' ? 0.58 : 0.64;
     const ecologicalScore = clamp(
       entity.growth * 0.22 + entity.resonance * ECOLOGICAL_WEIGHT[entity.type] * 0.34 + entity.harmony * 0.18 + entity.energy * 0.16,
       0,

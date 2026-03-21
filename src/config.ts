@@ -8,11 +8,13 @@ export const MAX_FRAME_DELTA = 0.1;
 export const INITIAL_FLOCKER_COUNT = 12;
 export const INITIAL_CLUSTER_COUNT = 9;
 export const INITIAL_PLANT_COUNT = 18;
+export const INITIAL_GRAZER_COUNT = 7;
 export const INITIAL_PREDATOR_COUNT = 0;
 
 export const MAX_FLOCKERS = 28;
 export const MAX_CLUSTERS = 22;
 export const MAX_PLANTS = 54;
+export const MAX_GRAZERS = 16;
 export const MAX_PREDATORS = 0;
 
 export const NEIGHBOR_RADIUS = 164;
@@ -61,7 +63,7 @@ export const TOOL_RADIUS: Record<ToolType, number> = {
   disrupt: 188,
 };
 
-export const ENTITY_TYPES = ['flocker', 'cluster', 'plant', 'predator'] as const;
+export const ENTITY_TYPES = ['flocker', 'cluster', 'plant', 'grazer', 'predator'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export const TERRAIN_TYPES = ['water', 'fertile', 'dense', 'solid'] as const;

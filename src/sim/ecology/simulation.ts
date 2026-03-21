@@ -6,10 +6,12 @@ import {
   ENERGY_START,
   INITIAL_CLUSTER_COUNT,
   INITIAL_FLOCKER_COUNT,
+  INITIAL_GRAZER_COUNT,
   INITIAL_PLANT_COUNT,
   INITIAL_PREDATOR_COUNT,
   MAX_CLUSTERS,
   MAX_FLOCKERS,
+  MAX_GRAZERS,
   MAX_PLANTS,
   NEIGHBOR_RADIUS,
   TERRAIN_SAMPLE_COLS,
@@ -190,6 +192,7 @@ export class Simulation {
     for (let i = 0; i < INITIAL_PLANT_COUNT; i += 1) this.entities.push(this.createEntity('plant', this.randomTerrainPoint('fertile')));
     for (let i = 0; i < INITIAL_FLOCKER_COUNT; i += 1) this.entities.push(this.createEntity('flocker', this.randomTerrainPoint(i % 3 === 0 ? 'water' : 'fertile')));
     for (let i = 0; i < INITIAL_CLUSTER_COUNT; i += 1) this.entities.push(this.createEntity('cluster', this.randomTerrainPoint('fertile')));
+    for (let i = 0; i < INITIAL_GRAZER_COUNT; i += 1) this.entities.push(this.createEntity('grazer', this.randomTerrainPoint('fertile')));
     for (let i = 0; i < INITIAL_PREDATOR_COUNT; i += 1) this.entities.push(this.createEntity('predator', this.randomTerrainPoint('water')));
     this.seedInitialNutrients();
     this.rebuildParticleBuckets();
@@ -636,48 +639,54 @@ export class Simulation {
   }
 
   private createEntity(type: EntityType, position: Vec2): Entity {
-    const baseSize = { flocker: 6.2, cluster: 8.4, plant: 8.2, predator: 11 }[type];
-    const lifeSpan = { flocker: 124, cluster: 148, plant: 224, predator: 150 }[type];
-    const tone = { flocker: 0.72, cluster: 0.22, plant: 0.3, predator: 0.74 }[type];
+    const baseSize = { flocker: 6.2, cluster: 8.4, plant: 8.2, grazer: 10.4, predator: 11 }[type];
+    const lifeSpan = { flocker: 124, cluster: 148, plant: 224, grazer: 162, predator: 150 }[type];
+    const tone = { flocker: 0.72, cluster: 0.22, plant: 0.3, grazer: 0.48, predator: 0.74 }[type];
     const clusterId = type === 'cluster' ? this.nextClusterId++ : 0;
-    const vitality = type === 'plant' ? this.rng.range(0.52, 0.82) : type === 'cluster' ? this.rng.range(0.46, 0.74) : this.rng.range(0.56, 0.86);
-    const growth = type === 'plant' ? this.rng.range(0.22, 0.48) : type === 'cluster' ? this.rng.range(0.18, 0.42) : this.rng.range(0.16, 0.34);
+    const vitality = type === 'plant'
+      ? this.rng.range(0.52, 0.82)
+      : type === 'cluster'
+        ? this.rng.range(0.46, 0.74)
+        : type === 'grazer'
+          ? this.rng.range(0.44, 0.68)
+          : this.rng.range(0.56, 0.86);
+    const growth = type === 'plant' ? this.rng.range(0.22, 0.48) : type === 'cluster' ? this.rng.range(0.18, 0.42) : type === 'grazer' ? this.rng.range(0.14, 0.28) : this.rng.range(0.16, 0.34);
     return {
       id: this.nextId++,
       type,
       stage: 'birth',
       position: { ...position },
-      velocity: type === 'plant' ? { x: 0, y: 0 } : this.randomVelocity(type === 'cluster' ? 1.6 : 2.8),
+      velocity: type === 'plant' ? { x: 0, y: 0 } : this.randomVelocity(type === 'cluster' ? 1.6 : type === 'grazer' ? 1.3 : 2.8),
       heading: this.rng.range(0, TWO_PI),
       size: baseSize,
       baseSize,
       energy: clamp(vitality + this.rng.range(0.04, 0.16), 0, 1.2),
       growth,
-      resonance: this.rng.range(type === 'cluster' ? 0.18 : 0.24, type === 'flocker' ? 0.82 : 0.72),
-      harmony: this.rng.range(type === 'cluster' ? 0.18 : 0.4, type === 'flocker' ? 0.88 : 0.76),
-      stability: this.rng.range(type === 'flocker' ? 0.42 : 0.56, type === 'cluster' ? 0.86 : 0.94),
+      resonance: this.rng.range(type === 'cluster' ? 0.18 : type === 'grazer' ? 0.22 : 0.24, type === 'flocker' ? 0.82 : type === 'grazer' ? 0.64 : 0.72),
+      harmony: this.rng.range(type === 'cluster' ? 0.18 : type === 'grazer' ? 0.28 : 0.4, type === 'flocker' ? 0.88 : type === 'grazer' ? 0.68 : 0.76),
+      stability: this.rng.range(type === 'flocker' ? 0.42 : type === 'grazer' ? 0.52 : 0.56, type === 'cluster' ? 0.86 : type === 'grazer' ? 0.88 : 0.94),
       age: 0,
       lifeSpan: lifeSpan + this.rng.range(-14, 18),
       stageProgress: 0,
-      reproductionCooldown: this.rng.range(type === 'plant' ? 14 : 10, type === 'cluster' ? 18 : 24),
+      reproductionCooldown: this.rng.range(type === 'plant' ? 14 : type === 'grazer' ? 14 : 10, type === 'cluster' ? 18 : type === 'grazer' ? 26 : 24),
       pulse: 0,
       tone: clamp(tone + this.rng.range(-0.06, 0.06), 0, 1),
       shape: this.rng.range(0, 1),
       hueShift: this.rng.range(-0.18, 0.18),
       terrainBias: this.rng.range(-0.16, 0.16),
       clusterId,
-      appetite: this.rng.range(type === 'cluster' ? 0.52 : 0.24, type === 'cluster' ? 1.08 : 0.92),
+      appetite: this.rng.range(type === 'cluster' ? 0.52 : type === 'grazer' ? 0.62 : 0.24, type === 'cluster' ? 1.08 : type === 'grazer' ? 0.98 : 0.92),
       anchor: type === 'plant' ? { ...position } : undefined,
       visualState: 'idle',
       visualPulse: 0,
       boundaryFade: 1,
-      activity: this.rng.range(type === 'plant' ? 0.08 : 0.14, type === 'cluster' ? 0.32 : 0.44),
+      activity: this.rng.range(type === 'plant' ? 0.08 : type === 'grazer' ? 0.18 : 0.14, type === 'cluster' ? 0.32 : type === 'grazer' ? 0.34 : 0.44),
       activityBias: this.rng.range(0, 1),
-      food: this.rng.range(type === 'plant' ? 0.54 : 0.42, type === 'cluster' ? 0.88 : 0.76),
-      fruitCooldown: this.rng.range(type === 'plant' ? 8 : 5, type === 'plant' ? 16 : 10),
+      food: this.rng.range(type === 'plant' ? 0.54 : type === 'grazer' ? 0.44 : 0.42, type === 'cluster' ? 0.88 : type === 'grazer' ? 0.74 : 0.76),
+      fruitCooldown: this.rng.range(type === 'plant' ? 8 : type === 'grazer' ? 10 : 5, type === 'plant' ? 16 : type === 'grazer' ? 18 : 10),
       vitality,
       pollination: type === 'plant' ? this.rng.range(0.12, 0.34) : 0,
-      memory: this.rng.range(0.18, 0.44),
+      memory: this.rng.range(type === 'grazer' ? 0.24 : 0.18, type === 'grazer' ? 0.52 : 0.44),
       targetId: undefined,
       targetKind: undefined,
       trail: [],
@@ -813,12 +822,14 @@ export class Simulation {
       ? 0.08 + sample.fertility * 0.1 + sample.nutrient * 0.16 + focusWeight * 0.08 + entity.pollination * 0.05
       : entity.type === 'cluster'
         ? 0.12 + activityPulse * 0.12 + nearbyResidue * 0.28 + focusWeight * 0.08
+        : entity.type === 'grazer'
+          ? 0.1 + activityPulse * 0.08 + nearbyFood * 0.3 + focusWeight * 0.16 + Math.max(0, 0.4 - entity.energy) * 0.18
         : 0.18 + activityPulse * 0.22 + nearbyFood * 0.24 + focusWeight * 0.18;
     entity.activity = lerp(entity.activity, clamp(targetActivity, 0.04, 1), dt * 0.7);
     entity.resonance = clamp(lerp(entity.resonance, 0.28 + sample.resonance * (entity.type === 'cluster' ? 0.46 : 0.72), dt * 0.12), 0, 1.3);
     entity.stability = clamp(lerp(entity.stability, 0.34 + sample.stability * 0.86 + (entity.type === 'plant' ? sample.fertility * 0.08 : 0), dt * 0.08), 0, 1.2);
-    entity.food = clamp(entity.food - dt * (entity.type === 'plant' ? 0.0022 : entity.type === 'cluster' ? 0.0052 : 0.008 + entity.activity * 0.01), 0, 1.6);
-    entity.energy = clamp(entity.energy - dt * (entity.type === 'plant' ? 0.0014 : entity.type === 'cluster' ? 0.0038 : 0.005 + entity.activity * 0.008), 0, 1.6);
+    entity.food = clamp(entity.food - dt * (entity.type === 'plant' ? 0.0022 : entity.type === 'cluster' ? 0.0052 : entity.type === 'grazer' ? 0.011 + entity.activity * 0.012 : 0.008 + entity.activity * 0.01), 0, 1.6);
+    entity.energy = clamp(entity.energy - dt * (entity.type === 'plant' ? 0.0014 : entity.type === 'cluster' ? 0.0038 : entity.type === 'grazer' ? 0.009 + entity.activity * 0.01 : 0.005 + entity.activity * 0.008), 0, 1.6);
     entity.memory = clamp(entity.memory - dt * 0.012, 0, 1.2);
     entity.pollination = clamp(entity.pollination - dt * (entity.type === 'plant' ? 0.012 : 0), 0, 1.6);
 
@@ -831,7 +842,7 @@ export class Simulation {
     entity.vitality = clamp(entity.energy * 0.55 + entity.food * 0.25 + entity.stability * 0.2, 0, 1.6);
     entity.stageProgress = this.getLifecycleProgress(entity);
     entity.stage = this.getStage(entity.stageProgress);
-    entity.size = clamp(entity.baseSize * (0.68 + entity.growth * 0.42 + entity.stageProgress * 0.24 + (entity.type === 'plant' ? entity.pollination * 0.04 : 0)), entity.baseSize * 0.54, entity.baseSize * 2.1);
+    entity.size = clamp(entity.baseSize * (0.68 + entity.growth * 0.42 + entity.stageProgress * 0.24 + (entity.type === 'plant' ? entity.pollination * 0.04 : entity.type === 'grazer' ? entity.food * 0.05 : 0)), entity.baseSize * 0.54, entity.baseSize * 2.1);
     entity.heading = Math.atan2(entity.velocity.y || 0.001, entity.velocity.x || 0.001);
     this.updateTrail(entity);
     localStats.activity += entity.activity;
@@ -868,18 +879,28 @@ export class Simulation {
       this.seedTerrain(entity.position, 52 + entity.size * 2.4, 0.01 * dt, 0.004 * dt, -0.001 * dt, 2.6);
     }
 
-    if (entity.stageProgress > 0.42 && entity.reproductionCooldown <= 0 && entity.pollination > 0.36 && entity.energy > 0.72 && entity.food > 0.68 && sample.terrain !== 'solid') {
-      const fruitCount = entity.stage === 'decay' ? 1 : sample.nutrient > 0.42 ? 2 : 1;
+    const fruitingHealth = fertilityScore * 0.38 + entity.energy * 0.24 + entity.food * 0.18 + entity.growth * 0.12 + entity.pollination * 0.08;
+    if (
+      entity.stage === 'mature'
+      && entity.fruitCooldown <= 0
+      && fruitingHealth > 0.72
+      && entity.pollination > 0.42
+      && entity.energy > 0.74
+      && entity.food > 0.7
+      && sample.terrain !== 'solid'
+    ) {
+      const fruitCount = sample.nutrient > 0.42 ? 2 : 1;
       for (let i = 0; i < fruitCount; i += 1) {
-        this.spawnParticle(entity.position, entity.size * 2.4, 'fruit', false);
+        this.spawnParticle(entity.position, entity.size * 2.6, 'fruit', false, entity.id);
         localStats.fruit += 1;
       }
-      entity.fruitCooldown = this.rng.range(8, 15);
-      entity.reproductionCooldown = this.rng.range(10, 16);
-      entity.energy *= 0.92;
-      entity.food *= 0.94;
+      entity.fruitCooldown = this.rng.range(12, 20);
+      entity.energy *= 0.9;
+      entity.food *= 0.92;
       entity.visualState = 'reproducing';
-      entity.visualPulse = 0.32;
+      entity.visualPulse = 0.42;
+      this.emitBurst('birth', entity.position, 8 + entity.size * 0.7, 0.12 + entity.hueShift * 0.04);
+      this.emitWorldEvent({ type: 'fruitCreated', time: this.time, position: { ...entity.position }, sourceEntityId: entity.id, count: fruitCount });
     }
 
     if (entity.stage === 'decay' && (fertilityScore < 0.34 || entity.energy < 0.28)) {
@@ -905,21 +926,25 @@ export class Simulation {
       entity.energy = clamp(entity.energy - dt * 0.1, 0, 1.2);
       return;
     }
-
-    let nearestFood: FeedParticle | undefined;
-    let nearestFoodDistance = Infinity;
-    for (const particle of this.particles) {
-      const offset = this.delta(entity.position, particle.position);
-      const dist = Math.hypot(offset.x, offset.y);
-      if (dist < nearestFoodDistance && dist < (particle.kind === 'fruit' ? 240 : 190)) {
-        nearestFood = particle;
-        nearestFoodDistance = dist;
-      }
+    if (entity.type === 'grazer') {
+      this.updateGrazer(entity, sample, neighbors, dt, localStats);
+      return;
     }
 
+    this.updatePollinator(entity, sample, neighbors, dt, localStats);
+  }
+
+  private updatePollinator(
+    entity: Entity,
+    sample: FieldSample,
+    neighbors: Entity[],
+    dt: number,
+    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number },
+  ): void {
+    const nearestFood = this.findFoodTarget(entity.position, 240, (particle) => particle.kind === 'fruit' || particle.kind === 'feed');
     const bloomTarget = this.findBloomTarget(entity.position);
-    let nearestOffset = bloomTarget ? this.delta(entity.position, bloomTarget.position) : undefined;
-    let nearestDistance = bloomTarget ? Math.hypot(nearestOffset!.x, nearestOffset!.y) : Infinity;
+    const nearestOffset = bloomTarget ? this.delta(entity.position, bloomTarget.position) : undefined;
+    const nearestDistance = bloomTarget ? Math.hypot(nearestOffset!.x, nearestOffset!.y) : Infinity;
 
     let cohesionX = 0;
     let cohesionY = 0;
@@ -976,27 +1001,7 @@ export class Simulation {
         localStats.fruit += dt * 0.8;
       }
     } else if (nearestFood) {
-      const offset = this.delta(entity.position, nearestFood.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const pull = smoothstep(nearestFood.kind === 'fruit' ? 240 : 190, 0, dist) * (nearestFood.kind === 'fruit' ? 16 : 12);
-      entity.velocity.x += (offset.x / dist) * pull * dt * (0.6 + entity.activity);
-      entity.velocity.y += (offset.y / dist) * pull * dt * (0.6 + entity.activity);
-      entity.targetId = nearestFood.id;
-      entity.targetKind = nearestFood.kind;
-
-      if (dist < entity.size + nearestFood.radius + 6) {
-        const gain = nearestFood.kind === 'feed' ? 0.2 : 0.3;
-        entity.energy = clamp(entity.energy + nearestFood.energy * gain, 0, 1.55);
-        entity.growth = clamp(entity.growth + nearestFood.energy * (gain * 0.65), 0, 1.8);
-        entity.food = clamp(entity.food + nearestFood.energy * 0.72, 0, 1.6);
-        entity.visualState = 'feeding';
-        entity.visualPulse = 0.62;
-        entity.pulse = 0.24;
-        this.emitBurst('feed', entity.position, 10 + entity.size, 0.18 + entity.hueShift * 0.03);
-        this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: nearestFood.kind });
-        nearestFood.age = nearestFood.duration;
-        localStats.fruit += nearestFood.kind === 'fruit' ? 1.2 : 0.6;
-      }
+      this.consumeParticle(entity, nearestFood, dt, 240, 190, 16, 12, 0.2, localStats);
     } else {
       entity.targetId = undefined;
       entity.targetKind = undefined;
@@ -1032,6 +1037,102 @@ export class Simulation {
     entity.position = this.wrapPosition({
       x: entity.position.x + entity.velocity.x * dt * (0.46 + entity.activity * 0.72),
       y: entity.position.y + entity.velocity.y * dt * (0.46 + entity.activity * 0.72),
+    });
+  }
+
+  private updateGrazer(
+    entity: Entity,
+    sample: FieldSample,
+    neighbors: Entity[],
+    dt: number,
+    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number },
+  ): void {
+    const nearestFruit = this.findFoodTarget(entity.position, 300, (particle) => particle.kind === 'fruit');
+    const bloomTarget = nearestFruit ? undefined : this.findGrazerBloomTarget(entity.position);
+
+    entity.velocity.x += sample.flow.x * dt * 0.028 + sample.fertilityGradient.x * dt * 4.4 - sample.gradient.x * dt * 2.8;
+    entity.velocity.y += sample.flow.y * dt * 0.028 + sample.fertilityGradient.y * dt * 4.4 - sample.gradient.y * dt * 2.8;
+
+    let separationX = 0;
+    let separationY = 0;
+    let grazerCount = 0;
+    for (const other of neighbors) {
+      if (other.type !== 'grazer') continue;
+      const offset = this.delta(entity.position, other.position);
+      const dist = Math.hypot(offset.x, offset.y) || 1;
+      const proximity = clamp(1 - dist / 120, 0, 1);
+      if (proximity <= 0) continue;
+      grazerCount += 1;
+      separationX -= (offset.x / dist) * proximity * proximity;
+      separationY -= (offset.y / dist) * proximity * proximity;
+    }
+
+    const strideTheta = this.time * (0.014 + entity.activityBias * 0.008) + entity.id * 0.43;
+    entity.velocity.x += Math.cos(strideTheta) * dt * 0.72;
+    entity.velocity.y += Math.sin(strideTheta * 0.82) * dt * 0.56;
+
+    if (nearestFruit) {
+      this.consumeParticle(entity, nearestFruit, dt, 300, 300, 22, 22, 0.34, localStats);
+      entity.memory = clamp(entity.memory + dt * 0.08, 0, 1.2);
+    } else if (bloomTarget) {
+      const offset = this.delta(entity.position, bloomTarget.position);
+      const dist = Math.hypot(offset.x, offset.y) || 1;
+      const pull = smoothstep(260, 0, dist) * 14;
+      entity.velocity.x += (offset.x / dist) * pull * dt;
+      entity.velocity.y += (offset.y / dist) * pull * dt;
+      entity.targetId = bloomTarget.id;
+      entity.targetKind = 'bloom';
+
+      if (dist < entity.size + bloomTarget.size + 10) {
+        const browseAmount = Math.min(dt * 0.12, bloomTarget.pollination * 0.1 + bloomTarget.energy * 0.04);
+        bloomTarget.pollination = clamp(bloomTarget.pollination - browseAmount * 0.3, 0, 1.8);
+        bloomTarget.energy = clamp(bloomTarget.energy - browseAmount * 0.08, 0, 1.5);
+        bloomTarget.visualState = 'feeding';
+        bloomTarget.visualPulse = Math.max(bloomTarget.visualPulse, 0.18);
+        entity.energy = clamp(entity.energy + browseAmount * 0.72, 0, 1.5);
+        entity.food = clamp(entity.food + browseAmount * 0.84, 0, 1.6);
+        entity.growth = clamp(entity.growth + browseAmount * 0.2, 0, 1.8);
+        entity.visualState = 'feeding';
+        entity.visualPulse = Math.max(entity.visualPulse, 0.38);
+        entity.pulse = Math.max(entity.pulse, 0.22);
+        if (this.rng.next() < dt * 1.8) {
+          this.emitBurst('feed', entity.position, 9 + entity.size * 0.8, 0.12 + entity.hueShift * 0.03);
+          this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: 'fruit' });
+        }
+      }
+    } else {
+      entity.targetId = undefined;
+      entity.targetKind = undefined;
+      entity.energy = clamp(entity.energy - dt * 0.006, 0, 1.5);
+      entity.stability = clamp(entity.stability - dt * 0.008, 0, 1.2);
+      if (entity.energy < 0.24 || entity.food < 0.22) {
+        entity.visualState = 'dying';
+        entity.visualPulse = Math.max(entity.visualPulse, 0.18);
+      }
+    }
+
+    if (grazerCount > 0) {
+      entity.velocity.x += separationX * dt * 6.2;
+      entity.velocity.y += separationY * dt * 6.2;
+    }
+
+    if (sample.terrain === 'fertile') {
+      entity.stability = clamp(entity.stability + dt * 0.012, 0, 1.2);
+    } else if (sample.terrain === 'solid' || sample.traversability < 0.22) {
+      entity.energy = clamp(entity.energy - dt * 0.024, 0, 1.5);
+      entity.stability = clamp(entity.stability - dt * 0.024, 0, 1.2);
+    } else if (sample.terrain === 'water') {
+      entity.velocity.x += sample.moistureGradient.x * dt * 1.4;
+      entity.velocity.y += sample.moistureGradient.y * dt * 1.4;
+      entity.energy = clamp(entity.energy - dt * 0.018, 0, 1.5);
+    }
+
+    entity.harmony = clamp(lerp(entity.harmony, 0.24 + sample.resonance * 0.22 + entity.food * 0.16, dt * 0.05), 0, 1.1);
+    entity.velocity.x *= Math.pow(0.957, dt * 60);
+    entity.velocity.y *= Math.pow(0.957, dt * 60);
+    entity.position = this.wrapPosition({
+      x: entity.position.x + entity.velocity.x * dt * (0.28 + entity.activity * 0.34),
+      y: entity.position.y + entity.velocity.y * dt * (0.28 + entity.activity * 0.34),
     });
   }
 
@@ -1134,11 +1235,13 @@ export class Simulation {
           entity.memory = clamp(entity.memory + dt * 0.06 * falloff, 0, 1.2);
         } else {
           entity.stability = clamp(entity.stability + dt * 0.05 * falloff, 0, 1.2);
+          if (entity.type === 'grazer') entity.energy = clamp(entity.energy + dt * 0.03 * falloff, 0, 1.5);
         }
         this.seedTerrain(field.position, field.radius * 0.8, 0.08 * dt, 0.04 * dt, -0.02 * dt, 2.8);
       } else if (field.tool === 'feed') {
         if (entity.type !== 'plant') entity.activity = clamp(entity.activity + dt * 0.14 * falloff, 0, 1);
         if (entity.type === 'flocker') entity.memory = clamp(entity.memory + dt * 0.08 * falloff, 0, 1.2);
+        if (entity.type === 'grazer') entity.memory = clamp(entity.memory + dt * 0.1 * falloff, 0, 1.2);
       } else if (field.tool === 'repel') {
         const wave = smoothstep(0, field.radius, dist) * Math.max(field.strength, 0.2);
         entity.velocity.x -= nx * dt * 22 * wave;
@@ -1170,7 +1273,7 @@ export class Simulation {
 
     for (const entity of this.entities) {
       if (entity.reproductionCooldown > 0) continue;
-      const localDensity = this.getNeighborsByEntity(entity, entity.type === 'plant' ? 150 : entity.type === 'cluster' ? 100 : 130).length;
+      const localDensity = this.getNeighborsByEntity(entity, entity.type === 'plant' ? 150 : entity.type === 'cluster' ? 100 : entity.type === 'grazer' ? 120 : 130).length;
 
       const localSample = this.sampleField(entity.position.x, entity.position.y);
 
@@ -1210,6 +1313,25 @@ export class Simulation {
           entity.reproductionCooldown = this.rng.range(20, 30);
           entity.food *= 0.7;
           entity.energy *= 0.82;
+        }
+      } else if (
+        entity.type === 'grazer'
+        && entity.stage !== 'birth'
+        && entity.food > 0.84
+        && entity.energy > 0.8
+        && entity.memory > 0.28
+        && localSample.traversability > 0.22
+        && counts.grazer + additions.filter((candidate) => candidate.type === 'grazer').length < MAX_GRAZERS
+      ) {
+        const nearbyFruit = this.findFoodTarget(entity.position, 180, (particle) => particle.kind === 'fruit');
+        const birthRate = dt * clamp(0.006 + entity.food * 0.012 + entity.energy * 0.012 + (nearbyFruit ? 0.008 : 0) - localDensity * 0.007, 0.001, 0.024);
+        if (this.rng.next() <= birthRate) {
+          const origin = nearbyFruit?.position ?? entity.position;
+          const position = this.findNearbySpawnPoint(origin, 54, (terrain) => terrain.traversability > 0.26 && terrain.fertility > 0.34 && terrain.slope < 0.58);
+          additions.push(this.createEntity('grazer', position));
+          entity.reproductionCooldown = this.rng.range(28, 40);
+          entity.food *= 0.62;
+          entity.energy *= 0.74;
         }
       } else if (
         entity.type === 'cluster'
@@ -1266,7 +1388,7 @@ export class Simulation {
     const threat = clamp((localStats?.threat ?? counts.predator * 0.06) / interactions, 0, 1);
     const stability = clamp((localStats?.stability ?? this.entities.reduce((sum, entity) => sum + entity.stability, 0)) / interactions, 0, 1);
     const growth = clamp(this.entities.reduce((sum, entity) => sum + entity.growth, 0) / Math.max(1, this.entities.length), 0, 1);
-    const richness = [counts.flocker > 0, counts.cluster > 0, counts.plant > 0].filter(Boolean).length / 3;
+    const richness = [counts.flocker > 0, counts.cluster > 0, counts.plant > 0, counts.grazer > 0].filter(Boolean).length / 4;
     const focus = clamp((localStats?.focus ?? 0) / Math.max(1, this.entities.length * 0.7), 0, 1);
     const nutrients = clamp((localStats?.nutrients ?? this.terrain.reduce((sum, cell) => sum + cell.nutrient, 0)) / Math.max(1, this.terrain.length), 0, 1);
     const fruit = clamp(((localStats?.fruit ?? this.particles.filter((particle) => particle.kind === 'fruit').length) / 18), 0, 1);
@@ -1345,6 +1467,10 @@ export class Simulation {
       const decayArc = clamp(entity.age / entity.lifeSpan, 0, 1);
       return clamp(decayArc * 0.48 + entity.growth * 0.3 + entity.memory * 0.22, 0, 1);
     }
+    if (entity.type === 'grazer') {
+      const grazeArc = clamp(entity.age / entity.lifeSpan, 0, 1);
+      return clamp(grazeArc * 0.4 + entity.energy * 0.28 + entity.food * 0.26 + entity.growth * 0.06, 0, 1);
+    }
     const driftArc = clamp(entity.age / entity.lifeSpan, 0, 1);
     return clamp(driftArc * 0.42 + entity.energy * 0.24 + entity.food * 0.22 + entity.memory * 0.12, 0, 1);
   }
@@ -1355,7 +1481,7 @@ export class Simulation {
       return;
     }
     entity.trail.unshift({ ...entity.position });
-    const maxTrail = entity.type === 'cluster' ? 8 : 6;
+    const maxTrail = entity.type === 'cluster' ? 8 : entity.type === 'grazer' ? 7 : 6;
     if (entity.trail.length > maxTrail) entity.trail.length = maxTrail;
   }
 
@@ -1392,6 +1518,79 @@ export class Simulation {
     return best;
   }
 
+  private findFoodTarget(position: Vec2, radius: number, predicate: (particle: FeedParticle) => boolean): FeedParticle | undefined {
+    let best: FeedParticle | undefined;
+    let bestScore = -Infinity;
+    this.forEachNearbyBucket(this.particleBuckets, position, radius, PARTICLE_BUCKET_SIZE, PARTICLE_BUCKET_COLS, PARTICLE_BUCKET_ROWS, (particle) => {
+      if (!predicate(particle)) return;
+      const offset = this.delta(position, particle.position);
+      const dist = Math.hypot(offset.x, offset.y);
+      if (dist > radius) return;
+      const freshness = 1 - particle.age / particle.duration;
+      const score = (1 - dist / radius) * 0.66 + particle.energy * 0.26 + freshness * 0.18;
+      if (score > bestScore) {
+        bestScore = score;
+        best = particle;
+      }
+    });
+    return best;
+  }
+
+  private findGrazerBloomTarget(position: Vec2): Entity | undefined {
+    let best: Entity | undefined;
+    let bestScore = -Infinity;
+    this.forEachNearbyBucket(this.entityBuckets, position, 260, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS, ENTITY_BUCKET_ROWS, (candidate) => {
+      if (candidate.type !== 'plant') return;
+      const offset = this.delta(position, candidate.position);
+      const dist = Math.hypot(offset.x, offset.y);
+      if (dist > 260) return;
+      const edible = candidate.stage === 'mature' ? 0.18 : 0;
+      const score = (1 - dist / 260) * 0.52 + candidate.pollination * 0.24 + candidate.energy * 0.18 + candidate.growth * 0.12 + edible;
+      if (score > bestScore && score > 0.34) {
+        bestScore = score;
+        best = candidate;
+      }
+    });
+    return best;
+  }
+
+  private consumeParticle(
+    entity: Entity,
+    particle: FeedParticle,
+    dt: number,
+    seekRadius: number,
+    pullRadius: number,
+    fruitPull: number,
+    feedPull: number,
+    gain: number,
+    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number },
+  ): void {
+    const offset = this.delta(entity.position, particle.position);
+    const dist = Math.hypot(offset.x, offset.y) || 1;
+    const pull = smoothstep(pullRadius, 0, dist) * (particle.kind === 'fruit' ? fruitPull : feedPull);
+    entity.velocity.x += (offset.x / dist) * pull * dt * (0.5 + entity.activity);
+    entity.velocity.y += (offset.y / dist) * pull * dt * (0.5 + entity.activity);
+    entity.targetId = particle.id;
+    entity.targetKind = particle.kind;
+
+    if (dist < entity.size + particle.radius + (entity.type === 'grazer' ? 8 : 6)) {
+      entity.energy = clamp(entity.energy + particle.energy * gain, 0, 1.55);
+      entity.growth = clamp(entity.growth + particle.energy * (gain * 0.54), 0, 1.8);
+      entity.food = clamp(entity.food + particle.energy * (entity.type === 'grazer' ? 0.96 : 0.72), 0, 1.6);
+      entity.memory = clamp(entity.memory + dt * 0.12, 0, 1.2);
+      entity.visualState = 'feeding';
+      entity.visualPulse = entity.type === 'grazer' ? 0.5 : 0.62;
+      entity.pulse = 0.24;
+      this.emitBurst('feed', entity.position, (entity.type === 'grazer' ? 12 : 10) + entity.size, 0.18 + entity.hueShift * 0.03);
+      this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: particle.kind });
+      particle.age = particle.duration;
+      localStats.fruit += particle.kind === 'fruit' ? 1.2 : 0.6;
+    } else if (dist > seekRadius) {
+      entity.targetId = undefined;
+      entity.targetKind = undefined;
+    }
+  }
+
   private emitWorldEvent(event: WorldEventInput): void {
     this.eventQueue.create(event);
   }
@@ -1417,7 +1616,7 @@ export class Simulation {
     });
   }
 
-  private spawnParticle(origin: Vec2, spread: number, kind: FeedParticle['kind'], initial: boolean): void {
+  private spawnParticle(origin: Vec2, spread: number, kind: FeedParticle['kind'], initial: boolean, sourceEntityId?: number): void {
     const angle = this.rng.range(0, TWO_PI);
     const distance = this.rng.range(spread * 0.15, spread);
     const speed = kind === 'feed' ? this.rng.range(initial ? 18 : 6, initial ? 34 : 16) : this.rng.range(4, 16);
@@ -1434,8 +1633,9 @@ export class Simulation {
       },
       energy: this.rng.range(kind === 'feed' ? 0.3 : 0.18, kind === 'feed' ? 0.46 : 0.3),
       age: 0,
-      duration: this.rng.range(kind === 'feed' ? 3.4 : 8, kind === 'feed' ? 5.6 : 12),
-      radius: kind === 'feed' ? this.rng.range(2.4, 4.2) : this.rng.range(1.8, 3.2),
+      duration: this.rng.range(kind === 'feed' ? 3.4 : 11, kind === 'feed' ? 5.6 : 16),
+      radius: kind === 'feed' ? this.rng.range(2.4, 4.2) : this.rng.range(3.2, 5.2),
+      sourceEntityId,
     });
   }
 
@@ -1535,7 +1735,7 @@ export class Simulation {
         acc[entity.type] += 1;
         return acc;
       },
-      { flocker: 0, cluster: 0, plant: 0, predator: 0 } as Record<EntityType, number>,
+      { flocker: 0, cluster: 0, plant: 0, grazer: 0, predator: 0 } as Record<EntityType, number>,
     );
   }
 

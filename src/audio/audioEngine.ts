@@ -27,6 +27,7 @@ const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
   plant: -1,
   cluster: -1,
   flocker: 1,
+  grazer: 0,
   predator: 0,
 };
 
@@ -34,6 +35,7 @@ const ENTITY_WAVEFORM: Record<ScoredEntity['entity']['type'], OscillatorType> = 
   plant: 'triangle',
   cluster: 'sine',
   flocker: 'sine',
+  grazer: 'triangle',
   predator: 'sawtooth',
 };
 
@@ -314,8 +316,8 @@ export class AudioEngine {
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
       voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : 0.7), now, 0.18);
-      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : 1.6 + detailLift * 1.15, now, 0.16);
+      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
+      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.2 + detailLift * 0.8 : 1.6 + detailLift * 1.15, now, 0.16);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(candidate.entity.position.x, snapshot), now, 0.12);
       voice.gain.gain.setTargetAtTime(gain, now, 0.12);
     });
@@ -329,6 +331,8 @@ export class AudioEngine {
       if ('entityId' in event) {
         const bump = event.type === 'entityDied' ? 1 : event.type === 'entityFed' ? 0.72 : 0.55;
         this.entityPriority.set(event.entityId, bump);
+      } else if (event.type === 'fruitCreated') {
+        this.entityPriority.set(event.sourceEntityId, 0.62);
       }
 
       if (event.type === 'toolUsed') {
@@ -418,7 +422,7 @@ export class AudioEngine {
         biodiversity: 0.4,
         focus: 0,
         nutrients: event.type === 'residueCreated' ? 0.52 : 0.26,
-        fruit: event.type === 'entityFed' ? 0.46 : 0.18,
+        fruit: event.type === 'entityFed' || event.type === 'fruitCreated' ? 0.46 : 0.18,
       },
       tool: { active: 'observe', unlocked: ['observe'], pulse: 0, worldPosition: event.position, radius: 0, strength: 0, visible: false, blocked: false },
       attention: { mode: 'none', entityId: null, position: event.position, radius: 0, strength: 0, relatedEntityIds: [], dragging: false, dragStart: null, dragCurrent: null },
@@ -441,13 +445,14 @@ export class AudioEngine {
       entityFed: { layer: 'event' as const, contour: 0.82, octave: 1, dur: 0.16, type: 'sine' as OscillatorType, amount: 0.024 },
       entityDied: { layer: 'plant' as const, contour: 0.2, octave: -1, dur: 0.42, type: 'sine' as OscillatorType, amount: 0.018 },
       residueCreated: { layer: 'cluster' as const, contour: 0.22, octave: -2, dur: 0.28, type: 'triangle' as OscillatorType, amount: 0.016 },
+      fruitCreated: { layer: 'event' as const, contour: 0.9, octave: 1, dur: 0.26, type: 'triangle' as OscillatorType, amount: 0.018 },
     }[event.type];
 
     osc.type = settings.type;
     osc.frequency.value = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave);
-    filter.type = event.type === 'entityDied' ? 'lowpass' : 'bandpass';
-    filter.frequency.value = event.type === 'entityDied' ? 320 : osc.frequency.value * 1.7;
-    filter.Q.value = event.type === 'entityFed' ? 2.4 : 1.2;
+    filter.type = event.type === 'entityDied' ? 'lowpass' : event.type === 'fruitCreated' ? 'highpass' : 'bandpass';
+    filter.frequency.value = event.type === 'entityDied' ? 320 : event.type === 'fruitCreated' ? osc.frequency.value * 2.1 : osc.frequency.value * 1.7;
+    filter.Q.value = event.type === 'entityFed' ? 2.4 : event.type === 'fruitCreated' ? 1.6 : 1.2;
     pan.pan.value = clamp((event.position.x - 1200) / 1200, -0.8, 0.8);
 
     gain.gain.setValueAtTime(0.0001, now);
