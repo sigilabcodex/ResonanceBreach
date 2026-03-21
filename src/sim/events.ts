@@ -1,6 +1,13 @@
 import type { EntityType, ToolType } from '../config';
 import type { Vec2, WorldNotifications } from '../types/world';
 
+const speciesName = (entityType: EntityType) => ({
+  plant: 'Rooted Bloom',
+  flocker: 'Pollinator Drifter',
+  cluster: 'Decomposer',
+  predator: 'Predator',
+}[entityType]);
+
 interface WorldEventBase {
   id: number;
   time: number;
@@ -64,11 +71,11 @@ export const buildNotifications = (events: WorldEvent[]): WorldNotifications => 
     .map((event) => {
       switch (event.type) {
         case 'entityBorn':
-          return `${event.entityType} born into the field`;
+          return `${speciesName(event.entityType)} emerged into the field`;
         case 'entityFed':
-          return `${event.entityType} fed on ${event.foodKind}`;
+          return `${speciesName(event.entityType)} fed on ${event.foodKind}`;
         case 'entityDied':
-          return `${event.entityType} died and returned to the soil`;
+          return `${speciesName(event.entityType)} died and returned to the soil`;
         case 'toolUsed':
           return event.blocked ? `${event.tool} blocked by low resonance energy` : `${event.tool} tool applied`;
         case 'residueCreated':

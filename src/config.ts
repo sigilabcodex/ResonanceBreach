@@ -5,15 +5,15 @@ export const WORLD_HEIGHT = 2400;
 export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_DELTA = 0.1;
 
-export const INITIAL_FLOCKER_COUNT = 14;
-export const INITIAL_CLUSTER_COUNT = 8;
+export const INITIAL_FLOCKER_COUNT = 12;
+export const INITIAL_CLUSTER_COUNT = 9;
 export const INITIAL_PLANT_COUNT = 18;
-export const INITIAL_PREDATOR_COUNT = 4;
+export const INITIAL_PREDATOR_COUNT = 0;
 
-export const MAX_FLOCKERS = 42;
-export const MAX_CLUSTERS = 24;
-export const MAX_PLANTS = 56;
-export const MAX_PREDATORS = 8;
+export const MAX_FLOCKERS = 28;
+export const MAX_CLUSTERS = 22;
+export const MAX_PLANTS = 54;
+export const MAX_PREDATORS = 0;
 
 export const NEIGHBOR_RADIUS = 164;
 export const CAMERA_MIN_ZOOM = 0.24;

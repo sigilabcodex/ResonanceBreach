@@ -11,9 +11,9 @@ const wrapDelta = (from: number, to: number, size: number) => {
 };
 
 const entityPalette: Record<EntityType, readonly [number, number, number]> = {
-  flocker: [206, 234, 244],
-  cluster: [182, 228, 202],
-  plant: [130, 205, 146],
+  flocker: [220, 235, 244],
+  cluster: [170, 206, 182],
+  plant: [140, 212, 160],
   predator: [244, 176, 202],
 };
 
@@ -275,15 +275,25 @@ export class Renderer {
     ctx.save();
     for (const residue of residues) {
       const position = this.wrappedPoint(residue.position, camera);
-      const alpha = (1 - residue.age / residue.duration) * 0.18;
-      const gradient = ctx.createRadialGradient(position.x, position.y, residue.radius * 0.08, position.x, position.y, residue.radius);
-      gradient.addColorStop(0, hsla(118, 30, 50, alpha));
-      gradient.addColorStop(0.74, hsla(102, 18, 34, alpha * 0.32));
-      gradient.addColorStop(1, hsla(96, 16, 24, 0));
+      const alpha = (1 - residue.age / residue.duration) * (0.12 + residue.richness * 0.16);
+      const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'cluster' ? 122 : 102;
+      const gradient = ctx.createRadialGradient(position.x, position.y, residue.radius * 0.06, position.x, position.y, residue.radius);
+      gradient.addColorStop(0, hsla(hue, 26, 58, alpha));
+      gradient.addColorStop(0.74, hsla(hue - 8, 18, 34, alpha * 0.34));
+      gradient.addColorStop(1, hsla(hue - 12, 16, 24, 0));
       ctx.fillStyle = gradient;
       ctx.beginPath();
       ctx.arc(position.x, position.y, residue.radius, 0, Math.PI * 2);
       ctx.fill();
+
+      ctx.strokeStyle = hsla(hue, 20, 72, alpha * 0.46);
+      ctx.lineWidth = 0.7;
+      for (let i = 0; i < 3; i += 1) {
+        const ring = residue.radius * (0.2 + i * 0.18 + residue.richness * 0.06);
+        ctx.beginPath();
+        ctx.arc(position.x, position.y, ring, i * 0.7, i * 0.7 + Math.PI * 1.1);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -343,7 +353,13 @@ export class Renderer {
       const hue = particle.kind === 'feed' ? 42 : 24;
       ctx.fillStyle = hsla(hue, particle.kind === 'feed' ? 82 : 70, particle.kind === 'feed' ? 74 : 66, 0.1 + alpha * 0.3);
       ctx.beginPath();
-      ctx.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
+      if (particle.kind === 'fruit') {
+        ctx.moveTo(position.x, position.y - particle.radius * 1.3);
+        ctx.quadraticCurveTo(position.x + particle.radius * 1.4, position.y - particle.radius * 0.2, position.x, position.y + particle.radius * 1.3);
+        ctx.quadraticCurveTo(position.x - particle.radius * 1.4, position.y - particle.radius * 0.2, position.x, position.y - particle.radius * 1.3);
+      } else {
+        ctx.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
+      }
       ctx.fill();
     }
     ctx.restore();
@@ -370,12 +386,12 @@ export class Renderer {
     const { ctx } = this;
     ctx.save();
     for (const entity of entities) {
-      if (entity.activity < 0.14 && entity.visualPulse < 0.1) continue;
+      if (entity.activity < 0.14 && entity.visualPulse < 0.1 && entity.pollination < 0.18) continue;
       const position = this.wrappedPoint(entity.position, camera);
       const color = entityPalette[entity.type];
-      const radius = entity.size * (entity.type === 'plant' ? 2.2 : entity.type === 'cluster' ? 2.8 : 2.4) * (0.86 + entity.activity * 0.5 + entity.visualPulse * 0.2);
+      const radius = entity.size * (entity.type === 'plant' ? 2.8 : entity.type === 'cluster' ? 2.3 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
       const gradient = ctx.createRadialGradient(position.x, position.y, entity.size * 0.1, position.x, position.y, radius);
-      gradient.addColorStop(0, rgba(color, 0.04 + entity.activity * 0.06));
+      gradient.addColorStop(0, rgba(color, 0.03 + entity.activity * 0.05 + entity.pollination * 0.03));
       gradient.addColorStop(0.65, rgba(color, 0.02 + entity.visualPulse * 0.06));
       gradient.addColorStop(1, rgba(color, 0));
       ctx.fillStyle = gradient;
@@ -389,47 +405,85 @@ export class Renderer {
   private drawEntities(entities: Entity[], camera: CameraState, time: number): void {
     for (const entity of entities) {
       const position = this.wrappedPoint(entity.position, camera);
-      if (entity.type === 'flocker') this.drawFlocker(entity, position, time);
-      else if (entity.type === 'cluster') this.drawCluster(entity, position, time);
+      if (entity.type === 'flocker') this.drawFlocker(entity, position, time, camera);
+      else if (entity.type === 'cluster') this.drawCluster(entity, position, time, camera);
       else if (entity.type === 'plant') this.drawPlant(entity, position, time);
       else this.drawPredator(entity, position, time);
     }
   }
 
-  private drawFlocker(entity: Entity, position: Vec2, time: number): void {
+  private drawFlocker(entity: Entity, position: Vec2, time: number, camera: CameraState): void {
     const { ctx } = this;
     const color = entityPalette.flocker;
+    const maturity = Math.min(1, entity.stageProgress * 1.2 + entity.growth * 0.3);
     ctx.save();
+    for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
+      const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
+      const alpha = ((entity.trail.length - i) / Math.max(1, entity.trail.length)) * 0.08;
+      ctx.fillStyle = rgba(color, alpha);
+      ctx.beginPath();
+      ctx.arc(trailPoint.x, trailPoint.y, 0.9 + i * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.translate(position.x, position.y);
-    ctx.rotate(entity.heading + Math.sin(time * 0.12 + entity.id) * 0.04);
-    ctx.globalAlpha = entity.boundaryFade * (0.36 + entity.activity * 0.64);
-    ctx.fillStyle = rgba(color, 0.88);
+    ctx.rotate(entity.heading + Math.sin(time * 0.16 + entity.id) * 0.12);
+    ctx.globalAlpha = entity.boundaryFade * (0.38 + entity.activity * 0.62);
+    ctx.strokeStyle = rgba(color, 0.82);
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(entity.size * 1.1, 0);
-    ctx.quadraticCurveTo(entity.size * 0.2, entity.size * 0.64, -entity.size * 0.9, 0);
-    ctx.quadraticCurveTo(entity.size * 0.2, -entity.size * 0.64, entity.size * 1.1, 0);
-    ctx.fill();
+    ctx.moveTo(-entity.size * 0.85, 0);
+    ctx.quadraticCurveTo(entity.size * 0.1, -entity.size * (0.9 + maturity * 0.6), entity.size * (1.1 + maturity * 0.2), 0);
+    ctx.quadraticCurveTo(entity.size * 0.1, entity.size * (0.9 + maturity * 0.6), -entity.size * 0.85, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-entity.size * 0.22, 0);
+    ctx.lineTo(entity.size * 0.54, 0);
+    ctx.stroke();
+    if (maturity > 0.34) {
+      ctx.beginPath();
+      ctx.arc(-entity.size * 0.3, 0, entity.size * 0.18, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(color, 0.66);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
-  private drawCluster(entity: Entity, position: Vec2, time: number): void {
+  private drawCluster(entity: Entity, position: Vec2, time: number, camera: CameraState): void {
     const { ctx } = this;
     const color = entityPalette.cluster;
+    const maturity = Math.min(1, entity.stageProgress * 1.18 + entity.growth * 0.22 + entity.memory * 0.18);
     ctx.save();
-    ctx.translate(position.x, position.y);
-    ctx.rotate(time * 0.03 + entity.id * 0.06);
-    ctx.globalAlpha = entity.boundaryFade * (0.34 + entity.activity * 0.66);
-    ctx.fillStyle = rgba(color, 0.44 + entity.activity * 0.14);
-    ctx.beginPath();
-    for (let i = 0; i < 6; i += 1) {
-      const angle = (i / 6) * Math.PI * 2;
-      const radius = entity.size * (0.7 + Math.sin(angle * 2 + entity.id + time * 0.05) * 0.08 + entity.shape * 0.12);
-      const x = Math.cos(angle) * radius;
-      const y = Math.sin(angle) * radius * 0.8;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
+      const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
+      const alpha = ((entity.trail.length - i) / Math.max(1, entity.trail.length)) * 0.05;
+      ctx.strokeStyle = rgba(color, alpha);
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(trailPoint.x, trailPoint.y, 1.2 + i * 0.1, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    ctx.closePath();
+    ctx.translate(position.x, position.y);
+    ctx.rotate(time * 0.02 + entity.id * 0.08);
+    ctx.globalAlpha = entity.boundaryFade * (0.34 + entity.activity * 0.6);
+    ctx.strokeStyle = rgba(color, 0.76);
+    ctx.lineWidth = 0.9;
+    const branches = 3 + Math.round(maturity * 3);
+    for (let i = 0; i < branches; i += 1) {
+      const angle = (i / branches) * Math.PI * 2 + Math.sin(time * 0.04 + entity.id * 0.2) * 0.2;
+      const reach = entity.size * (0.7 + maturity * 0.6 + Math.sin(angle * 2 + entity.id) * 0.1);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(
+        Math.cos(angle + 0.35) * reach * 0.36,
+        Math.sin(angle + 0.35) * reach * 0.36,
+        Math.cos(angle) * reach,
+        Math.sin(angle) * reach,
+      );
+      ctx.stroke();
+    }
+    ctx.fillStyle = rgba(color, 0.34 + maturity * 0.24);
+    ctx.beginPath();
+    ctx.arc(0, 0, entity.size * (0.24 + maturity * 0.12), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
@@ -437,26 +491,45 @@ export class Renderer {
   private drawPlant(entity: Entity, position: Vec2, time: number): void {
     const { ctx } = this;
     const color = entityPalette.plant;
+    const maturity = Math.min(1, entity.stageProgress * 1.12 + entity.growth * 0.28);
+    const crownNodes = 3 + Math.round(maturity * 4);
     ctx.save();
     ctx.translate(position.x, position.y);
-    ctx.rotate(Math.sin(time * 0.05 + entity.id) * 0.03);
-    ctx.globalAlpha = entity.boundaryFade * (0.42 + entity.activity * 0.58);
-    ctx.strokeStyle = rgba(color, 0.54);
+    ctx.rotate(Math.sin(time * 0.04 + entity.id) * 0.03);
+    ctx.globalAlpha = entity.boundaryFade * (0.4 + entity.activity * 0.52 + entity.pollination * 0.08);
+    ctx.strokeStyle = rgba(color, 0.5 + entity.pollination * 0.12);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, entity.size * 1.04);
-    ctx.lineTo(0, -entity.size * 0.9);
+    ctx.moveTo(-entity.size * 0.44, entity.size * 0.92);
+    ctx.lineTo(0, entity.size * 0.38);
+    ctx.lineTo(entity.size * 0.44, entity.size * 0.92);
     ctx.stroke();
-    ctx.fillStyle = rgba(color, 0.68);
     ctx.beginPath();
-    ctx.ellipse(-entity.size * 0.3, -entity.size * 0.1, entity.size * 0.24, entity.size * 0.56, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(entity.size * 0.3, -entity.size * 0.28, entity.size * 0.24, entity.size * 0.58, 0.46, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(0, -entity.size * 1.06, Math.max(1.2, entity.size * 0.18), 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(0, entity.size * 0.82);
+    ctx.lineTo(0, -entity.size * (0.9 + maturity * 0.38));
+    ctx.stroke();
+    ctx.fillStyle = rgba(color, 0.58 + entity.pollination * 0.1);
+    for (let i = 0; i < crownNodes; i += 1) {
+      const angle = -Math.PI * 0.9 + (i / Math.max(1, crownNodes - 1)) * Math.PI * 0.8;
+      const radius = entity.size * (0.46 + maturity * 0.34 + Math.sin(time * 0.06 + entity.id + i) * 0.04);
+      const x = Math.cos(angle) * radius;
+      const y = -entity.size * (0.92 + maturity * 0.22) + Math.sin(angle) * radius * 0.46;
+      ctx.beginPath();
+      ctx.arc(x, y, entity.size * (0.12 + maturity * 0.08), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (entity.stage !== 'birth') {
+      ctx.strokeStyle = rgba(color, 0.32 + entity.pollination * 0.16);
+      ctx.beginPath();
+      ctx.arc(0, -entity.size * (1.04 + maturity * 0.16), entity.size * (0.48 + entity.pollination * 0.16), Math.PI * 0.1, Math.PI * 0.9);
+      ctx.stroke();
+    }
+    if (entity.visualState === 'reproducing' || entity.pollination > 0.4) {
+      ctx.fillStyle = rgba([236, 208, 152], 0.5);
+      ctx.beginPath();
+      ctx.arc(entity.size * 0.16, -entity.size * 0.52, entity.size * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 

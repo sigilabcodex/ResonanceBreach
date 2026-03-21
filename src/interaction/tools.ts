@@ -15,7 +15,7 @@ export const TOOL_DEFINITIONS: Record<ToolType, ToolDefinition> = {
   grow: {
     id: 'grow',
     label: 'Grow',
-    description: 'Persistent fertility field that supports slow plant expansion',
+    description: 'Persistent fertility field that supports Rooted Bloom growth and local nutrient recovery',
   },
   feed: {
     id: 'feed',
