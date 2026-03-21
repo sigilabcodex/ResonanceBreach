@@ -210,17 +210,17 @@ export const buildZoneSummaries = (
 };
 
 const buildWaterSummary = (terrain: TerrainCell[], cameraCenter: Vec2, worldWidth: number, worldHeight: number): ZoneSummary | null => {
-  const waterCells = terrain.filter((cell) => cell.terrain === 'water');
-  if (waterCells.length === 0) return null;
-
   let weightedX = 0;
   let weightedY = 0;
   let totalWeight = 0;
   let flow = 0;
   let tone = 0;
   let resonance = 0;
+  let waterCellCount = 0;
 
-  for (const cell of waterCells) {
+  for (const cell of terrain) {
+    if (cell.terrain !== 'water') continue;
+    waterCellCount += 1;
     const distance = wrappedDistance(cell.center, cameraCenter, worldWidth, worldHeight);
     const weight = 1.4 - clamp(distance / 1200, 0, 1);
     weightedX += cell.center.x * weight;
@@ -231,12 +231,12 @@ const buildWaterSummary = (terrain: TerrainCell[], cameraCenter: Vec2, worldWidt
     resonance += cell.resonance * weight;
   }
 
-  if (totalWeight <= 0) return null;
+  if (totalWeight <= 0 || waterCellCount === 0) return null;
 
   return {
     key: 'water:global',
     kind: 'water',
-    count: waterCells.length,
+    count: waterCellCount,
     position: { x: weightedX / totalWeight, y: weightedY / totalWeight },
     activity: clamp(flow / totalWeight / 30, 0, 1),
     density: clamp(totalWeight / 12, 0.24, 1.4),

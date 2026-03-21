@@ -8,6 +8,7 @@ export interface InputCallbacks {
   onToolHover(x: number, y: number): void;
   onInteract(): void;
   onRestart(): void;
+  onToggleDebugOverlay(): void;
   onPan(deltaX: number, deltaY: number): void;
   onZoom(deltaY: number, clientX: number, clientY: number): void;
   onSelectTool(tool: ToolType): void;
@@ -137,6 +138,12 @@ export class PlayerInput {
     if (key === 'h') {
       event.preventDefault();
       this.callbacks.onToggleHud();
+      return;
+    }
+
+    if (key === 'f3' || key === '`') {
+      event.preventDefault();
+      this.callbacks.onToggleDebugOverlay();
       return;
     }
 

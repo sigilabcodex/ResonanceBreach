@@ -4,7 +4,7 @@ import { PlayerInput } from '../interaction/input';
 import { Renderer } from '../render/renderer';
 import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, storeSettings, type GameSettings } from '../settings';
 import { Simulation } from '../sim/simulation';
-import type { CameraState } from '../types/world';
+import type { CameraState, PerformanceStats } from '../types/world';
 import { Hud } from '../ui/hud';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -29,6 +29,16 @@ export class App {
   private accumulator = 0;
   private lastTime = 0;
   private animationFrame = 0;
+  private readonly perfStats: PerformanceStats = {
+    fps: 0,
+    frameTimeMs: 0,
+    updateTimeMs: 0,
+    renderTimeMs: 0,
+    drawCallEstimate: 0,
+    simSteps: 0,
+  };
+  private fpsAccumulator = 0;
+  private fpsFrameCount = 0;
 
   constructor(mount: HTMLElement) {
     this.settings = normalizeSettings(loadSettings());
@@ -56,6 +66,7 @@ export class App {
         void this.audio.ensureStarted();
       },
       onRestart: () => this.restart(),
+      onToggleDebugOverlay: () => this.toggleDebugOverlay(),
       onPan: (deltaX, deltaY) => this.panCamera(deltaX, deltaY),
       onZoom: (deltaY, clientX, clientY) => this.zoomCamera(deltaY, clientX, clientY, canvas),
       onSelectTool: (tool) => this.selectTool(tool),
@@ -93,6 +104,16 @@ export class App {
     this.cameraTarget.center.y = WORLD_HEIGHT / 2;
     this.cameraTarget.zoom = 1;
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
+  }
+
+  private toggleDebugOverlay(): void {
+    this.applySettings({
+      ...this.settings,
+      visuals: {
+        ...this.settings.visuals,
+        debugOverlays: !this.settings.visuals.debugOverlays,
+      },
+    });
   }
 
   private selectTool(tool: ToolType): void {
@@ -143,8 +164,10 @@ export class App {
   }
 
   private frame = (timestamp: number): void => {
+    const frameStart = performance.now();
     const rawDelta = Math.min(MAX_FRAME_DELTA, (timestamp - this.lastTime) / 1000 || FIXED_TIMESTEP);
     this.lastTime = timestamp;
+    this.updateFrameStats(rawDelta);
 
     this.input.update(rawDelta);
 
@@ -152,10 +175,15 @@ export class App {
     this.simulation.setTimeScale(timeScale);
     this.accumulator += rawDelta * timeScale;
 
+    const updateStart = performance.now();
+    let simSteps = 0;
     while (this.accumulator >= FIXED_TIMESTEP) {
       this.simulation.update(FIXED_TIMESTEP);
       this.accumulator -= FIXED_TIMESTEP;
+      simSteps += 1;
     }
+    this.perfStats.updateTimeMs = performance.now() - updateStart;
+    this.perfStats.simSteps = simSteps;
 
     this.updateAttentionCameraTarget();
     this.syncCamera();
@@ -163,8 +191,20 @@ export class App {
     const snapshot = this.simulation.getSnapshot();
     this.audio.update(snapshot, this.settings);
     this.hud.update(snapshot);
-    this.renderer.render(snapshot, this.settings, this.audio.getDebugState());
+    const renderStart = performance.now();
+    this.renderer.render(snapshot, this.settings, this.audio.getDebugState(), this.perfStats);
+    this.perfStats.renderTimeMs = performance.now() - renderStart;
+    this.perfStats.frameTimeMs = performance.now() - frameStart;
 
     this.animationFrame = window.requestAnimationFrame(this.frame);
   };
+
+  private updateFrameStats(rawDelta: number): void {
+    this.fpsAccumulator += rawDelta;
+    this.fpsFrameCount += 1;
+    if (this.fpsAccumulator < 0.25) return;
+    this.perfStats.fps = this.fpsFrameCount / this.fpsAccumulator;
+    this.fpsAccumulator = 0;
+    this.fpsFrameCount = 0;
+  }
 }

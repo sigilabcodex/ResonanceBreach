@@ -181,6 +181,15 @@ export interface GardenStats {
   fruit: number;
 }
 
+export interface PerformanceStats {
+  fps: number;
+  frameTimeMs: number;
+  updateTimeMs: number;
+  renderTimeMs: number;
+  drawCallEstimate: number;
+  simSteps: number;
+}
+
 export interface WorldNotifications {
   recent: string[];
 }
