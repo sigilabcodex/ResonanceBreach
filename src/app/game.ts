@@ -70,7 +70,7 @@ export class App {
       onPan: (deltaX, deltaY) => this.panCamera(deltaX, deltaY),
       onZoom: (deltaY, clientX, clientY) => this.zoomCamera(deltaY, clientX, clientY, canvas),
       onSelectTool: (tool) => this.selectTool(tool),
-      onToggleHud: () => this.hud.toggleHudHidden(),
+      onToggleMinimalHud: () => this.hud.toggleMinimalHud(),
       onToggleSettings: () => this.hud.toggleSettings(),
       getCamera: () => this.camera,
     });
@@ -92,6 +92,7 @@ export class App {
 
   private applySettings(settings: GameSettings): void {
     this.settings = normalizeSettings(settings);
+    this.hud.syncSettings(this.settings);
     storeSettings(this.settings);
   }
 
@@ -190,7 +191,7 @@ export class App {
 
     const snapshot = this.simulation.getSnapshot();
     this.audio.update(snapshot, this.settings);
-    this.hud.update(snapshot);
+    this.hud.update(snapshot, this.audio.getDebugState(), this.perfStats);
     const renderStart = performance.now();
     this.renderer.render(snapshot, this.settings, this.audio.getDebugState(), this.perfStats);
     this.perfStats.renderTimeMs = performance.now() - renderStart;

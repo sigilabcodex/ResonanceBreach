@@ -1,7 +1,8 @@
+import type { AudioDebugState } from '../audio/audioEngine';
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
 import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
-import type { SimulationSnapshot } from '../types/world';
+import type { PerformanceStats, SimulationSnapshot } from '../types/world';
 
 const timeLabels: Record<string, string> = {
   '0.5': 'Slow 0.5×',
@@ -10,6 +11,15 @@ const timeLabels: Record<string, string> = {
 };
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
+
+type PanelKey = 'left' | 'right' | 'debug';
+type PanelState = Record<PanelKey, boolean>;
+
+const DEFAULT_COLLAPSED: PanelState = {
+  left: false,
+  right: false,
+  debug: false,
+};
 
 export class Hud {
   readonly element: HTMLDivElement;
@@ -30,13 +40,19 @@ export class Hud {
   private readonly unlockValue: HTMLSpanElement;
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
+  private readonly debugBody: HTMLDivElement;
+  private readonly debugSummary: HTMLSpanElement;
   private readonly toolButtons = new Map<ToolType, HTMLButtonElement>();
   private readonly rangeInputs = new Map<string, HTMLInputElement>();
   private readonly rangeOutputs = new Map<string, HTMLSpanElement>();
   private readonly toggleInputs = new Map<string, HTMLInputElement>();
+  private readonly panelElements: Record<PanelKey, HTMLElement>;
+  private readonly panelBodies: Record<PanelKey, HTMLElement>;
+  private readonly panelToggleButtons = new Map<PanelKey, HTMLButtonElement>();
+  private readonly dockButtons = new Map<PanelKey | 'minimal', HTMLButtonElement>();
   private settingsOpen = false;
-  private hidden = false;
   private settings: GameSettings;
+  private collapsed: PanelState = { ...DEFAULT_COLLAPSED };
   private lastFocusedElement: HTMLElement | null = null;
 
   constructor(
@@ -48,43 +64,84 @@ export class Hud {
     this.element = document.createElement('div');
     this.element.className = 'hud';
     this.element.innerHTML = `
-      <div class="hud__top">
-        <div class="hud__panel hud__panel--title">
-          <div>
-            <p class="hud__eyebrow">Calm ecological sandbox</p>
-            <h1>${GAME_TITLE}</h1>
-            <p class="hud__subtle">A wrapped living surface rendered as contour lines, current lines, and quiet ecological motion.</p>
-          </div>
-          <div class="hud__actions">
-            <button class="hud__action" data-settings-toggle type="button" aria-expanded="false">Settings</button>
-            <button class="hud__restart" type="button">Reseed</button>
-          </div>
-        </div>
-        <div class="hud__panel hud__panel--stats">
-          <div class="hud__row"><span>Resonance Energy</span><span data-energy>0%</span></div>
-          <div class="hud__row"><span>Harmony</span><span data-harmony>0%</span></div>
-          <div class="hud__row"><span>Stability</span><span data-stability>0%</span></div>
-          <div class="hud__row"><span>Growth</span><span data-growth>0%</span></div>
-          <div class="hud__row"><span>Nutrients</span><span data-nutrients>0%</span></div>
-          <div class="hud__row"><span>Fruit</span><span data-fruit>0%</span></div>
-          <div class="hud__row"><span>Diversity</span><span data-biodiversity>0%</span></div>
-          <div class="hud__row"><span>Threat</span><span data-threat>0%</span></div>
+      <div class="hud__dock" aria-label="HUD controls">
+        <div class="hud__dock-group">
+          <button class="hud__dock-button" data-settings-toggle type="button" aria-expanded="false">Settings</button>
+          <button class="hud__dock-button" data-dock-toggle="left" type="button" aria-pressed="true">Left panel</button>
+          <button class="hud__dock-button" data-dock-toggle="right" type="button" aria-pressed="true">Right panel</button>
+          <button class="hud__dock-button" data-dock-toggle="debug" type="button" aria-pressed="false">Debug</button>
+          <button class="hud__dock-button" data-dock-toggle="minimal" type="button" aria-pressed="false">Minimal HUD</button>
         </div>
       </div>
-      <div class="hud__bottom">
-        <div class="hud__panel hud__panel--tools">
-          <div class="hud__row hud__row--tools-head">
-            <span>Field tools</span>
-            <span data-tool-hint>1–5 · ATTENTION selects/follows · other tools place fields</span>
+      <aside class="hud__module hud__module--left" data-panel="left">
+        <section class="hud__panel hud__panel--primary">
+          <header class="hud__panel-head">
+            <div>
+              <p class="hud__eyebrow">Calm ecological sandbox</p>
+              <h1>${GAME_TITLE}</h1>
+              <p class="hud__subtle">A wrapped living surface rendered as contour lines, current lines, and quiet ecological motion.</p>
+            </div>
+            <div class="hud__panel-actions">
+              <button class="hud__panel-toggle" data-collapse-toggle="left" type="button" aria-expanded="true">Collapse</button>
+              <button class="hud__restart" type="button">Reseed</button>
+            </div>
+          </header>
+          <div class="hud__panel-body" data-panel-body="left">
+            <div class="hud__tools-card">
+              <div class="hud__row hud__row--tools-head">
+                <span>Field tools</span>
+                <span data-tool-hint>1–5 select tools · drag places regions · O opens settings</span>
+              </div>
+              <div class="hud__tool-grid"></div>
+            </div>
           </div>
-          <div class="hud__tool-grid"></div>
-        </div>
-        <div class="hud__panel hud__panel--status">
-          <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
-          <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
-          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.</span></div>
-        </div>
-      </div>
+        </section>
+      </aside>
+      <aside class="hud__module hud__module--right" data-panel="right">
+        <section class="hud__panel hud__panel--secondary">
+          <header class="hud__panel-head">
+            <div>
+              <p class="hud__eyebrow">Field readout</p>
+              <h2>System status</h2>
+            </div>
+            <button class="hud__panel-toggle" data-collapse-toggle="right" type="button" aria-expanded="true">Collapse</button>
+          </header>
+          <div class="hud__panel-body" data-panel-body="right">
+            <div class="hud__panel-section">
+              <div class="hud__row"><span>Resonance Energy</span><span data-energy>0%</span></div>
+              <div class="hud__row"><span>Harmony</span><span data-harmony>0%</span></div>
+              <div class="hud__row"><span>Stability</span><span data-stability>0%</span></div>
+              <div class="hud__row"><span>Growth</span><span data-growth>0%</span></div>
+              <div class="hud__row"><span>Nutrients</span><span data-nutrients>0%</span></div>
+              <div class="hud__row"><span>Fruit</span><span data-fruit>0%</span></div>
+              <div class="hud__row"><span>Diversity</span><span data-biodiversity>0%</span></div>
+              <div class="hud__row"><span>Threat</span><span data-threat>0%</span></div>
+            </div>
+            <div class="hud__panel-section">
+              <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
+              <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
+              <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.</span></div>
+            </div>
+          </div>
+        </section>
+      </aside>
+      <aside class="hud__module hud__module--debug" data-panel="debug">
+        <section class="hud__panel hud__panel--debug">
+          <header class="hud__panel-head">
+            <div>
+              <p class="hud__eyebrow">Diagnostics</p>
+              <h2>Performance</h2>
+            </div>
+            <div class="hud__panel-actions">
+              <span class="hud__debug-summary" data-debug-summary>Off</span>
+              <button class="hud__panel-toggle" data-collapse-toggle="debug" type="button" aria-expanded="true">Collapse</button>
+            </div>
+          </header>
+          <div class="hud__panel-body hud__panel-body--debug" data-panel-body="debug">
+            <div class="hud__debug" data-debug-body></div>
+          </div>
+        </section>
+      </aside>
       <div class="hud__settings" data-settings-panel hidden>
         <div class="hud__panel hud__panel--settings" data-settings-dialog role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
           <div class="hud__settings-head">
@@ -101,11 +158,14 @@ export class Hud {
             <section class="hud__settings-group" data-group="visuals">
               <h3>Visuals</h3>
             </section>
+            <section class="hud__settings-group" data-group="hud">
+              <h3>HUD</h3>
+            </section>
           </div>
         </div>
       </div>
       <div class="hud__minimal" data-minimal-overlay aria-live="polite">
-        <span data-minimal-hint>HUD hidden · H restores the interface · O opens settings</span>
+        <span data-minimal-hint>Minimal HUD · H restores the full interface · O opens settings</span>
       </div>
     `;
 
@@ -126,6 +186,19 @@ export class Hud {
     this.unlockValue = this.element.querySelector('[data-unlocked]') as HTMLSpanElement;
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
+    this.debugBody = this.element.querySelector('[data-debug-body]') as HTMLDivElement;
+    this.debugSummary = this.element.querySelector('[data-debug-summary]') as HTMLSpanElement;
+
+    this.panelElements = {
+      left: this.element.querySelector('[data-panel="left"]') as HTMLElement,
+      right: this.element.querySelector('[data-panel="right"]') as HTMLElement,
+      debug: this.element.querySelector('[data-panel="debug"]') as HTMLElement,
+    };
+    this.panelBodies = {
+      left: this.element.querySelector('[data-panel-body="left"]') as HTMLElement,
+      right: this.element.querySelector('[data-panel-body="right"]') as HTMLElement,
+      debug: this.element.querySelector('[data-panel-body="debug"]') as HTMLElement,
+    };
 
     this.buildControls();
 
@@ -140,6 +213,25 @@ export class Hud {
       toolGrid.append(button);
     });
 
+    this.element.querySelectorAll<HTMLElement>('[data-collapse-toggle]').forEach((button) => {
+      const key = button.dataset.collapseToggle as PanelKey;
+      this.panelToggleButtons.set(key, button as HTMLButtonElement);
+      button.addEventListener('click', () => this.togglePanelCollapsed(key));
+    });
+
+    this.element.querySelectorAll<HTMLElement>('[data-dock-toggle]').forEach((button) => {
+      const key = button.dataset.dockToggle as PanelKey | 'minimal';
+      this.dockButtons.set(key, button as HTMLButtonElement);
+      button.addEventListener('click', () => {
+        if (key === 'minimal') {
+          this.setMinimalHud(!this.settings.visuals.minimalHud);
+          return;
+        }
+
+        this.setPanelVisible(key, !this.isPanelVisible(key));
+      });
+    });
+
     this.settingsButton.addEventListener('click', () => this.setSettingsOpen(!this.settingsOpen));
     this.settingsCloseButton.addEventListener('click', (event) => {
       event.preventDefault();
@@ -152,13 +244,17 @@ export class Hud {
     this.settingsDialog.addEventListener('click', (event) => event.stopPropagation());
     this.settingsDialog.addEventListener('pointerdown', (event) => event.stopPropagation());
     window.addEventListener('keydown', this.handleWindowKeyDown);
+
+    this.syncSettings(this.settings);
+    this.renderPanelState();
+    this.renderDebugOverlay(undefined, undefined, undefined);
   }
 
   attach(target: HTMLElement): void {
     target.append(this.element);
   }
 
-  update(snapshot: SimulationSnapshot): void {
+  update(snapshot: SimulationSnapshot, audioDebug?: AudioDebugState, performanceStats?: PerformanceStats): void {
     this.energyValue.textContent = `${Math.round(snapshot.stats.energy * 100)}%`;
     this.harmonyValue.textContent = `${Math.round(snapshot.stats.harmony * 100)}%`;
     this.stabilityValue.textContent = `${Math.round(snapshot.stats.stability * 100)}%`;
@@ -208,9 +304,11 @@ export class Hud {
       this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.';
     }
 
-    this.minimalHintValue.textContent = this.hidden
-      ? `HUD hidden · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · click selects · drag makes region · H restores HUD · O opens settings`
-      : this.minimalHintValue.textContent;
+    this.minimalHintValue.textContent = this.settings.visuals.minimalHud
+      ? `Minimal HUD · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores full HUD · O opens settings`
+      : 'Minimal HUD · H restores the full interface · O opens settings';
+
+    this.renderDebugOverlay(snapshot, audioDebug, performanceStats);
   }
 
   syncSettings(settings: GameSettings): void {
@@ -225,22 +323,48 @@ export class Hud {
     this.toggleInputs.get('motionTrails')!.checked = this.settings.visuals.motionTrails;
     this.toggleInputs.get('debugOverlays')!.checked = this.settings.visuals.debugOverlays;
     this.toggleInputs.get('reduceMotion')!.checked = this.settings.visuals.reduceMotion;
+    this.toggleInputs.get('showLeftPanel')!.checked = this.settings.visuals.showLeftPanel;
+    this.toggleInputs.get('showRightPanel')!.checked = this.settings.visuals.showRightPanel;
+    this.toggleInputs.get('minimalHud')!.checked = this.settings.visuals.minimalHud;
     this.element.classList.toggle('is-reduced-motion', this.settings.visuals.reduceMotion);
+    this.element.classList.toggle('is-minimal', this.settings.visuals.minimalHud);
+    this.renderPanelState();
   }
 
-  setHudHidden(hidden: boolean): void {
-    if (this.hidden === hidden) return;
-
-    this.hidden = hidden;
-    this.element.classList.toggle('is-hidden', hidden);
-  }
-
-  toggleHudHidden(): void {
-    this.setHudHidden(!this.hidden);
+  toggleMinimalHud(): void {
+    this.setMinimalHud(!this.settings.visuals.minimalHud);
   }
 
   toggleSettings(): void {
     this.setSettingsOpen(!this.settingsOpen);
+  }
+
+  private setPanelVisible(panel: PanelKey, visible: boolean): void {
+    const visuals = {
+      ...this.settings.visuals,
+      showLeftPanel: panel === 'left' ? visible : this.settings.visuals.showLeftPanel,
+      showRightPanel: panel === 'right' ? visible : this.settings.visuals.showRightPanel,
+      debugOverlays: panel === 'debug' ? visible : this.settings.visuals.debugOverlays,
+    };
+    this.settings = { ...this.settings, visuals };
+    this.emitSettings();
+  }
+
+  private isPanelVisible(panel: PanelKey): boolean {
+    if (panel === 'left') return this.settings.visuals.showLeftPanel;
+    if (panel === 'right') return this.settings.visuals.showRightPanel;
+    return this.settings.visuals.debugOverlays;
+  }
+
+  private setMinimalHud(minimalHud: boolean): void {
+    this.settings = {
+      ...this.settings,
+      visuals: {
+        ...this.settings.visuals,
+        minimalHud,
+      },
+    };
+    this.emitSettings();
   }
 
   private setSettingsOpen(open: boolean): void {
@@ -261,7 +385,7 @@ export class Hud {
       return;
     }
 
-    const fallbackFocusTarget = this.hidden ? document.body : this.settingsButton;
+    const fallbackFocusTarget = this.settingsButton;
     const focusTarget = this.lastFocusedElement && this.lastFocusedElement.isConnected
       ? this.lastFocusedElement
       : fallbackFocusTarget;
@@ -282,6 +406,7 @@ export class Hud {
   private buildControls(): void {
     const audioGroup = this.element.querySelector('[data-group="audio"]') as HTMLElement;
     const visualsGroup = this.element.querySelector('[data-group="visuals"]') as HTMLElement;
+    const hudGroup = this.element.querySelector('[data-group="hud"]') as HTMLElement;
 
     this.createRangeControl(audioGroup, 'Master volume', 'masterVolume', this.settings.audio.masterVolume, (value) => {
       this.settings = { ...this.settings, audio: { ...this.settings.audio, masterVolume: value } };
@@ -304,7 +429,7 @@ export class Hud {
       this.settings = { ...this.settings, visuals: { ...this.settings.visuals, motionTrails: checked } };
       this.emitSettings();
     });
-    this.createToggleControl(visualsGroup, 'Debug overlays', 'debugOverlays', this.settings.visuals.debugOverlays, (checked) => {
+    this.createToggleControl(visualsGroup, 'Debug overlay', 'debugOverlays', this.settings.visuals.debugOverlays, (checked) => {
       this.settings = { ...this.settings, visuals: { ...this.settings.visuals, debugOverlays: checked } };
       this.emitSettings();
     });
@@ -313,7 +438,18 @@ export class Hud {
       this.emitSettings();
     });
 
-    this.syncSettings(this.settings);
+    this.createToggleControl(hudGroup, 'Show left panel', 'showLeftPanel', this.settings.visuals.showLeftPanel, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, showLeftPanel: checked } };
+      this.emitSettings();
+    });
+    this.createToggleControl(hudGroup, 'Show right panel', 'showRightPanel', this.settings.visuals.showRightPanel, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, showRightPanel: checked } };
+      this.emitSettings();
+    });
+    this.createToggleControl(hudGroup, 'Minimal HUD mode', 'minimalHud', this.settings.visuals.minimalHud, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, minimalHud: checked } };
+      this.emitSettings();
+    });
   }
 
   private createRangeControl(
@@ -358,6 +494,92 @@ export class Hud {
     input.addEventListener('change', () => onToggle(input.checked));
     this.toggleInputs.set(key, input);
     parent.append(row);
+  }
+
+  private togglePanelCollapsed(panel: PanelKey): void {
+    this.collapsed = {
+      ...this.collapsed,
+      [panel]: !this.collapsed[panel],
+    };
+    this.renderPanelState();
+  }
+
+  private renderPanelState(): void {
+    const panelVisibility: PanelState = {
+      left: this.settings.visuals.showLeftPanel && !this.settings.visuals.minimalHud,
+      right: this.settings.visuals.showRightPanel && !this.settings.visuals.minimalHud,
+      debug: this.settings.visuals.debugOverlays,
+    };
+
+    (Object.keys(this.panelElements) as PanelKey[]).forEach((panel) => {
+      const module = this.panelElements[panel];
+      const body = this.panelBodies[panel];
+      const visible = panelVisibility[panel];
+      const collapsed = this.collapsed[panel];
+      module.hidden = !visible;
+      module.classList.toggle('is-collapsed', collapsed);
+      body.hidden = collapsed;
+      const toggle = this.panelToggleButtons.get(panel);
+      if (toggle) {
+        toggle.textContent = collapsed ? 'Expand' : 'Collapse';
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+      }
+      const dock = this.dockButtons.get(panel);
+      if (dock) {
+        dock.setAttribute('aria-pressed', String(visible));
+        dock.classList.toggle('is-active', visible);
+      }
+    });
+
+    const minimalButton = this.dockButtons.get('minimal');
+    if (minimalButton) {
+      minimalButton.setAttribute('aria-pressed', String(this.settings.visuals.minimalHud));
+      minimalButton.classList.toggle('is-active', this.settings.visuals.minimalHud);
+    }
+  }
+
+  private renderDebugOverlay(
+    snapshot?: SimulationSnapshot,
+    audioDebug?: AudioDebugState,
+    performanceStats?: PerformanceStats,
+  ): void {
+    const debugVisible = this.settings.visuals.debugOverlays;
+    this.debugSummary.textContent = debugVisible
+      ? `${performanceStats?.fps.toFixed(0) ?? '0'} FPS`
+      : 'Off';
+
+    if (!debugVisible || !snapshot) {
+      this.debugBody.innerHTML = '<div class="hud__debug-line">Enable the debug overlay from Settings or press F3.</div>';
+      return;
+    }
+
+    const lines = [
+      `fps ${performanceStats?.fps.toFixed(1) ?? '0.0'} · frame ${performanceStats?.frameTimeMs.toFixed(2) ?? '0.00'} ms · steps ${performanceStats?.simSteps ?? 0}`,
+      `update ${performanceStats?.updateTimeMs.toFixed(2) ?? '0.00'} ms · render ${performanceStats?.renderTimeMs.toFixed(2) ?? '0.00'} ms · draws ${performanceStats?.drawCallEstimate ?? 0}`,
+      `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
+      `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
+      `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,
+      `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
+    ];
+
+    if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
+      const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);
+      if (entity) {
+        lines.push(`focus ${entity.type} · ${entity.visualState} · ${entity.stage}`);
+        lines.push(`focus energy ${Math.round(entity.energy * 100)}% · activity ${Math.round(entity.activity * 100)}%`);
+      }
+    } else if (snapshot.attention.mode === 'region') {
+      lines.push(`region radius ${Math.round(snapshot.attention.radius)}`);
+    }
+
+    this.debugBody.replaceChildren(
+      ...lines.map((line) => {
+        const item = document.createElement('div');
+        item.className = 'hud__debug-line';
+        item.textContent = line;
+        return item;
+      }),
+    );
   }
 
   private emitSettings(): void {

@@ -12,7 +12,7 @@ export interface InputCallbacks {
   onPan(deltaX: number, deltaY: number): void;
   onZoom(deltaY: number, clientX: number, clientY: number): void;
   onSelectTool(tool: ToolType): void;
-  onToggleHud(): void;
+  onToggleMinimalHud(): void;
   onToggleSettings(): void;
   getCamera(): CameraState;
 }
@@ -137,7 +137,7 @@ export class PlayerInput {
 
     if (key === 'h') {
       event.preventDefault();
-      this.callbacks.onToggleHud();
+      this.callbacks.onToggleMinimalHud();
       return;
     }
 

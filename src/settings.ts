@@ -9,6 +9,9 @@ export interface VisualSettings {
   motionTrails: boolean;
   debugOverlays: boolean;
   reduceMotion: boolean;
+  showLeftPanel: boolean;
+  showRightPanel: boolean;
+  minimalHud: boolean;
 }
 
 export interface GameSettings {
@@ -29,6 +32,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
     motionTrails: true,
     debugOverlays: false,
     reduceMotion: false,
+    showLeftPanel: true,
+    showRightPanel: true,
+    minimalHud: false,
   },
 };
 
@@ -48,6 +54,9 @@ export const normalizeSettings = (value?: Partial<GameSettings> | null): GameSet
     motionTrails: sanitizeBoolean(value?.visuals?.motionTrails, DEFAULT_SETTINGS.visuals.motionTrails),
     debugOverlays: sanitizeBoolean(value?.visuals?.debugOverlays, DEFAULT_SETTINGS.visuals.debugOverlays),
     reduceMotion: sanitizeBoolean(value?.visuals?.reduceMotion, DEFAULT_SETTINGS.visuals.reduceMotion),
+    showLeftPanel: sanitizeBoolean(value?.visuals?.showLeftPanel, DEFAULT_SETTINGS.visuals.showLeftPanel),
+    showRightPanel: sanitizeBoolean(value?.visuals?.showRightPanel, DEFAULT_SETTINGS.visuals.showRightPanel),
+    minimalHud: sanitizeBoolean(value?.visuals?.minimalHud, DEFAULT_SETTINGS.visuals.minimalHud),
   },
 });
 
