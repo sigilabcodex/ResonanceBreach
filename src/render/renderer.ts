@@ -1,7 +1,7 @@
 import { GAME_TITLE, WORLD_HEIGHT, WORLD_WIDTH, type EntityType, type TerrainType, type ToolType } from '../config';
 import type { AudioDebugState } from '../audio/audioEngine';
 import type { GameSettings } from '../settings';
-import type { Attractor, CameraState, Entity, EventBurst, FeedParticle, Residue, SimulationSnapshot, TerrainCell, ToolField, Vec2 } from '../types/world';
+import type { Attractor, CameraState, Entity, EventBurst, FeedParticle, PerformanceStats, Residue, SimulationSnapshot, TerrainCell, ToolField, Vec2 } from '../types/world';
 
 const rgba = (color: readonly [number, number, number], alpha: number) => `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
 const hsla = (h: number, s: number, l: number, a: number) => `hsla(${h} ${s}% ${l}% / ${a})`;
@@ -38,6 +38,8 @@ const terrainColors: Record<TerrainType, { hue: number; sat: number; light: numb
 
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
+  private view = { scale: 1, offsetX: 0, offsetY: 0, width: 1, height: 1 };
+  private drawCallEstimate = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const context = canvas.getContext('2d');
@@ -54,11 +56,13 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  render(snapshot: SimulationSnapshot, settings: GameSettings, audioDebug?: AudioDebugState): void {
+  render(snapshot: SimulationSnapshot, settings: GameSettings, audioDebug?: AudioDebugState, performanceStats?: PerformanceStats): void {
     const { ctx, canvas } = this;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     const view = this.getView(snapshot.camera, width, height);
+    this.view = { ...view, width, height };
+    this.drawCallEstimate = 0;
 
     ctx.clearRect(0, 0, width, height);
     this.drawBackdrop(snapshot, width, height, settings);
@@ -83,7 +87,8 @@ export class Renderer {
 
     ctx.restore();
 
-    this.drawOverlay(snapshot, width, height, settings, audioDebug);
+    if (performanceStats) performanceStats.drawCallEstimate = this.drawCallEstimate;
+    this.drawOverlay(snapshot, width, height, settings, audioDebug, performanceStats);
   }
 
   private getView(camera: CameraState, width: number, height: number) {
@@ -93,6 +98,17 @@ export class Renderer {
       offsetX: width * 0.5 - camera.center.x * scale,
       offsetY: height * 0.5 - camera.center.y * scale,
     };
+  }
+
+  private isVisible(position: Vec2, padding = 0): boolean {
+    const screenX = position.x * this.view.scale + this.view.offsetX;
+    const screenY = position.y * this.view.scale + this.view.offsetY;
+    return (
+      screenX >= -padding
+      && screenX <= this.view.width + padding
+      && screenY >= -padding
+      && screenY <= this.view.height + padding
+    );
   }
 
   private wrappedPoint(position: Vec2, camera: CameraState): Vec2 {
@@ -150,6 +166,7 @@ export class Renderer {
 
     for (const sample of samples) {
       const center = this.wrappedPoint(sample.center, camera);
+      if (!this.isVisible(center, sample.radius * this.view.scale + 48)) continue;
       const palette = terrainColors[sample.terrain];
       const density = this.getTerrainDensity(sample);
       const contourAngle = Math.atan2(sample.gradient.y || sample.flow.y || 0.001, sample.gradient.x || sample.flow.x || 0.001) + Math.PI * 0.5;
@@ -164,6 +181,7 @@ export class Renderer {
         const offsetAmount = (band - (lineCount - 1) * 0.5) * spacing;
         this.traceContourStroke(center, sample, contourAngle, time * motion, offsetAmount, halfLength, band);
         ctx.stroke();
+        this.drawCallEstimate += 1;
       }
     }
 
@@ -179,6 +197,7 @@ export class Renderer {
 
     for (const sample of samples) {
       const center = this.wrappedPoint(sample.center, camera);
+      if (!this.isVisible(center, sample.radius * this.view.scale + 48)) continue;
       const accent = terrainColors[sample.terrain].accent;
       const alpha = sample.terrain === 'water'
         ? 0.065 + sample.resonance * 0.03
@@ -192,6 +211,7 @@ export class Renderer {
       for (let stream = 0; stream < streamCount; stream += 1) {
         this.traceFlowLine(center, sample, time * motion, stream);
         ctx.stroke();
+        this.drawCallEstimate += 1;
       }
     }
 
@@ -244,6 +264,7 @@ export class Renderer {
     ctx.save();
     for (const attractor of attractors) {
       const position = this.wrappedPoint(attractor.position, camera);
+      if (!this.isVisible(position, attractor.radius * this.view.scale * 0.4 + 24)) continue;
       const hue = 186 + attractor.hue * 30;
       ctx.strokeStyle = hsla(hue, 22, 72, 0.045);
       ctx.lineWidth = 0.8;
@@ -251,6 +272,7 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(position.x, position.y, attractor.radius * (0.22 + ring * 0.16), 0, Math.PI * 2);
         ctx.stroke();
+        this.drawCallEstimate += 1;
       }
     }
     ctx.restore();
@@ -261,6 +283,7 @@ export class Renderer {
     ctx.save();
     for (const residue of residues) {
       const position = this.wrappedPoint(residue.position, camera);
+      if (!this.isVisible(position, residue.radius * this.view.scale + 24)) continue;
       const alpha = (1 - residue.age / residue.duration) * (0.12 + residue.richness * 0.16);
       const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'cluster' ? 122 : 102;
       ctx.strokeStyle = hsla(hue, 22, 70, alpha * 0.62);
@@ -270,6 +293,7 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(position.x, position.y, ring, i * 0.7, i * 0.7 + Math.PI * 0.9);
         ctx.stroke();
+        this.drawCallEstimate += 1;
       }
     }
     ctx.restore();
@@ -281,6 +305,7 @@ export class Renderer {
     ctx.save();
     for (const field of fields) {
       const position = this.wrappedPoint(field.position, camera);
+      if (!this.isVisible(position, field.radius * this.view.scale + 24)) continue;
       const color = toolPalette[field.tool];
       const fade = field.tool === 'observe' ? 0.16 : Math.max(field.strength, 0.15);
 
@@ -294,6 +319,7 @@ export class Renderer {
           : field.radius * 0.92;
       ctx.arc(position.x, position.y, Math.min(field.radius, waveRadius), 0, Math.PI * 2);
       ctx.stroke();
+      this.drawCallEstimate += 1;
 
       if (field.tool === 'observe') {
         ctx.strokeStyle = rgba(color, 0.1 + fade * 0.16);
@@ -302,6 +328,7 @@ export class Renderer {
           ctx.beginPath();
           ctx.arc(position.x, position.y, ring, 0, Math.PI * 2);
           ctx.stroke();
+          this.drawCallEstimate += 1;
         }
 
         ctx.save();
@@ -310,6 +337,7 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(position.x, position.y, field.radius * 0.98, Math.PI * 0.16, Math.PI * 1.88);
         ctx.stroke();
+        this.drawCallEstimate += 1;
         ctx.restore();
       }
 
@@ -326,6 +354,7 @@ export class Renderer {
             position.y + Math.sin(angle + 0.2) * field.radius * 0.68,
           );
           ctx.stroke();
+          this.drawCallEstimate += 1;
         }
       }
     }
@@ -337,6 +366,7 @@ export class Renderer {
     ctx.save();
     for (const particle of particles) {
       const position = this.wrappedPoint(particle.position, camera);
+      if (!this.isVisible(position, 18)) continue;
       const alpha = 1 - particle.age / particle.duration;
       const hue = particle.kind === 'feed' ? 42 : 24;
       ctx.fillStyle = hsla(hue, particle.kind === 'feed' ? 82 : 70, particle.kind === 'feed' ? 74 : 66, 0.1 + alpha * 0.3);
@@ -349,6 +379,7 @@ export class Renderer {
         ctx.arc(position.x, position.y, particle.radius, 0, Math.PI * 2);
       }
       ctx.fill();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -358,6 +389,7 @@ export class Renderer {
     ctx.save();
     for (const burst of bursts) {
       const position = this.wrappedPoint(burst.position, camera);
+      if (!this.isVisible(position, burst.radius * this.view.scale * 1.6 + 24)) continue;
       const progress = burst.age / burst.duration;
       const alpha = (1 - progress) * (burst.type === 'death' ? 0.16 : burst.type === 'disrupt' ? 0.2 : 0.14);
       const hue = burst.type === 'feed' ? 36 : burst.type === 'birth' ? 126 : burst.type === 'disrupt' ? 274 : 356;
@@ -366,6 +398,7 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(position.x, position.y, burst.radius * (0.6 + progress * 0.8), 0, Math.PI * 2);
       ctx.stroke();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -376,6 +409,7 @@ export class Renderer {
     for (const entity of entities) {
       if (entity.activity < 0.14 && entity.visualPulse < 0.1 && entity.pollination < 0.18) continue;
       const position = this.wrappedPoint(entity.position, camera);
+      if (!this.isVisible(position, entity.size * this.view.scale * 4 + 24)) continue;
       const color = entityPalette[entity.type];
       const radius = entity.size * (entity.type === 'plant' ? 2.8 : entity.type === 'cluster' ? 2.3 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
       const gradient = ctx.createRadialGradient(position.x, position.y, entity.size * 0.1, position.x, position.y, radius);
@@ -386,6 +420,7 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
       ctx.fill();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -393,6 +428,7 @@ export class Renderer {
   private drawEntities(entities: Entity[], camera: CameraState, time: number, settings: GameSettings): void {
     for (const entity of entities) {
       const position = this.wrappedPoint(entity.position, camera);
+      if (!this.isVisible(position, entity.size * this.view.scale * 4 + 28)) continue;
       if (entity.type === 'flocker') this.drawFlocker(entity, position, time, camera, settings);
       else if (entity.type === 'cluster') this.drawCluster(entity, position, time, camera, settings);
       else if (entity.type === 'plant') this.drawPlant(entity, position, time);
@@ -408,11 +444,13 @@ export class Renderer {
     if (settings.visuals.motionTrails) {
       for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
         const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
+        if (!this.isVisible(trailPoint, 12)) continue;
         const alpha = ((entity.trail.length - i) / Math.max(1, entity.trail.length)) * (settings.visuals.reduceMotion ? 0.04 : 0.08);
         ctx.fillStyle = rgba(color, alpha);
         ctx.beginPath();
         ctx.arc(trailPoint.x, trailPoint.y, 0.9 + i * 0.18, 0, Math.PI * 2);
         ctx.fill();
+        this.drawCallEstimate += 1;
       }
     }
     ctx.translate(position.x, position.y);
@@ -425,15 +463,18 @@ export class Renderer {
     ctx.quadraticCurveTo(entity.size * 0.1, -entity.size * (0.9 + maturity * 0.6), entity.size * (1.1 + maturity * 0.2), 0);
     ctx.quadraticCurveTo(entity.size * 0.1, entity.size * (0.9 + maturity * 0.6), -entity.size * 0.85, 0);
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.beginPath();
     ctx.moveTo(-entity.size * 0.22, 0);
     ctx.lineTo(entity.size * 0.54, 0);
     ctx.stroke();
+    this.drawCallEstimate += 1;
     if (maturity > 0.34) {
       ctx.beginPath();
       ctx.arc(-entity.size * 0.3, 0, entity.size * 0.18, 0, Math.PI * 2);
       ctx.fillStyle = rgba(color, 0.72);
       ctx.fill();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -446,12 +487,14 @@ export class Renderer {
     if (settings.visuals.motionTrails) {
       for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
         const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
+        if (!this.isVisible(trailPoint, 12)) continue;
         const alpha = ((entity.trail.length - i) / Math.max(1, entity.trail.length)) * (settings.visuals.reduceMotion ? 0.028 : 0.05);
         ctx.strokeStyle = rgba(color, alpha);
         ctx.lineWidth = 0.8;
         ctx.beginPath();
         ctx.arc(trailPoint.x, trailPoint.y, 1.2 + i * 0.1, 0, Math.PI * 2);
         ctx.stroke();
+        this.drawCallEstimate += 1;
       }
     }
     ctx.translate(position.x, position.y);
@@ -472,11 +515,13 @@ export class Renderer {
         Math.sin(angle) * reach,
       );
       ctx.stroke();
+      this.drawCallEstimate += 1;
     }
     ctx.fillStyle = rgba(color, 0.4 + maturity * 0.22);
     ctx.beginPath();
     ctx.arc(0, 0, entity.size * (0.24 + maturity * 0.12), 0, Math.PI * 2);
     ctx.fill();
+    this.drawCallEstimate += 1;
     ctx.restore();
   }
 
@@ -496,10 +541,12 @@ export class Renderer {
     ctx.lineTo(0, entity.size * 0.38);
     ctx.lineTo(entity.size * 0.44, entity.size * 0.92);
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.beginPath();
     ctx.moveTo(0, entity.size * 0.82);
     ctx.lineTo(0, -entity.size * (0.9 + maturity * 0.38));
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.fillStyle = rgba(color, 0.66 + entity.pollination * 0.1);
     for (let i = 0; i < crownNodes; i += 1) {
       const angle = -Math.PI * 0.9 + (i / Math.max(1, crownNodes - 1)) * Math.PI * 0.8;
@@ -509,18 +556,21 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(x, y, entity.size * (0.12 + maturity * 0.08), 0, Math.PI * 2);
       ctx.fill();
+      this.drawCallEstimate += 1;
     }
     if (entity.stage !== 'birth') {
       ctx.strokeStyle = rgba(color, 0.38 + entity.pollination * 0.16);
       ctx.beginPath();
       ctx.arc(0, -entity.size * (1.04 + maturity * 0.16), entity.size * (0.48 + entity.pollination * 0.16), Math.PI * 0.1, Math.PI * 0.9);
       ctx.stroke();
+      this.drawCallEstimate += 1;
     }
     if (entity.visualState === 'reproducing' || entity.pollination > 0.4) {
       ctx.fillStyle = rgba([236, 208, 152], 0.6);
       ctx.beginPath();
       ctx.arc(entity.size * 0.16, -entity.size * 0.52, entity.size * 0.14, 0, Math.PI * 2);
       ctx.fill();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -541,6 +591,7 @@ export class Renderer {
     ctx.lineTo(-entity.size * 0.12, -entity.size * 0.72);
     ctx.closePath();
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.restore();
   }
 
@@ -549,6 +600,7 @@ export class Renderer {
     const { ctx } = this;
     const color = toolPalette[snapshot.tool.active];
     const position = this.wrappedPoint(snapshot.tool.worldPosition, snapshot.camera);
+    if (!this.isVisible(position, snapshot.tool.radius * this.view.scale + 16)) return;
     ctx.save();
     ctx.strokeStyle = rgba(color, snapshot.tool.blocked ? 0.24 : 0.14 + snapshot.tool.pulse * 0.1);
     ctx.lineWidth = 1;
@@ -556,6 +608,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(position.x, position.y, snapshot.tool.radius, 0, Math.PI * 2);
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.setLineDash([]);
     ctx.restore();
   }
@@ -580,10 +633,12 @@ export class Renderer {
     for (const entity of snapshot.entities) {
       if (!relatedIds.has(entity.id)) continue;
       const position = this.wrappedPoint(entity.position, snapshot.camera);
+      if (!this.isVisible(position, entity.size * this.view.scale * 3 + 20)) continue;
       this.drawAttentionEntityMarker(position, entity.size * 2.2, 0.18, false);
     }
 
     const position = this.wrappedPoint(selected.position, snapshot.camera);
+    if (!this.isVisible(position, selected.size * this.view.scale * 3 + 20)) return;
     this.drawAttentionEntityMarker(position, selected.size * 2.8, 0.42, true);
   }
 
@@ -598,12 +653,14 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(position.x, position.y, radius * 1.8, 0, Math.PI * 2);
     ctx.fill();
+    this.drawCallEstimate += 1;
 
     ctx.strokeStyle = `rgba(212, 236, 248, ${alpha})`;
     ctx.lineWidth = primary ? 1.45 : 1;
     ctx.beginPath();
     ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
     ctx.stroke();
+    this.drawCallEstimate += 1;
 
     if (primary) {
       ctx.strokeStyle = `rgba(236, 248, 255, ${alpha * 0.92})`;
@@ -611,6 +668,7 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(position.x, position.y, radius * 1.32, Math.PI * 0.18, Math.PI * 1.82);
       ctx.stroke();
+      this.drawCallEstimate += 1;
     }
     ctx.restore();
   }
@@ -632,6 +690,7 @@ export class Renderer {
       : anchor;
     const radius = fixedRadius ?? Math.hypot(wrapDelta(anchor.x, current!.x, WORLD_WIDTH), wrapDelta(anchor.y, current!.y, WORLD_HEIGHT)) * 0.5;
     const wrapped = this.wrappedPoint(center, camera);
+    if (!this.isVisible(wrapped, radius * this.view.scale + 20)) return;
     const motionAlpha = settings.visuals.reduceMotion ? 0.16 : 0.22;
 
     const gradient = ctx.createRadialGradient(wrapped.x, wrapped.y, radius * 0.2, wrapped.x, wrapped.y, radius * 1.02);
@@ -644,12 +703,14 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
     ctx.fill();
+    this.drawCallEstimate += 1;
     ctx.strokeStyle = preview ? 'rgba(214, 236, 246, 0.32)' : 'rgba(214, 236, 246, 0.24)';
     ctx.lineWidth = preview ? 1.1 : 1.25;
     if (preview) ctx.setLineDash([12, 12]);
     ctx.beginPath();
     ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
     ctx.stroke();
+    this.drawCallEstimate += 1;
     ctx.setLineDash([]);
     ctx.restore();
   }
@@ -662,7 +723,14 @@ export class Renderer {
   }
 
 
-  private drawOverlay(snapshot: SimulationSnapshot, width: number, height: number, settings: GameSettings, audioDebug?: AudioDebugState): void {
+  private drawOverlay(
+    snapshot: SimulationSnapshot,
+    width: number,
+    height: number,
+    settings: GameSettings,
+    audioDebug?: AudioDebugState,
+    performanceStats?: PerformanceStats,
+  ): void {
     const { ctx } = this;
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.font = '500 11px Inter, system-ui, sans-serif';
@@ -676,6 +744,8 @@ export class Renderer {
     ctx.font = '500 12px Inter, system-ui, sans-serif';
     ctx.fillStyle = 'rgba(214, 230, 242, 0.78)';
     const lines = [
+      `fps ${performanceStats?.fps.toFixed(1) ?? '0.0'} · frame ${performanceStats?.frameTimeMs.toFixed(2) ?? '0.00'} ms · steps ${performanceStats?.simSteps ?? 0}`,
+      `update ${performanceStats?.updateTimeMs.toFixed(2) ?? '0.00'} ms · render ${performanceStats?.renderTimeMs.toFixed(2) ?? '0.00'} ms · draws ${performanceStats?.drawCallEstimate ?? 0}`,
       `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
       `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
       `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,

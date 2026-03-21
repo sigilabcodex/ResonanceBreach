@@ -51,6 +51,16 @@ const TWO_PI = Math.PI * 2;
 const TERRAIN_SAMPLE_COUNT = TERRAIN_SAMPLE_COLS * TERRAIN_SAMPLE_ROWS;
 const TERRAIN_SAMPLE_RADIUS = Math.min(WORLD_WIDTH / TERRAIN_SAMPLE_COLS, WORLD_HEIGHT / TERRAIN_SAMPLE_ROWS);
 const GOLDEN_RATIO = 0.6180339887498948;
+const TERRAIN_SAMPLE_REFRESH_INTERVAL = 1 / 15;
+const ENTITY_BUCKET_SIZE = 220;
+const PARTICLE_BUCKET_SIZE = 220;
+const RESIDUE_BUCKET_SIZE = 220;
+const ENTITY_BUCKET_COLS = Math.ceil(WORLD_WIDTH / ENTITY_BUCKET_SIZE);
+const ENTITY_BUCKET_ROWS = Math.ceil(WORLD_HEIGHT / ENTITY_BUCKET_SIZE);
+const PARTICLE_BUCKET_COLS = Math.ceil(WORLD_WIDTH / PARTICLE_BUCKET_SIZE);
+const PARTICLE_BUCKET_ROWS = Math.ceil(WORLD_HEIGHT / PARTICLE_BUCKET_SIZE);
+const RESIDUE_BUCKET_COLS = Math.ceil(WORLD_WIDTH / RESIDUE_BUCKET_SIZE);
+const RESIDUE_BUCKET_ROWS = Math.ceil(WORLD_HEIGHT / RESIDUE_BUCKET_SIZE);
 const TOOL_UNLOCK_SCHEDULE: Array<{ tool: ToolType; time: number; energy: number }> = [
   { tool: 'observe', time: 0, energy: 0 },
   { tool: 'grow', time: 0, energy: 0 },
@@ -88,6 +98,11 @@ export class Simulation {
   private nextResidueId = 1;
   private nextModifierId = 1;
   private attentionDragging = false;
+  private terrainSampleTimer = 0;
+  private readonly entityBuckets = new Map<string, Entity[]>();
+  private readonly particleBuckets = new Map<string, FeedParticle[]>();
+  private readonly residueBuckets = new Map<string, Residue[]>();
+  private readonly entityBucketById = new Map<number, string>();
 
   private get entities(): Entity[] { return this.world.entities; }
   private set entities(value: Entity[]) { this.world.entities = value; }
@@ -154,6 +169,11 @@ export class Simulation {
     this.nextBurstId = 1;
     this.nextResidueId = 1;
     this.nextModifierId = 1;
+    this.terrainSampleTimer = 0;
+    this.entityBuckets.clear();
+    this.entityBucketById.clear();
+    this.particleBuckets.clear();
+    this.residueBuckets.clear();
     this.time = 0;
     this.timeScale = 1;
     this.unlockedProgress = 0;
@@ -172,6 +192,9 @@ export class Simulation {
     for (let i = 0; i < INITIAL_CLUSTER_COUNT; i += 1) this.entities.push(this.createEntity('cluster', this.randomTerrainPoint('fertile')));
     for (let i = 0; i < INITIAL_PREDATOR_COUNT; i += 1) this.entities.push(this.createEntity('predator', this.randomTerrainPoint('water')));
     this.seedInitialNutrients();
+    this.rebuildParticleBuckets();
+    this.rebuildResidueBuckets();
+    this.rebuildEntityBuckets();
 
     this.terrain = this.createTerrainSamples();
     this.stats = this.computeStats();
@@ -260,7 +283,10 @@ export class Simulation {
     this.updateParticles(dt);
     this.updateResidues(dt);
     this.updateBursts(dt);
-    this.terrain = this.createTerrainSamples();
+    this.refreshTerrainSamples(dt);
+    this.rebuildParticleBuckets();
+    this.rebuildResidueBuckets();
+    this.rebuildEntityBuckets();
 
     const survivors: Entity[] = [];
     const localStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0 };
@@ -280,8 +306,10 @@ export class Simulation {
       const neighbors = this.getNeighbors(i, NEIGHBOR_RADIUS);
       this.applyEntityBehavior(entity, sample, neighbors, dt, 0, localStats);
 
-      if (this.shouldPersist(entity)) survivors.push(entity);
+      const persists = this.shouldPersist(entity);
+      if (persists) survivors.push(entity);
       else this.handleDeath(entity);
+      this.syncEntityBucket(entity, persists);
     }
 
     this.entities = survivors;
@@ -496,6 +524,115 @@ export class Simulation {
       });
     }
     return samples;
+  }
+
+  private refreshTerrainSamples(dt: number): void {
+    this.terrainSampleTimer -= dt;
+    if (this.terrainSampleTimer > 0 && this.terrain.length > 0) return;
+    this.terrain = this.createTerrainSamples();
+    this.terrainSampleTimer = TERRAIN_SAMPLE_REFRESH_INTERVAL;
+  }
+
+  private bucketIndex(value: number, size: number, bucketSize: number, bucketCount: number): number {
+    return Math.max(0, Math.min(bucketCount - 1, Math.floor(wrap(value, size) / bucketSize)));
+  }
+
+  private bucketKey(col: number, row: number): string {
+    return `${col},${row}`;
+  }
+
+  private forEachNearbyBucket<T>(
+    buckets: Map<string, T[]>,
+    position: Vec2,
+    radius: number,
+    bucketSize: number,
+    bucketCols: number,
+    bucketRows: number,
+    callback: (entry: T) => void,
+  ): void {
+    const minCol = Math.ceil(radius / bucketSize);
+    const minRow = Math.ceil(radius / bucketSize);
+    const centerCol = this.bucketIndex(position.x, WORLD_WIDTH, bucketSize, bucketCols);
+    const centerRow = this.bucketIndex(position.y, WORLD_HEIGHT, bucketSize, bucketRows);
+
+    for (let rowOffset = -minRow; rowOffset <= minRow; rowOffset += 1) {
+      const row = (centerRow + rowOffset + bucketRows) % bucketRows;
+      for (let colOffset = -minCol; colOffset <= minCol; colOffset += 1) {
+        const col = (centerCol + colOffset + bucketCols) % bucketCols;
+        const bucket = buckets.get(this.bucketKey(col, row));
+        if (!bucket) continue;
+        for (const entry of bucket) callback(entry);
+      }
+    }
+  }
+
+  private rebuildParticleBuckets(): void {
+    this.particleBuckets.clear();
+    for (const particle of this.particles) {
+      const key = this.bucketKey(
+        this.bucketIndex(particle.position.x, WORLD_WIDTH, PARTICLE_BUCKET_SIZE, PARTICLE_BUCKET_COLS),
+        this.bucketIndex(particle.position.y, WORLD_HEIGHT, PARTICLE_BUCKET_SIZE, PARTICLE_BUCKET_ROWS),
+      );
+      const bucket = this.particleBuckets.get(key);
+      if (bucket) bucket.push(particle);
+      else this.particleBuckets.set(key, [particle]);
+    }
+  }
+
+  private rebuildResidueBuckets(): void {
+    this.residueBuckets.clear();
+    for (const residue of this.residues) {
+      const key = this.bucketKey(
+        this.bucketIndex(residue.position.x, WORLD_WIDTH, RESIDUE_BUCKET_SIZE, RESIDUE_BUCKET_COLS),
+        this.bucketIndex(residue.position.y, WORLD_HEIGHT, RESIDUE_BUCKET_SIZE, RESIDUE_BUCKET_ROWS),
+      );
+      const bucket = this.residueBuckets.get(key);
+      if (bucket) bucket.push(residue);
+      else this.residueBuckets.set(key, [residue]);
+    }
+  }
+
+  private rebuildEntityBuckets(): void {
+    this.entityBuckets.clear();
+    this.entityBucketById.clear();
+    for (const entity of this.entities) this.insertEntityBucket(entity);
+  }
+
+  private insertEntityBucket(entity: Entity): void {
+    const key = this.bucketKey(
+      this.bucketIndex(entity.position.x, WORLD_WIDTH, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS),
+      this.bucketIndex(entity.position.y, WORLD_HEIGHT, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_ROWS),
+    );
+    const bucket = this.entityBuckets.get(key);
+    if (bucket) bucket.push(entity);
+    else this.entityBuckets.set(key, [entity]);
+    this.entityBucketById.set(entity.id, key);
+  }
+
+  private removeEntityBucket(entity: Entity): void {
+    const key = this.entityBucketById.get(entity.id);
+    if (!key) return;
+    const bucket = this.entityBuckets.get(key);
+    if (!bucket) return;
+    const index = bucket.indexOf(entity);
+    if (index >= 0) bucket.splice(index, 1);
+    if (bucket.length === 0) this.entityBuckets.delete(key);
+    this.entityBucketById.delete(entity.id);
+  }
+
+  private syncEntityBucket(entity: Entity, persists: boolean): void {
+    if (!persists) {
+      this.removeEntityBucket(entity);
+      return;
+    }
+    const nextKey = this.bucketKey(
+      this.bucketIndex(entity.position.x, WORLD_WIDTH, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS),
+      this.bucketIndex(entity.position.y, WORLD_HEIGHT, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_ROWS),
+    );
+    const currentKey = this.entityBucketById.get(entity.id);
+    if (currentKey === nextKey) return;
+    this.removeEntityBucket(entity);
+    this.insertEntityBucket(entity);
   }
 
   private createEntity(type: EntityType, position: Vec2): Entity {
@@ -1169,12 +1306,12 @@ export class Simulation {
 
   private getResidueInfluence(x: number, y: number): number {
     let value = 0;
-    for (const residue of this.residues) {
+    this.forEachNearbyBucket(this.residueBuckets, { x, y }, 160, RESIDUE_BUCKET_SIZE, RESIDUE_BUCKET_COLS, RESIDUE_BUCKET_ROWS, (residue) => {
       const offset = this.delta({ x, y }, residue.position);
       const dist = Math.hypot(offset.x, offset.y);
-      if (dist > residue.radius) continue;
+      if (dist > residue.radius) return;
       value += smoothstep(residue.radius, 0, dist) * residue.nutrient;
-    }
+    });
     return clamp(value, 0, 1.2);
   }
 
@@ -1225,33 +1362,33 @@ export class Simulation {
   private findBloomTarget(position: Vec2): Entity | undefined {
     let best: Entity | undefined;
     let bestScore = -Infinity;
-    for (const candidate of this.entities) {
-      if (candidate.type !== 'plant') continue;
+    this.forEachNearbyBucket(this.entityBuckets, position, 340, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS, ENTITY_BUCKET_ROWS, (candidate) => {
+      if (candidate.type !== 'plant') return;
       const offset = this.delta(position, candidate.position);
       const dist = Math.hypot(offset.x, offset.y);
-      if (dist > 340) continue;
+      if (dist > 340) return;
       const score = (1 - dist / 340) * 0.6 + candidate.pollination * -0.28 + candidate.energy * 0.18 + candidate.growth * 0.22 + (candidate.stage === 'mature' ? 0.14 : 0);
       if (score > bestScore) {
         best = candidate;
         bestScore = score;
       }
-    }
+    });
     return best;
   }
 
   private findResidueTarget(position: Vec2, radius = 260): Residue | undefined {
     let best: Residue | undefined;
     let bestScore = -Infinity;
-    for (const residue of this.residues) {
+    this.forEachNearbyBucket(this.residueBuckets, position, radius, RESIDUE_BUCKET_SIZE, RESIDUE_BUCKET_COLS, RESIDUE_BUCKET_ROWS, (residue) => {
       const offset = this.delta(position, residue.position);
       const dist = Math.hypot(offset.x, offset.y);
-      if (dist > radius) continue;
+      if (dist > radius) return;
       const score = (1 - dist / radius) * 0.62 + residue.richness * 0.52 + residue.nutrient * 0.3;
       if (score > bestScore) {
         best = residue;
         bestScore = score;
       }
-    }
+    });
     return best;
   }
 
@@ -1358,12 +1495,12 @@ export class Simulation {
 
   private countNearbyFood(position: Vec2, radius: number): number {
     let total = 0;
-    for (const particle of this.particles) {
+    this.forEachNearbyBucket(this.particleBuckets, position, radius, PARTICLE_BUCKET_SIZE, PARTICLE_BUCKET_COLS, PARTICLE_BUCKET_ROWS, (particle) => {
       const offset = this.delta(position, particle.position);
       const dx = offset.x;
       const dy = offset.y;
       if (dx * dx + dy * dy <= radius * radius) total += particle.kind === 'feed' ? 1.4 : 1;
-    }
+    });
     return clamp(total / 6, 0, 1);
   }
 
@@ -1371,24 +1508,25 @@ export class Simulation {
     const neighbors: Entity[] = [];
     const entity = this.entities[index] as Entity;
     const radiusSq = radius * radius;
-    for (let i = 0; i < this.entities.length; i += 1) {
-      if (i === index) continue;
-      const other = this.entities[i] as Entity;
+    this.forEachNearbyBucket(this.entityBuckets, entity.position, radius, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS, ENTITY_BUCKET_ROWS, (other) => {
+      if (other.id === entity.id) return;
       const offset = this.delta(entity.position, other.position);
       const dx = offset.x;
       const dy = offset.y;
       if (dx * dx + dy * dy <= radiusSq) neighbors.push(other);
-    }
+    });
     return neighbors;
   }
 
   private getNeighborsByEntity(entity: Entity, radius: number): Entity[] {
+    const neighbors: Entity[] = [];
     const radiusSq = radius * radius;
-    return this.entities.filter((other) => {
-      if (other.id === entity.id) return false;
+    this.forEachNearbyBucket(this.entityBuckets, entity.position, radius, ENTITY_BUCKET_SIZE, ENTITY_BUCKET_COLS, ENTITY_BUCKET_ROWS, (other) => {
+      if (other.id === entity.id) return;
       const offset = this.delta(entity.position, other.position);
-      return offset.x ** 2 + offset.y ** 2 <= radiusSq;
+      if (offset.x ** 2 + offset.y ** 2 <= radiusSq) neighbors.push(other);
     });
+    return neighbors;
   }
 
   private countEntities(): Record<EntityType, number> {
