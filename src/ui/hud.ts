@@ -1,5 +1,6 @@
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
+import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
 import type { SimulationSnapshot } from '../types/world';
 
 const timeLabels: Record<string, string> = {
@@ -8,9 +9,13 @@ const timeLabels: Record<string, string> = {
   '2': 'Fast 2×',
 };
 
+const percent = (value: number) => `${Math.round(value * 100)}%`;
+
 export class Hud {
   readonly element: HTMLDivElement;
   readonly restartButton: HTMLButtonElement;
+  private readonly settingsButton: HTMLButtonElement;
+  private readonly settingsPanel: HTMLDivElement;
   private readonly harmonyValue: HTMLSpanElement;
   private readonly growthValue: HTMLSpanElement;
   private readonly threatValue: HTMLSpanElement;
@@ -23,8 +28,18 @@ export class Hud {
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
   private readonly toolButtons = new Map<ToolType, HTMLButtonElement>();
+  private readonly rangeInputs = new Map<string, HTMLInputElement>();
+  private readonly rangeOutputs = new Map<string, HTMLSpanElement>();
+  private readonly toggleInputs = new Map<string, HTMLInputElement>();
+  private settingsOpen = false;
+  private settings: GameSettings;
 
-  constructor(onToolSelect: (tool: ToolType) => void) {
+  constructor(
+    onToolSelect: (tool: ToolType) => void,
+    private readonly onSettingsChange: (settings: GameSettings) => void,
+    initialSettings: GameSettings = DEFAULT_SETTINGS,
+  ) {
+    this.settings = normalizeSettings(initialSettings);
     this.element = document.createElement('div');
     this.element.className = 'hud';
     this.element.innerHTML = `
@@ -33,9 +48,12 @@ export class Hud {
           <div>
             <p class="hud__eyebrow">Calm ecological sandbox</p>
             <h1>${GAME_TITLE}</h1>
-            <p class="hud__subtle">Water, fertile soil, and solid ground drift slowly while Rooted Blooms, Pollinator Drifters, Decomposers, fruit, and residue fold through a calm loop.</p>
+            <p class="hud__subtle">A wrapped living surface rendered as contour lines, current lines, and quiet ecological motion.</p>
           </div>
-          <button class="hud__restart" type="button">Reseed</button>
+          <div class="hud__actions">
+            <button class="hud__action" data-settings-toggle type="button" aria-expanded="false">Settings</button>
+            <button class="hud__restart" type="button">Reseed</button>
+          </div>
         </div>
         <div class="hud__panel hud__panel--stats">
           <div class="hud__row"><span>Resonance Energy</span><span data-energy>0%</span></div>
@@ -62,9 +80,30 @@ export class Hud {
           <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.</span></div>
         </div>
       </div>
+      <div class="hud__settings" data-settings-panel hidden>
+        <div class="hud__panel hud__panel--settings">
+          <div class="hud__settings-head">
+            <div>
+              <p class="hud__eyebrow">World substrate</p>
+              <h2>Settings</h2>
+            </div>
+            <button class="hud__action" data-settings-close type="button">Close</button>
+          </div>
+          <div class="hud__settings-grid">
+            <section class="hud__settings-group" data-group="audio">
+              <h3>Audio</h3>
+            </section>
+            <section class="hud__settings-group" data-group="visuals">
+              <h3>Visuals</h3>
+            </section>
+          </div>
+        </div>
+      </div>
     `;
 
     this.restartButton = this.element.querySelector('.hud__restart') as HTMLButtonElement;
+    this.settingsButton = this.element.querySelector('[data-settings-toggle]') as HTMLButtonElement;
+    this.settingsPanel = this.element.querySelector('[data-settings-panel]') as HTMLDivElement;
     this.energyValue = this.element.querySelector('[data-energy]') as HTMLSpanElement;
     this.harmonyValue = this.element.querySelector('[data-harmony]') as HTMLSpanElement;
     this.stabilityValue = this.element.querySelector('[data-stability]') as HTMLSpanElement;
@@ -77,6 +116,8 @@ export class Hud {
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
 
+    this.buildControls();
+
     const toolGrid = this.element.querySelector('.hud__tool-grid') as HTMLDivElement;
     TOOLS.forEach((tool, index) => {
       const button = document.createElement('button');
@@ -87,6 +128,9 @@ export class Hud {
       this.toolButtons.set(tool, button);
       toolGrid.append(button);
     });
+
+    this.settingsButton.addEventListener('click', () => this.setSettingsOpen(!this.settingsOpen));
+    (this.element.querySelector('[data-settings-close]') as HTMLButtonElement).addEventListener('click', () => this.setSettingsOpen(false));
   }
 
   attach(target: HTMLElement): void {
@@ -118,7 +162,6 @@ export class Hud {
         if (!unlocked) label.textContent = 'Locked by ecosystem progression';
         else if (snapshot.tool.active === tool && snapshot.tool.blocked) label.textContent = 'Need more Resonance Energy';
         else label.textContent = TOOL_DEFINITIONS[tool].description;
-
       }
     }
 
@@ -129,7 +172,7 @@ export class Hud {
     } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
     } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
-      this.hintValue.textContent = 'Hold Resonance Focus to brighten the interior, subdue the outside, and hear nearby life more clearly.';
+      this.hintValue.textContent = 'Hold Resonance Focus to clarify the interior, soften the distance, and hear nearby life more clearly.';
     } else if (snapshot.tool.active === 'grow') {
       this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and hold pollination.';
     } else if (snapshot.tool.active === 'feed') {
@@ -143,5 +186,113 @@ export class Hud {
     } else {
       this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.';
     }
+  }
+
+  syncSettings(settings: GameSettings): void {
+    this.settings = normalizeSettings(settings);
+    this.rangeOutputs.get('masterVolume')!.textContent = percent(this.settings.audio.masterVolume);
+    this.rangeOutputs.get('ambienceVolume')!.textContent = percent(this.settings.audio.ambienceVolume);
+    this.rangeOutputs.get('entityVolume')!.textContent = percent(this.settings.audio.entityVolume);
+    this.rangeInputs.get('masterVolume')!.value = String(this.settings.audio.masterVolume);
+    this.rangeInputs.get('ambienceVolume')!.value = String(this.settings.audio.ambienceVolume);
+    this.rangeInputs.get('entityVolume')!.value = String(this.settings.audio.entityVolume);
+    this.toggleInputs.get('terrainLines')!.checked = this.settings.visuals.terrainLines;
+    this.toggleInputs.get('motionTrails')!.checked = this.settings.visuals.motionTrails;
+    this.toggleInputs.get('debugOverlays')!.checked = this.settings.visuals.debugOverlays;
+    this.toggleInputs.get('reduceMotion')!.checked = this.settings.visuals.reduceMotion;
+  }
+
+  private setSettingsOpen(open: boolean): void {
+    this.settingsOpen = open;
+    this.settingsPanel.hidden = !open;
+    this.settingsButton.setAttribute('aria-expanded', String(open));
+  }
+
+  private buildControls(): void {
+    const audioGroup = this.element.querySelector('[data-group="audio"]') as HTMLElement;
+    const visualsGroup = this.element.querySelector('[data-group="visuals"]') as HTMLElement;
+
+    this.createRangeControl(audioGroup, 'Master volume', 'masterVolume', this.settings.audio.masterVolume, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, masterVolume: value } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Ambience volume', 'ambienceVolume', this.settings.audio.ambienceVolume, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, ambienceVolume: value } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Entity volume', 'entityVolume', this.settings.audio.entityVolume, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, entityVolume: value } };
+      this.emitSettings();
+    });
+
+    this.createToggleControl(visualsGroup, 'Terrain lines', 'terrainLines', this.settings.visuals.terrainLines, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, terrainLines: checked } };
+      this.emitSettings();
+    });
+    this.createToggleControl(visualsGroup, 'Motion trails', 'motionTrails', this.settings.visuals.motionTrails, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, motionTrails: checked } };
+      this.emitSettings();
+    });
+    this.createToggleControl(visualsGroup, 'Debug overlays', 'debugOverlays', this.settings.visuals.debugOverlays, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, debugOverlays: checked } };
+      this.emitSettings();
+    });
+    this.createToggleControl(visualsGroup, 'Reduce motion', 'reduceMotion', this.settings.visuals.reduceMotion, (checked) => {
+      this.settings = { ...this.settings, visuals: { ...this.settings.visuals, reduceMotion: checked } };
+      this.emitSettings();
+    });
+
+    this.syncSettings(this.settings);
+  }
+
+  private createRangeControl(
+    parent: HTMLElement,
+    label: string,
+    key: string,
+    value: number,
+    onInput: (value: number) => void,
+  ): void {
+    const row = document.createElement('label');
+    row.className = 'hud__setting';
+    row.innerHTML = `
+      <span class="hud__setting-head"><span>${label}</span><span data-output>${percent(value)}</span></span>
+      <input type="range" min="0" max="1" step="0.01" value="${value}">
+    `;
+    const input = row.querySelector('input') as HTMLInputElement;
+    const output = row.querySelector('[data-output]') as HTMLSpanElement;
+    input.addEventListener('input', () => {
+      const nextValue = Number(input.value);
+      output.textContent = percent(nextValue);
+      onInput(nextValue);
+    });
+    this.rangeInputs.set(key, input);
+    this.rangeOutputs.set(key, output);
+    parent.append(row);
+  }
+
+  private createToggleControl(
+    parent: HTMLElement,
+    label: string,
+    key: string,
+    checked: boolean,
+    onToggle: (checked: boolean) => void,
+  ): void {
+    const row = document.createElement('label');
+    row.className = 'hud__toggle';
+    row.innerHTML = `
+      <span>${label}</span>
+      <input type="checkbox" ${checked ? 'checked' : ''}>
+    `;
+    const input = row.querySelector('input') as HTMLInputElement;
+    input.addEventListener('change', () => onToggle(input.checked));
+    this.toggleInputs.set(key, input);
+    parent.append(row);
+  }
+
+  private emitSettings(): void {
+    const normalized = normalizeSettings(this.settings);
+    this.settings = normalized;
+    this.syncSettings(normalized);
+    this.onSettingsChange(normalized);
   }
 }

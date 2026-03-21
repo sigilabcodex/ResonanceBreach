@@ -22,8 +22,8 @@ export const CAMERA_ZOOM_SPEED = 0.0011;
 export const CAMERA_PAN_SPEED = 680;
 export const CAMERA_SMOOTHING = 0.12;
 
-export const TERRAIN_SAMPLE_COLS = 16;
-export const TERRAIN_SAMPLE_ROWS = 10;
+export const TERRAIN_SAMPLE_COLS = 22;
+export const TERRAIN_SAMPLE_ROWS = 14;
 export const ATTRACTOR_COUNT = 4;
 export const BASE_TOOL_RADIUS = 136;
 export const SOFT_BOUNDARY_MARGIN = 220;

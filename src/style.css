@@ -19,15 +19,12 @@ body,
 
 body {
   overflow: hidden;
-  background:
-    radial-gradient(circle at top, rgba(68, 108, 124, 0.16), transparent 42%),
-    radial-gradient(circle at 72% 18%, rgba(82, 120, 102, 0.12), transparent 34%),
-    radial-gradient(circle at 25% 80%, rgba(86, 78, 114, 0.08), transparent 30%),
-    linear-gradient(180deg, #061017 0%, #02050a 100%);
+  background: linear-gradient(180deg, #061017 0%, #02050a 100%);
 }
 
 button,
-canvas {
+canvas,
+input {
   touch-action: none;
 }
 
@@ -42,9 +39,7 @@ canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(126, 201, 216, 0.05), transparent 40%),
-    radial-gradient(circle at 18% 72%, rgba(124, 182, 146, 0.04), transparent 30%);
+  background: linear-gradient(180deg, rgba(148, 198, 218, 0.018), rgba(0, 0, 0, 0) 24%, rgba(0, 0, 0, 0) 74%, rgba(118, 164, 186, 0.018));
   mix-blend-mode: screen;
 }
 
@@ -79,9 +74,9 @@ canvas {
   padding: 14px 16px;
   border: 1px solid rgba(168, 205, 255, 0.08);
   border-radius: 28px;
-  background: rgba(5, 11, 16, 0.46);
-  backdrop-filter: blur(18px);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.18);
+  background: rgba(5, 11, 16, 0.44);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.16);
 }
 
 .hud__panel--title {
@@ -98,6 +93,18 @@ canvas {
 
 .hud__panel--tools {
   width: min(620px, calc(100vw - 36px));
+}
+
+.hud__panel--settings {
+  width: min(720px, calc(100vw - 36px));
+  pointer-events: auto;
+}
+
+.hud__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
 }
 
 .hud__eyebrow,
@@ -120,11 +127,28 @@ canvas {
   color: rgba(212, 226, 240, 0.72);
 }
 
-.hud h1 {
+.hud h1,
+.hud h2,
+.hud h3 {
   margin: 0;
+}
+
+.hud h1 {
   font-size: clamp(1.45rem, 4vw, 2rem);
   font-weight: 600;
   letter-spacing: 0.04em;
+}
+
+.hud h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.hud h3 {
+  font-size: 0.94rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(216, 228, 240, 0.86);
 }
 
 .hud__row {
@@ -193,15 +217,7 @@ canvas {
   opacity: 0.45;
 }
 
-.hud__tool:hover:enabled,
-.hud__tool:focus-visible:enabled,
-.hud__restart:hover,
-.hud__restart:focus-visible {
-  background: rgba(113, 209, 255, 0.08);
-  border-color: rgba(113, 209, 255, 0.24);
-  transform: translateY(-1px);
-}
-
+.hud__action,
 .hud__restart {
   pointer-events: auto;
   border: 1px solid rgba(167, 208, 255, 0.14);
@@ -214,6 +230,84 @@ canvas {
   transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
+.hud__tool:hover:enabled,
+.hud__tool:focus-visible:enabled,
+.hud__action:hover,
+.hud__action:focus-visible,
+.hud__restart:hover,
+.hud__restart:focus-visible {
+  background: rgba(113, 209, 255, 0.08);
+  border-color: rgba(113, 209, 255, 0.24);
+  transform: translateY(-1px);
+}
+
+.hud__settings {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(1, 4, 8, 0.18);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.hud__settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.hud__settings-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.hud__settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(164, 198, 236, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.hud__setting,
+.hud__toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.94rem;
+  color: rgba(226, 236, 246, 0.9);
+}
+
+.hud__setting-head,
+.hud__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hud__toggle {
+  flex-direction: row;
+}
+
+.hud__setting input[type='range'] {
+  width: 100%;
+  accent-color: rgba(146, 216, 236, 0.88);
+}
+
+.hud__toggle input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: rgba(146, 216, 236, 0.88);
+}
+
 @media (max-width: 960px) {
   .hud__top,
   .hud__bottom {
@@ -223,8 +317,13 @@ canvas {
   .hud__panel,
   .hud__panel--stats,
   .hud__panel--status,
-  .hud__panel--tools {
+  .hud__panel--tools,
+  .hud__panel--settings {
     width: min(100%, calc(100vw - 36px));
+  }
+
+  .hud__settings-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -237,7 +336,9 @@ canvas {
     width: min(100%, calc(100vw - 24px));
   }
 
-  .hud__panel--title {
+  .hud__panel--title,
+  .hud__settings-head,
+  .hud__actions {
     flex-direction: column;
   }
 
@@ -248,5 +349,9 @@ canvas {
   .hud__row--hint span:last-child {
     max-width: none;
     text-align: left;
+  }
+
+  .hud__settings {
+    padding: 12px;
   }
 }

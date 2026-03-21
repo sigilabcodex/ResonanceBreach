@@ -2,6 +2,7 @@ import { CAMERA_MAX_ZOOM, CAMERA_MIN_ZOOM, CAMERA_SMOOTHING, CAMERA_ZOOM_SPEED, 
 import { AudioEngine } from '../audio/audioEngine';
 import { PlayerInput } from '../interaction/input';
 import { Renderer } from '../render/renderer';
+import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, storeSettings, type GameSettings } from '../settings';
 import { Simulation } from '../sim/simulation';
 import type { CameraState } from '../types/world';
 import { Hud } from '../ui/hud';
@@ -14,7 +15,7 @@ export class App {
   private readonly simulation = new Simulation();
   private readonly renderer: Renderer;
   private readonly audio = new AudioEngine();
-  private readonly hud = new Hud((tool) => this.selectTool(tool));
+  private readonly hud: Hud;
   private readonly input: PlayerInput;
   private readonly camera: CameraState = {
     center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
@@ -24,11 +25,15 @@ export class App {
     center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
     zoom: 1,
   };
+  private settings: GameSettings = DEFAULT_SETTINGS;
   private accumulator = 0;
   private lastTime = 0;
   private animationFrame = 0;
 
   constructor(mount: HTMLElement) {
+    this.settings = normalizeSettings(loadSettings());
+    this.hud = new Hud((tool) => this.selectTool(tool), (settings) => this.applySettings(settings), this.settings);
+
     mount.innerHTML = `
       <div class="shell">
         <canvas class="sim-canvas"></canvas>
@@ -70,6 +75,11 @@ export class App {
     window.cancelAnimationFrame(this.animationFrame);
     window.removeEventListener('resize', this.handleResize);
     this.input.dispose();
+  }
+
+  private applySettings(settings: GameSettings): void {
+    this.settings = normalizeSettings(settings);
+    storeSettings(this.settings);
   }
 
   private restart(): void {
@@ -137,9 +147,9 @@ export class App {
     }
 
     const snapshot = this.simulation.getSnapshot();
-    this.audio.update(snapshot);
+    this.audio.update(snapshot, this.settings);
     this.hud.update(snapshot);
-    this.renderer.render(snapshot);
+    this.renderer.render(snapshot, this.settings);
 
     this.animationFrame = window.requestAnimationFrame(this.frame);
   };

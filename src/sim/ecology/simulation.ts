@@ -305,12 +305,15 @@ export class Simulation {
 
   private createTerrainSamples(): TerrainCell[] {
     const samples: TerrainCell[] = [];
+    const driftX = Math.sin(this.time * 0.006) * TERRAIN_SAMPLE_SPACING_X * 0.34;
+    const driftY = Math.cos(this.time * 0.0048) * TERRAIN_SAMPLE_SPACING_Y * 0.3;
     for (let row = 0; row < TERRAIN_SAMPLE_ROWS; row += 1) {
       for (let col = 0; col < TERRAIN_SAMPLE_COLS; col += 1) {
-        const baseX = (col + 0.5) * TERRAIN_SAMPLE_SPACING_X;
-        const baseY = (row + 0.5) * TERRAIN_SAMPLE_SPACING_Y;
-        const jitterX = (this.sampleNoise(baseX * 0.0016, baseY * 0.0013, 13.7) - 0.5) * TERRAIN_SAMPLE_SPACING_X * 0.82;
-        const jitterY = (this.sampleNoise(baseX * 0.0014, baseY * 0.0017, 21.4) - 0.5) * TERRAIN_SAMPLE_SPACING_Y * 0.78;
+        const rowOffset = row % 2 === 0 ? 0 : TERRAIN_SAMPLE_SPACING_X * 0.5;
+        const baseX = (col + 0.5) * TERRAIN_SAMPLE_SPACING_X + rowOffset + driftX;
+        const baseY = (row + 0.5) * TERRAIN_SAMPLE_SPACING_Y + driftY;
+        const jitterX = (this.sampleNoise(baseX * 0.0016, baseY * 0.0013, 13.7 + row * 0.11) - 0.5) * TERRAIN_SAMPLE_SPACING_X * 0.88;
+        const jitterY = (this.sampleNoise(baseX * 0.0014, baseY * 0.0017, 21.4 + col * 0.09) - 0.5) * TERRAIN_SAMPLE_SPACING_Y * 0.82;
         const center = {
           x: wrap(baseX + jitterX, WORLD_WIDTH),
           y: wrap(baseY + jitterY, WORLD_HEIGHT),
@@ -321,7 +324,7 @@ export class Simulation {
         samples.push({
           index: row * TERRAIN_SAMPLE_COLS + col,
           center,
-          radius: Math.min(TERRAIN_SAMPLE_SPACING_X, TERRAIN_SAMPLE_SPACING_Y) * (0.94 + radiusNoise * 0.34),
+          radius: Math.min(TERRAIN_SAMPLE_SPACING_X, TERRAIN_SAMPLE_SPACING_Y) * (0.78 + radiusNoise * 0.28),
           terrain: sample.terrain,
           density: sample.density,
           fertility: sample.fertility,

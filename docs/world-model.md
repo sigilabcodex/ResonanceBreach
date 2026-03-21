@@ -2,116 +2,107 @@
 
 ## Overview
 
-The world uses a wrapped "bubble surface" topology instead of a boxed tank. Internally it is toroidal: positions, camera movement, tool placement, particles, ecology sampling, and audio salience all wrap on both axes. The important presentation goal is not to show a looping tile, but to make the space feel like one large continuous surface that extends past the viewport.
+Resonance Garden now presents the world as a wrapped continuous surface made primarily from lines. The terrain pass no longer relies on pulsing shaded blobs or circular interference patterns. Instead, the world reads through contour-like bands, flow lines, and slow field drift so the camera feels embedded inside a larger living substrate rather than pointed at a rectangular board.
 
-## Wrapped / bubble topology
+## Wrapped world topology
 
-- The simulation stores world dimensions as a wrapped space.
-- All major position systems use wrapped coordinates:
-  - entity motion
-  - particle drift
-  - tool fields
-  - attractors
-  - camera pan / zoom anchoring
-  - terrain and residue influence sampling
-- Distance checks use shortest wrapped deltas so interactions across a seam behave like local neighbors.
-- Rendering also resolves objects relative to the camera using wrapped deltas. This keeps the seam visually unobtrusive even when the camera is near an edge.
+The world is toroidal on both axes.
 
-## Flow fields and attractors
+- Moving past the right edge re-enters on the left.
+- Moving past the bottom re-enters on the top.
+- Entity motion, particles, tool placement, field sampling, residue influence, camera movement, and audio salience all use wrapped coordinates.
+- Distance tests use shortest wrapped deltas, so neighbors across a seam still behave as local neighbors.
+- Rendering resolves positions relative to the camera with wrapped deltas, which keeps seams visually unobtrusive even when the camera is near a world edge.
 
-Large-scale motion now comes from world fields instead of edge pressure.
+The goal is not to expose a visible tiling seam. The goal is to make the world feel like one continuous sheet of motion and life.
 
-### Flow fields
+## Topography as a line field
 
-The procedural field sampler generates slow low-frequency currents from:
+Terrain is now represented visually only through thin line work.
 
-- basin/moisture structure
-- height and roughness
-- global drift terms
-- slowly evolving angular flow
+### Terrain cues
 
-This produces broad currents that move water regions more strongly, fertile regions more gently, dense regions only slightly, and solid regions barely at all.
+- **Flat / open areas** read as sparse, gently spaced contour arcs.
+- **Valleys / basins** read as converging curved lines and calmer inward structure.
+- **Raised / solid regions** read as denser, tighter curvature.
+- **Water** reads as smoother, more parallel flow lines with slightly stronger directional continuity.
 
-### Attractors
+### What was removed
 
-Attractors are long-radius centers with two components:
+- no terrain fill gradients
+- no pulsing shading tied to terrain patches
+- no interference-like circular substrate artifacts
+- no shader-style background noise layer
 
-- inward pull
-- tangential orbital drift
+### What remains procedural
 
-They move slowly over time and are also wrapped, so entities can orbit and re-encounter the same broad structures naturally without hitting a wall.
+The field sampler still produces continuous environmental values for ecology and motion, but the renderer interprets those values as:
 
-## Topography layers
+- contour-like lines
+- curvature bands
+- flow lines
+- density variation through spacing and count rather than fills
 
-Topography is continuous and sampled procedurally from layered low-frequency fields with warping. The direction for this pass is deliberately non-cellular: no repeated circular substrate, no visible tile rhythm, and no regular wallpaper-like patterning.
+This keeps the ecology layer intact while changing perception of the surface.
 
-### Regions
+## Rendering layer separation
 
-- **Water**: strongest current transport and open drifting space.
-- **Fertile**: calmer movement with stronger nutrient support.
-- **Dense**: resistant regions that damp velocity and act like ecological thickets.
-- **Solid**: impassable or highly resistant ridges/plates with minimal flow.
+The world is rendered in clear visual strata.
 
-### Ecological effects
+1. **Terrain lines** — subtle contour and curvature lines that define topography without overpowering the scene.
+2. **Environmental flows** — water-like or nutrient-like directional lines that drift more visibly than the substrate.
+3. **Lifeforms and events** — entities, residue, particles, and tool feedback with stronger contrast so they remain legible against the terrain.
 
-- Water improves large-scale transport.
-- Fertile regions support growth, nutrients, and fruiting.
-- Dense regions slow moving organisms and increase resistance.
-- Solid regions suppress movement and reduce stability/energy.
-- Residues and grow/disrupt tools continue to modify terrain locally.
+Terrain should support reading the world, not compete with organisms for attention.
 
-## Rendering principles for terrain
+## Scale perception
 
-The terrain pass intentionally avoids a visible grid and avoids presenting the world as a centered bright rectangle.
+The world should feel larger than the viewport.
 
-### Visual direction
+This pass supports that through:
 
-- soft gradients for broad regions
-- sparse low-contrast contour/isoline fragments
-- warped flow bands and irregular patches
-- muted gray-blue / gray-green accents
-- no flashing or high-frequency patterns
-- camera framing fills the viewport so the world reads as continuous rather than as a bounded field
+- slow drift in terrain sample placement
+- layered line motion with subtle parallax in the backdrop
+- wrapped camera-relative rendering instead of exposed bounds
+- reduced visual anchoring to a fixed screen-centered rectangle
 
-### Stability goals
-
-To keep motion calm and readable:
-
-- sample anchors are stable rather than jittering each frame
-- contour wobble is very low amplitude and low frequency
-- background structure uses thin low-contrast lines
-- camera movement interpolates across wrapped space using shortest-path deltas
-- focus visualization dims and muffles the outside while brightening and clarifying the interior
+The intended effect is being inside a broad moving surface, not looking at a contained playfield.
 
 ## Focus tool behavior
 
-The observe tool is treated like a microscope or magnifying lens:
+Observe / Resonance Focus is now tuned as perceptual clarification rather than darkness.
 
-- outside the circle:
-  - dimmer
-  - less visually assertive
-  - lower-detail
-  - more muffled in audio
-- inside the circle:
-  - brighter
-  - clearer
-  - more detailed
-  - more audible
+- The exterior is only gently subdued.
+- The interior gains brightness and local contrast.
+- Nearby life remains more visually and sonically legible.
+- The world is not heavily dimmed into a spotlight tunnel.
 
-The intended perception is selective attention, not inversion. The focus effect should obviously privilege the interior and subdue the exterior.
+The perception target is selective attention: less distant clutter, more local clarity.
 
-## Early ecological viability goals
+## Lightweight settings system
 
-This tuning pass is intentionally conservative: it does not add new ecological systems or rewrite species roles. Instead it improves the opening state so the world feels inhabited for longer before scarcity emerges.
+A minimal settings panel now exposes:
 
-Current viability goals:
+### Audio
 
-- higher starting nutrients in fertile and water-adjacent zones
-- slightly stronger initial food / energy reserves for lifeforms
-- gentler early starvation pressure
-- better rooted-life establishment in fertile terrain
-- enough nearby audible activity to make the opening state feel alive without becoming cacophonous
+- master volume
+- ambience volume
+- entity volume
 
-## Scope notes
+### Visuals
 
-This pass is intentionally limited to world topology, environmental forces, topography, focus presentation, early viability, and restrained audio legibility. It preserves the current entity ecosystem/tools/audio foundation while making the world feel larger, softer, calmer, and more inhabited.
+- terrain lines on/off
+- motion trails on/off
+- debug overlays on/off
+- reduce motion on/off
+
+The settings system is intentionally lightweight and stays within the existing restrained HUD style.
+
+## Stability goals
+
+The current pass prioritizes calm, readable motion and stable performance.
+
+- Terrain rendering uses procedural line generation rather than heavy per-pixel shading.
+- Motion remains low-frequency to avoid flicker and strobing.
+- The ecology/species layer is preserved rather than redesigned.
+- Wrapped presentation reduces the feeling of hitting a world boundary.
