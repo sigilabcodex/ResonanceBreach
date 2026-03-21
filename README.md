@@ -1,6 +1,6 @@
 # ResonanceBreach
 
-ResonanceBreach is a minimalist browser-based ecosystem prototype. This iteration turns the scene into a calmer Resonance Garden: fewer active entities, softer terrain, slower motion, clearer cause and effect, and a closed ecological loop built around fruit, feeding, death, residue, and soil renewal.
+ResonanceBreach is a minimalist browser-based ecosystem prototype. This iteration turns the scene into a calmer Resonance Garden: fewer active entities, softer terrain, slower motion, clearer cause and effect, and a closed ecological loop built around Rooted Blooms, Pollinator Drifters, Decomposers, fruit, residue, and soil renewal.
 
 ## Modular architecture phase
 
@@ -11,19 +11,27 @@ The project is now entering a more disciplined modular architecture phase. Curre
 - **Calmer motion and visuals:** high-frequency pulsing, jitter, and dense overlays have been replaced with slower fades, softer gradients, and lower-frequency movement.
 - **Organic topography:** the world now drifts through water, fertile, and solid regions with contour-like outlines and soft boundaries rather than grid-like or boxed structure.
 - **Reduced density:** fewer entities are active at once, empty space is preserved, and only a subset of creatures visibly animate or sonify strongly at any given moment.
-- **Closed ecological loop:** plants slowly produce fruit, creatures consume it and reproduce when fed, death leaves nutrient residue, and residue enriches the soil that supports later growth.
+- **First canonical species pass:** Rooted Blooms, Pollinator Drifters, and Decomposers now have distinct behavior, lifecycle timing, morphology, and audio roles.
 - **Tool redesign:** Resonance Focus is now hold-to-observe, Grow creates a persistent fertility field, Feed emits visible particles, Repel remains wave-like, and Disrupt is a delayed charge that bursts outward and perturbs terrain.
-- **Audio hierarchy:** a quiet ambient bed sits underneath restrained plant drones and a small set of primary creature voices, with focus-based isolation and positional panning.
+- **Closed ecological loop:** blooms fruit, drifters improve bloom vitality, death leaves residue, decomposers recycle that residue, and returned nutrients support later bloom growth.
 
 ## Ecological loop
 
 The garden now behaves as a slow closed loop:
 
-1. **Plants** root in fertile zones and mature over time.
-2. **Fruit** is produced gradually by healthy mature plants.
-3. **Creatures** drift, seek fruit or feed particles, and reproduce after sustained feeding.
-4. **Death** creates nutrient residue in place.
-5. **Soil** absorbs that residue, improving local fertility and helping future plants grow.
+1. **Rooted Blooms** establish in fertile zones and grow through visible stages.
+2. **Pollinator Drifters** visit blooms, raising pollination and vitality.
+3. **Fruit** appears from healthy mature blooms.
+4. **Death** creates residue in place rather than deleting life instantly.
+5. **Decomposers** consume that residue and enrich local nutrients.
+6. **Soil** retains that returned fertility, supporting later bloom growth.
+
+
+## Canonical species implemented
+
+- **Rooted Bloom** – anchored producer with structured crown growth, fruiting, and quiet harmonic support.
+- **Pollinator Drifter** – curved mobile helper that visibly visits blooms and adds sparse upper-register gestures.
+- **Decomposer** – low-profile recycler that consumes residue and enriches local terrain.
 
 ## Terrain model
 

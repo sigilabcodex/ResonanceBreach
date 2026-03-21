@@ -70,6 +70,12 @@ export interface Entity {
   activityBias: number;
   food: number;
   fruitCooldown: number;
+  vitality: number;
+  pollination: number;
+  memory: number;
+  targetId?: number;
+  targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'signal';
+  trail: Vec2[];
 }
 
 export interface ToolFeedback {
@@ -110,6 +116,8 @@ export interface Residue {
   age: number;
   duration: number;
   radius: number;
+  sourceType?: EntityType;
+  richness: number;
 }
 
 export interface EventBurst {

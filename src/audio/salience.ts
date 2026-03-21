@@ -10,16 +10,16 @@ const wrappedDistance = (a: Vec2, b: Vec2, width: number, height: number) => {
 };
 
 const ENTITY_IMPORTANCE: Record<Entity['type'], number> = {
-  plant: 0.45,
-  flocker: 0.72,
-  cluster: 0.64,
+  plant: 0.58,
+  flocker: 0.78,
+  cluster: 0.48,
   predator: 0.95,
 };
 
 const ECOLOGICAL_WEIGHT: Record<Entity['type'], number> = {
-  plant: 0.78,
-  flocker: 0.52,
-  cluster: 0.66,
+  plant: 0.84,
+  flocker: 0.56,
+  cluster: 0.72,
   predator: 0.82,
 };
 
@@ -78,7 +78,7 @@ export const scoreEntities = (
     const focusCloseness = focus.active ? 1 - clamp(focusDistance / focus.radius, 0, 1) : 0;
     const insideFocus = focus.active && focusDistance <= focus.radius;
     const activityScore = clamp(entity.activity, 0, 1);
-    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'cluster' ? 0.7 : entity.type === 'plant' ? 0.42 : 0.58;
+    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'cluster' ? 0.52 : entity.type === 'plant' ? 0.58 : 0.64;
     const ecologicalScore = clamp(
       entity.growth * 0.22 + entity.resonance * ECOLOGICAL_WEIGHT[entity.type] * 0.34 + entity.harmony * 0.18 + entity.energy * 0.16,
       0,

@@ -33,7 +33,7 @@ export class Hud {
           <div>
             <p class="hud__eyebrow">Calm ecological sandbox</p>
             <h1>${GAME_TITLE}</h1>
-            <p class="hud__subtle">Water, fertile soil, and solid ground drift slowly while plants, creatures, fruit, and residue form a closed loop.</p>
+            <p class="hud__subtle">Water, fertile soil, and solid ground drift slowly while Rooted Blooms, Pollinator Drifters, Decomposers, fruit, and residue fold through a calm loop.</p>
           </div>
           <button class="hud__restart" type="button">Reseed</button>
         </div>
@@ -59,7 +59,7 @@ export class Hud {
         <div class="hud__panel hud__panel--status">
           <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
           <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
-          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see fruit, feeding, death, and residue fold back into soil.</span></div>
+          <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.</span></div>
         </div>
       </div>
     `;
@@ -131,17 +131,17 @@ export class Hud {
     } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
       this.hintValue.textContent = 'Hold Resonance Focus to brighten the interior, subdue the outside, and hear nearby life more clearly.';
     } else if (snapshot.tool.active === 'grow') {
-      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping plants mature and fruit.';
+      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and hold pollination.';
     } else if (snapshot.tool.active === 'feed') {
-      this.hintValue.textContent = 'Feed releases visible particles. Watch creatures move toward them and reproduce after sustained feeding.';
+      this.hintValue.textContent = 'Feed releases visible particles. Watch Pollinator Drifters curve toward them and nearby blooms.';
     } else if (snapshot.tool.active === 'repel') {
       this.hintValue.textContent = 'Repel opens calm empty space without introducing jitter or abrupt flashes.';
     } else if (snapshot.tool.active === 'disrupt') {
       this.hintValue.textContent = 'Disrupt waits, then bursts outward: some entities die into nutrient residue while terrain shifts slightly.';
     } else if (snapshot.stats.nutrients > 0.42) {
-      this.hintValue.textContent = 'Residue is feeding the soil. Mature plants in fertile patches should begin producing fruit.';
+      this.hintValue.textContent = 'Residue is feeding the soil. Fertile bloom patches should start fruiting while Decomposers work the substrate.';
     } else {
-      this.hintValue.textContent = 'Observe the garden long enough to see fruit, feeding, death, and residue fold back into soil.';
+      this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.';
     }
   }
 }

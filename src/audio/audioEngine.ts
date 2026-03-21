@@ -17,7 +17,7 @@ const ZONE_VOICE_COUNT = 3;
 
 const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
   plant: -1,
-  cluster: 0,
+  cluster: -1,
   flocker: 1,
   predator: 0,
 };
@@ -25,14 +25,14 @@ const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
 const ENTITY_WAVEFORM: Record<ScoredEntity['entity']['type'], OscillatorType> = {
   plant: 'triangle',
   cluster: 'sine',
-  flocker: 'triangle',
+  flocker: 'sine',
   predator: 'sawtooth',
 };
 
 const ZONE_WAVEFORM: Record<ZoneSummary['kind'], OscillatorType> = {
   rooted: 'triangle',
   mobile: 'sine',
-  cluster: 'triangle',
+  cluster: 'sine',
   predator: 'sawtooth',
   water: 'sine',
 };
@@ -219,7 +219,7 @@ export class AudioEngine {
       const densitySuppression = clamp((1 - zoomNorm) * 0.45 + (1 - zone.detail) * 0.35, 0.22, 0.88);
       const gain = clamp(0.0044 + zone.density * 0.0074 + zone.count * 0.0005, 0.0034, 0.028) * densitySuppression * (1 + focusBoost);
       const contour = clamp(zone.activity * 0.55 + zone.tone * 0.45, 0, 1);
-      const octaveOffset = zone.kind === 'rooted' ? -1 : zone.kind === 'water' ? -1 : zone.kind === 'predator' ? 0 : 0;
+      const octaveOffset = zone.kind === 'rooted' ? -1 : zone.kind === 'water' ? -1 : zone.kind === 'cluster' ? -1 : 0;
       const filterFrequency = inFocus
         ? 720 + zone.detail * 980 + focus.intensity * 560
         : focus.active
@@ -227,10 +227,10 @@ export class AudioEngine {
           : 320 + zone.detail * 520;
 
       voice.oscillator.type = ZONE_WAVEFORM[zone.kind];
-      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, zone.kind === 'water' ? 'water' : zone.kind === 'rooted' ? 'plant' : 'cluster', contour, octaveOffset), now, 0.8);
-      voice.filter.type = zone.kind === 'water' ? 'lowpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency, now, 0.6);
-      voice.filter.Q.setTargetAtTime(zone.kind === 'water' ? 0.5 : 0.9 + zone.detail * 0.9, now, 0.6);
+      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, zone.kind === 'water' ? 'water' : zone.kind === 'rooted' ? 'plant' : zone.kind === 'mobile' ? 'mobile' : 'cluster', contour, octaveOffset), now, 0.8);
+      voice.filter.type = zone.kind === 'water' || zone.kind === 'rooted' ? 'lowpass' : 'bandpass';
+      voice.filter.frequency.setTargetAtTime(filterFrequency * (zone.kind === 'cluster' ? 0.48 : zone.kind === 'mobile' ? 1.18 : 1), now, 0.6);
+      voice.filter.Q.setTargetAtTime(zone.kind === 'cluster' ? 0.68 : zone.kind === 'water' ? 0.5 : 0.9 + zone.detail * 0.9, now, 0.6);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(zone.position.x, snapshot), now, 0.4);
       voice.gain.gain.setTargetAtTime(gain, now, 0.55);
     });
@@ -260,12 +260,13 @@ export class AudioEngine {
         : focus.active
           ? 240 + detailLift * 260
           : 540 + detailLift * 620;
+      const layer = candidate.entity.type === 'plant' ? 'plant' : candidate.entity.type === 'cluster' ? 'cluster' : 'mobile';
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
-      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, candidate.entity.type === 'plant' ? 'plant' : 'mobile', contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
+      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency, now, 0.18);
-      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'predator' ? 2.2 : 1 + detailLift, now, 0.22);
+      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : 0.7), now, 0.18);
+      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.6 : candidate.entity.type === 'predator' ? 2.2 : 1.4 + detailLift, now, 0.22);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(candidate.entity.position.x, snapshot), now, 0.18);
       voice.gain.gain.setTargetAtTime(gain, now, 0.2);
     });
@@ -386,9 +387,9 @@ export class AudioEngine {
 
     const settings = {
       entityBorn: { layer: 'event' as const, contour: 0.55, octave: 1, dur: 0.24, type: 'triangle' as OscillatorType, amount: 0.012 },
-      entityFed: { layer: 'event' as const, contour: 0.8, octave: 1, dur: 0.18, type: 'sine' as OscillatorType, amount: 0.014 },
-      entityDied: { layer: 'plant' as const, contour: 0.2, octave: -1, dur: 0.42, type: 'sine' as OscillatorType, amount: 0.011 },
-      residueCreated: { layer: 'water' as const, contour: 0.36, octave: -1, dur: 0.3, type: 'triangle' as OscillatorType, amount: 0.01 },
+      entityFed: { layer: 'event' as const, contour: 0.82, octave: 1, dur: 0.16, type: 'sine' as OscillatorType, amount: 0.012 },
+      entityDied: { layer: 'plant' as const, contour: 0.2, octave: -1, dur: 0.42, type: 'sine' as OscillatorType, amount: 0.009 },
+      residueCreated: { layer: 'cluster' as const, contour: 0.22, octave: -2, dur: 0.28, type: 'triangle' as OscillatorType, amount: 0.008 },
     }[event.type];
 
     osc.type = settings.type;
