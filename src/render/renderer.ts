@@ -142,7 +142,7 @@ export class Renderer {
 
   private drawTerrain(samples: TerrainCell[], camera: CameraState, time: number, settings: GameSettings): void {
     const { ctx } = this;
-    const motion = settings.visuals.reduceMotion ? 0.22 : 1;
+    const motion = settings.visuals.reduceMotion ? 0.2 : 1;
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -151,22 +151,17 @@ export class Renderer {
       const center = this.wrappedPoint(sample.center, camera);
       const palette = terrainColors[sample.terrain];
       const density = this.getTerrainDensity(sample);
-      const contourCount = sample.terrain === 'water' ? 3 : sample.terrain === 'solid' ? 5 : 4;
-      const baseAlpha = sample.terrain === 'water' ? 0.12 : sample.terrain === 'solid' ? 0.1 : 0.085;
-      const flowAngle = Math.atan2(sample.flow.y, sample.flow.x || 0.0001);
-      const drift = Math.sin(time * 0.026 * motion + sample.index * 0.31) * sample.radius * 0.06;
+      const contourAngle = Math.atan2(sample.gradient.y || sample.flow.y || 0.001, sample.gradient.x || sample.flow.x || 0.001) + Math.PI * 0.5;
+      const lineCount = Math.max(1, Math.round(1 + sample.slope * 3 + sample.density * 2));
+      const spacing = sample.radius * (0.12 + (1 - sample.slope) * 0.16);
+      const halfLength = sample.radius * (0.2 + sample.traversability * 0.2 + density * 0.1);
 
-      ctx.strokeStyle = hsla(palette.hue + sample.hue * 6, palette.sat, palette.light + sample.nutrient * 10, baseAlpha + density * 0.05);
-      ctx.lineWidth = sample.terrain === 'solid' ? 0.95 : 0.75;
-      for (let band = 0; band < contourCount; band += 1) {
-        this.traceContourLine(center, sample, flowAngle, time * motion, band, drift);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = hsla(palette.hue + sample.hue * 6, palette.sat, palette.light + sample.nutrient * 8, 0.045 + density * 0.05 + sample.slope * 0.05);
+      ctx.lineWidth = 0.55 + sample.slope * 0.38 + (sample.terrain === 'solid' ? 0.18 : 0);
 
-      ctx.strokeStyle = rgba(palette.accent, sample.terrain === 'water' ? 0.08 : 0.05);
-      ctx.lineWidth = 0.7;
-      for (let stream = 0; stream < (sample.terrain === 'water' ? 3 : 2); stream += 1) {
-        this.traceCurvatureLine(center, sample, flowAngle, time * motion, stream);
+      for (let band = 0; band < lineCount; band += 1) {
+        const offsetAmount = (band - (lineCount - 1) * 0.5) * spacing;
+        this.traceContourStroke(center, sample, contourAngle, time * motion, offsetAmount, halfLength, band);
         ctx.stroke();
       }
     }
@@ -176,7 +171,7 @@ export class Renderer {
 
   private drawEnvironmentalFlows(samples: TerrainCell[], camera: CameraState, time: number, settings: GameSettings): void {
     const { ctx } = this;
-    const motion = settings.visuals.reduceMotion ? 0.16 : 1;
+    const motion = settings.visuals.reduceMotion ? 0.14 : 1;
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -185,14 +180,14 @@ export class Renderer {
       const center = this.wrappedPoint(sample.center, camera);
       const accent = terrainColors[sample.terrain].accent;
       const alpha = sample.terrain === 'water'
-        ? 0.072 + sample.resonance * 0.03
+        ? 0.065 + sample.resonance * 0.03
         : sample.terrain === 'fertile'
-          ? 0.038 + sample.nutrient * 0.025
-          : 0.02 + sample.density * 0.018;
+          ? 0.028 + sample.nutrient * 0.022
+          : 0.014 + sample.density * 0.014;
       ctx.strokeStyle = rgba(accent, alpha);
-      ctx.lineWidth = sample.terrain === 'water' ? 0.78 : 0.58;
+      ctx.lineWidth = 0.42 + (sample.terrain === 'water' ? 0.2 : 0) + sample.moisture * 0.12;
 
-      const streamCount = sample.terrain === 'water' ? 3 : sample.terrain === 'fertile' ? 2 : 1;
+      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 2 + (sample.terrain === 'water' ? 1 : 0)));
       for (let stream = 0; stream < streamCount; stream += 1) {
         this.traceFlowLine(center, sample, time * motion, stream);
         ctx.stroke();
@@ -203,49 +198,22 @@ export class Renderer {
   }
 
   private getTerrainDensity(sample: TerrainCell): number {
-    return clamp(sample.density * 0.5 + sample.height * 0.3 + sample.roughness * 0.2, 0, 1);
+    return clamp(sample.density * 0.36 + sample.height * 0.24 + sample.roughness * 0.14 + sample.slope * 0.26, 0, 1);
   }
 
-  private traceContourLine(center: Vec2, sample: TerrainCell, flowAngle: number, time: number, band: number, drift: number): void {
+  private traceContourStroke(center: Vec2, sample: TerrainCell, contourAngle: number, time: number, offsetAmount: number, halfLength: number, band: number): void {
     const { ctx } = this;
-    const density = this.getTerrainDensity(sample);
-    const radius = sample.radius * (0.24 + band * 0.15 + density * 0.08);
-    const length = Math.PI * (1.1 + density * 0.6 + (sample.terrain === 'solid' ? 0.22 : 0));
-    const start = flowAngle - length * 0.5 + sample.height * 0.8 + band * 0.18;
-    const curvature = sample.terrain === 'water' ? 0.42 : sample.terrain === 'solid' ? 0.88 : 0.66;
+    const alongAngle = contourAngle;
+    const normalAngle = contourAngle + Math.PI * 0.5;
+    const curvature = (sample.flowTendency.x * Math.cos(normalAngle) + sample.flowTendency.y * Math.sin(normalAngle)) * sample.radius * 0.12;
     ctx.beginPath();
-    for (let step = 0; step <= 24; step += 1) {
-      const t = step / 24;
-      const angle = start + length * t;
-      const wobble = 1
-        + Math.sin(time * 0.8 + sample.index * 0.33 + angle * 1.8 + band) * 0.028
-        + Math.cos(sample.roughness * 5.6 + angle * 1.4) * 0.018;
-      const offset = Math.sin(t * Math.PI * 2 + sample.nutrient * 4 + band) * drift;
-      const x = center.x + Math.cos(angle) * radius * wobble + Math.cos(flowAngle + Math.PI * 0.5) * offset * 0.24;
-      const y = center.y + Math.sin(angle) * radius * wobble * curvature + Math.sin(flowAngle + Math.PI * 0.5) * offset * 0.18;
-      if (step === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-  }
-
-  private traceCurvatureLine(center: Vec2, sample: TerrainCell, flowAngle: number, time: number, stream: number): void {
-    const { ctx } = this;
-    const side = stream % 2 === 0 ? -1 : 1;
-    const normalAngle = flowAngle + Math.PI * 0.5;
-    const reach = sample.radius * (0.44 + stream * 0.14 + sample.nutrient * 0.08);
-    const offset = sample.radius * (0.08 + stream * 0.09) * side;
-    ctx.beginPath();
-    for (let step = 0; step <= 18; step += 1) {
-      const t = step / 18;
-      const along = (t - 0.5) * reach * 2;
-      const sweep = Math.sin(t * Math.PI + time * 0.7 + sample.index * 0.21 + stream) * sample.radius * 0.06;
-      const bend = Math.sin(t * Math.PI * 2 + sample.height * 5 + stream) * sample.radius * 0.03;
-      const x = center.x
-        + Math.cos(flowAngle) * along
-        + Math.cos(normalAngle) * (offset + sweep + bend);
-      const y = center.y
-        + Math.sin(flowAngle) * along * (sample.terrain === 'water' ? 0.92 : 0.76)
-        + Math.sin(normalAngle) * (offset * 0.7 + sweep * 0.6 + bend);
+    for (let step = 0; step <= 12; step += 1) {
+      const t = step / 12;
+      const along = (t - 0.5) * halfLength * 2;
+      const wobble = Math.sin(time * 0.8 + sample.index * 0.23 + band * 0.6 + t * Math.PI * 2) * sample.radius * 0.016;
+      const bend = Math.sin(t * Math.PI + sample.roughness * 4.8 + band) * curvature;
+      const x = center.x + Math.cos(alongAngle) * along + Math.cos(normalAngle) * (offsetAmount + bend + wobble);
+      const y = center.y + Math.sin(alongAngle) * along + Math.sin(normalAngle) * (offsetAmount + bend + wobble);
       if (step === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -253,18 +221,18 @@ export class Renderer {
 
   private traceFlowLine(center: Vec2, sample: TerrainCell, time: number, stream: number): void {
     const { ctx } = this;
-    const flowAngle = Math.atan2(sample.flow.y, sample.flow.x || 0.0001);
+    const flowAngle = Math.atan2(sample.flow.y || sample.flowTendency.y || 0.001, sample.flow.x || sample.flowTendency.x || 0.001);
     const normalAngle = flowAngle + Math.PI * 0.5;
-    const span = sample.radius * (sample.terrain === 'water' ? 0.92 : 0.7);
-    const offset = sample.radius * (-0.2 + stream * 0.18);
+    const span = sample.radius * (0.34 + sample.moisture * 0.22 + (sample.terrain === 'water' ? 0.22 : 0));
+    const offset = sample.radius * ((stream - 1) * 0.14 + (sample.density - 0.5) * 0.06);
     ctx.beginPath();
-    for (let step = 0; step <= 22; step += 1) {
-      const t = step / 22;
+    for (let step = 0; step <= 16; step += 1) {
+      const t = step / 16;
       const along = (t - 0.5) * span * 2;
-      const drift = Math.sin(time * 1.1 + sample.index * 0.19 + t * Math.PI * 2 + stream * 0.8) * sample.radius * 0.05;
-      const turbulence = Math.cos(sample.roughness * 6 + t * Math.PI * 3) * sample.radius * 0.02;
+      const drift = Math.sin(time * 0.9 + sample.index * 0.13 + stream * 0.8 + t * Math.PI * 2) * sample.radius * 0.026;
+      const turbulence = (sample.gradient.x * Math.cos(normalAngle) + sample.gradient.y * Math.sin(normalAngle)) * sample.radius * 0.08 * Math.sin(t * Math.PI);
       const x = center.x + Math.cos(flowAngle) * along + Math.cos(normalAngle) * (offset + drift + turbulence);
-      const y = center.y + Math.sin(flowAngle) * along + Math.sin(normalAngle) * (offset * 0.8 + drift * 0.7 + turbulence);
+      const y = center.y + Math.sin(flowAngle) * along + Math.sin(normalAngle) * (offset + drift + turbulence);
       if (step === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }

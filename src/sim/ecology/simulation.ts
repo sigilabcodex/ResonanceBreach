@@ -28,6 +28,7 @@ import { Rng } from '../random';
 import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../events';
 import { createDefaultCamera, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
+import { WorldFieldModel } from '../fields/worldField';
 import type {
   Attractor,
   CameraState,
@@ -46,8 +47,9 @@ import type {
 } from '../../types/world';
 
 const TWO_PI = Math.PI * 2;
-const TERRAIN_SAMPLE_SPACING_X = WORLD_WIDTH / TERRAIN_SAMPLE_COLS;
-const TERRAIN_SAMPLE_SPACING_Y = WORLD_HEIGHT / TERRAIN_SAMPLE_ROWS;
+const TERRAIN_SAMPLE_COUNT = TERRAIN_SAMPLE_COLS * TERRAIN_SAMPLE_ROWS;
+const TERRAIN_SAMPLE_RADIUS = Math.min(WORLD_WIDTH / TERRAIN_SAMPLE_COLS, WORLD_HEIGHT / TERRAIN_SAMPLE_ROWS);
+const GOLDEN_RATIO = 0.6180339887498948;
 const TOOL_UNLOCK_SCHEDULE: Array<{ tool: ToolType; time: number; energy: number }> = [
   { tool: 'observe', time: 0, energy: 0 },
   { tool: 'grow', time: 0, energy: 0 },
@@ -75,6 +77,7 @@ export class Simulation {
   private readonly eventQueue = new WorldEventQueue();
   private readonly world: WorldState = createWorldState();
   private terrainModifiers: TerrainModifier[] = [];
+  private readonly worldField = new WorldFieldModel();
   private nextId = 1;
   private nextClusterId = 1;
   private nextFeedbackId = 1;
@@ -286,18 +289,17 @@ export class Simulation {
   private createAttractors(): Attractor[] {
     const attractors: Attractor[] = [];
     for (let i = 0; i < ATTRACTOR_COUNT; i += 1) {
-      const angle = (i / ATTRACTOR_COUNT) * TWO_PI + this.rng.range(-0.25, 0.25);
-      const radial = this.rng.range(420, 880);
+      const px = fract(0.19 + (i + 1) * GOLDEN_RATIO + this.rng.range(-0.04, 0.04));
+      const py = fract(0.47 + (i + 1) * 0.754877666 + this.rng.range(-0.05, 0.05));
+      const position = { x: px * WORLD_WIDTH, y: py * WORLD_HEIGHT };
+      const sample = this.sampleField(position.x, position.y);
       attractors.push({
         id: i + 1,
-        position: {
-          x: wrap(WORLD_WIDTH * 0.5 + Math.cos(angle) * radial, WORLD_WIDTH),
-          y: wrap(WORLD_HEIGHT * 0.5 + Math.sin(angle) * radial * 0.72, WORLD_HEIGHT),
-        },
-        strength: this.rng.range(0.18, 0.42),
-        orbit: this.rng.range(-0.28, 0.28),
-        radius: this.rng.range(420, 760),
-        hue: this.rng.range(0.35, 0.72),
+        position,
+        strength: this.rng.range(0.16, 0.36) * (0.8 + sample.resonance * 0.4),
+        orbit: this.rng.range(-0.18, 0.18) + (sample.moisture - 0.5) * 0.08,
+        radius: this.rng.range(360, 720) * (0.82 + sample.traversability * 0.36),
+        hue: clamp(sample.hue + this.rng.range(-0.08, 0.08), 0.24, 0.82),
       });
     }
     return attractors;
@@ -305,38 +307,41 @@ export class Simulation {
 
   private createTerrainSamples(): TerrainCell[] {
     const samples: TerrainCell[] = [];
-    const driftX = Math.sin(this.time * 0.006) * TERRAIN_SAMPLE_SPACING_X * 0.34;
-    const driftY = Math.cos(this.time * 0.0048) * TERRAIN_SAMPLE_SPACING_Y * 0.3;
-    for (let row = 0; row < TERRAIN_SAMPLE_ROWS; row += 1) {
-      for (let col = 0; col < TERRAIN_SAMPLE_COLS; col += 1) {
-        const rowOffset = row % 2 === 0 ? 0 : TERRAIN_SAMPLE_SPACING_X * 0.5;
-        const baseX = (col + 0.5) * TERRAIN_SAMPLE_SPACING_X + rowOffset + driftX;
-        const baseY = (row + 0.5) * TERRAIN_SAMPLE_SPACING_Y + driftY;
-        const jitterX = (this.sampleNoise(baseX * 0.0016, baseY * 0.0013, 13.7 + row * 0.11) - 0.5) * TERRAIN_SAMPLE_SPACING_X * 0.88;
-        const jitterY = (this.sampleNoise(baseX * 0.0014, baseY * 0.0017, 21.4 + col * 0.09) - 0.5) * TERRAIN_SAMPLE_SPACING_Y * 0.82;
-        const center = {
-          x: wrap(baseX + jitterX, WORLD_WIDTH),
-          y: wrap(baseY + jitterY, WORLD_HEIGHT),
-        };
-        const sample = this.sampleField(center.x, center.y);
-        const radiusNoise = this.sampleNoise(center.x * 0.0007, center.y * 0.0007, 4.2);
-        const height = this.sampleNoise(center.x * 0.0011, center.y * 0.0012, 1.4);
-        samples.push({
-          index: row * TERRAIN_SAMPLE_COLS + col,
-          center,
-          radius: Math.min(TERRAIN_SAMPLE_SPACING_X, TERRAIN_SAMPLE_SPACING_Y) * (0.78 + radiusNoise * 0.28),
-          terrain: sample.terrain,
-          density: sample.density,
-          fertility: sample.fertility,
-          stability: sample.stability,
-          flow: sample.flow,
-          resonance: sample.resonance,
-          roughness: sample.roughness,
-          height,
-          hue: sample.hue,
-          nutrient: sample.nutrient,
-        });
-      }
+    const drift = this.time * 0.00045;
+    for (let index = 0; index < TERRAIN_SAMPLE_COUNT; index += 1) {
+      const baseX = fract(0.17 + index * GOLDEN_RATIO + drift * 0.17) * WORLD_WIDTH;
+      const baseY = fract(0.61 + index * 0.754877666 + drift * 0.11) * WORLD_HEIGHT;
+      const jitterScale = TERRAIN_SAMPLE_RADIUS * 0.34;
+      const jitterX = (this.sampleNoise(baseX * 0.00082, baseY * 0.00078, 13.7 + index * 0.07) - 0.5) * jitterScale;
+      const jitterY = (this.sampleNoise(baseX * 0.00076, baseY * 0.00084, 21.4 + index * 0.05) - 0.5) * jitterScale;
+      const center = {
+        x: wrap(baseX + jitterX, WORLD_WIDTH),
+        y: wrap(baseY + jitterY, WORLD_HEIGHT),
+      };
+      const sample = this.sampleField(center.x, center.y);
+      const radiusNoise = this.sampleNoise(center.x * 0.00054, center.y * 0.00058, 4.2 + index * 0.03);
+      samples.push({
+        index,
+        center,
+        radius: TERRAIN_SAMPLE_RADIUS * (0.54 + radiusNoise * 0.26 + sample.slope * 0.22),
+        terrain: sample.terrain,
+        density: sample.density,
+        fertility: sample.fertility,
+        moisture: sample.moisture,
+        traversability: sample.traversability,
+        slope: sample.slope,
+        stability: sample.stability,
+        flow: sample.flow,
+        flowTendency: sample.flowTendency,
+        gradient: sample.gradient,
+        fertilityGradient: sample.fertilityGradient,
+        moistureGradient: sample.moistureGradient,
+        resonance: sample.resonance,
+        roughness: sample.roughness,
+        height: sample.elevation,
+        hue: sample.hue,
+        nutrient: sample.nutrient,
+      });
     }
     return samples;
   }
@@ -562,7 +567,7 @@ export class Simulation {
     entity.pollination = clamp(entity.pollination - dt * (entity.type === 'plant' ? 0.012 : 0), 0, 1.6);
 
     this.applyToolFields(entity, dt, focusWeight, localStats);
-    entity.boundaryFade = lerp(entity.boundaryFade, sample.terrain === 'solid' ? 0.68 : sample.terrain === 'dense' ? 0.84 : 1, dt * 0.24);
+    entity.boundaryFade = lerp(entity.boundaryFade, clamp(0.58 + sample.traversability * 0.42, 0.52, 1), dt * 0.24);
 
     if (entity.type === 'plant') this.updatePlant(entity, sample, dt, localStats);
     else this.updateCreature(entity, sample, neighbors, dt, localStats);
@@ -589,19 +594,19 @@ export class Simulation {
   ): void {
     const anchor = entity.anchor ?? entity.position;
     const anchorDelta = this.delta(entity.position, anchor);
-    entity.velocity.x = lerp(entity.velocity.x, -anchorDelta.x * 0.02 + sample.flow.x * 0.015, dt * 0.5);
-    entity.velocity.y = lerp(entity.velocity.y, -anchorDelta.y * 0.02 + sample.flow.y * 0.015, dt * 0.5);
+    entity.velocity.x = lerp(entity.velocity.x, -anchorDelta.x * 0.02 + sample.flow.x * 0.012 + sample.moistureGradient.x * 2.8 - sample.gradient.x * 2.4, dt * 0.5);
+    entity.velocity.y = lerp(entity.velocity.y, -anchorDelta.y * 0.02 + sample.flow.y * 0.012 + sample.moistureGradient.y * 2.8 - sample.gradient.y * 2.4, dt * 0.5);
     entity.position = this.wrapPosition({
       x: entity.position.x + entity.velocity.x * dt,
       y: entity.position.y + entity.velocity.y * dt,
     });
 
-    const fertilityScore = sample.fertility * 0.58 + sample.nutrient * 0.62 + entity.pollination * 0.18;
-    const stress = (sample.terrain === 'solid' ? 0.09 : sample.terrain === 'water' ? 0.016 : 0) + Math.max(0, 0.3 - fertilityScore) * 0.05;
+    const fertilityScore = sample.fertility * 0.5 + sample.nutrient * 0.46 + sample.moisture * 0.18 + entity.pollination * 0.18;
+    const stress = (1 - sample.traversability) * 0.05 + sample.slope * 0.035 + (sample.terrain === 'solid' ? 0.08 : sample.terrain === 'water' ? 0.012 : 0) + Math.max(0, 0.34 - fertilityScore) * 0.05;
     entity.growth = clamp(entity.growth + dt * (fertilityScore * 0.05 - stress), 0, 1.8);
     entity.energy = clamp(entity.energy + dt * (fertilityScore * 0.08 - stress * 1.25), 0, 1.4);
     entity.food = clamp(entity.food + dt * (sample.nutrient * 0.065 + sample.fertility * 0.04 - stress * 0.8), 0, 1.5);
-    entity.harmony = clamp(lerp(entity.harmony, 0.42 + sample.resonance * 0.38 + entity.pollination * 0.12, dt * 0.08), 0, 1.2);
+    entity.harmony = clamp(lerp(entity.harmony, 0.38 + sample.resonance * 0.34 + sample.moisture * 0.08 + entity.pollination * 0.12, dt * 0.08), 0, 1.2);
 
     if (fertilityScore > 0.6 && entity.stage !== 'birth') {
       this.seedTerrain(entity.position, 52 + entity.size * 2.4, 0.01 * dt, 0.004 * dt, -0.001 * dt, 2.6);
@@ -685,8 +690,8 @@ export class Simulation {
     const wanderTheta = this.time * (0.03 + entity.activityBias * 0.028) + entity.id * 0.6;
     entity.velocity.x += Math.cos(wanderTheta) * dt * 1.6 * entity.activity;
     entity.velocity.y += Math.sin(wanderTheta * 0.85) * dt * 1.2 * entity.activity;
-    entity.velocity.x += sample.flow.x * dt * (0.08 + entity.activity * 0.08);
-    entity.velocity.y += sample.flow.y * dt * (0.08 + entity.activity * 0.08);
+    entity.velocity.x += sample.flow.x * dt * (0.06 + entity.activity * 0.07) + sample.fertilityGradient.x * dt * 7.5 - sample.gradient.x * dt * 4.2;
+    entity.velocity.y += sample.flow.y * dt * (0.06 + entity.activity * 0.07) + sample.fertilityGradient.y * dt * 7.5 - sample.gradient.y * dt * 4.2;
 
     if (bloomTarget && nearestOffset && nearestDistance < 320) {
       const dist = nearestDistance || 1;
@@ -749,17 +754,20 @@ export class Simulation {
       entity.velocity.y += separationY * dt * 7.5;
     }
 
-    if (sample.terrain === 'solid') {
-      entity.velocity.x -= sample.flow.x * dt * 0.08;
-      entity.velocity.y -= sample.flow.y * dt * 0.08;
-      entity.energy -= dt * 0.018;
-      entity.stability = clamp(entity.stability - dt * 0.035, 0, 1.2);
+    if (sample.traversability < 0.28 || sample.terrain === 'solid') {
+      entity.velocity.x -= sample.gradient.x * dt * 12 + sample.flow.x * dt * 0.05;
+      entity.velocity.y -= sample.gradient.y * dt * 12 + sample.flow.y * dt * 0.05;
+      entity.energy -= dt * 0.022;
+      entity.stability = clamp(entity.stability - dt * 0.038, 0, 1.2);
     } else if (sample.terrain === 'dense') {
       entity.velocity.x *= Math.pow(0.92, dt * 60);
       entity.velocity.y *= Math.pow(0.92, dt * 60);
       entity.stability = clamp(entity.stability + dt * 0.008, 0, 1.2);
     } else if (sample.terrain === 'fertile') {
-      entity.energy = clamp(entity.energy + dt * 0.01, 0, 1.5);
+      entity.energy = clamp(entity.energy + dt * 0.012, 0, 1.5);
+    } else if (sample.terrain === 'water') {
+      entity.velocity.x += sample.moistureGradient.x * dt * 2.4;
+      entity.velocity.y += sample.moistureGradient.y * dt * 2.4;
     }
 
     const damping = 0.982;
@@ -782,8 +790,8 @@ export class Simulation {
     let targetOffset = residue ? this.delta(entity.position, residue.position) : undefined;
     let targetDistance = residue ? Math.hypot(targetOffset!.x, targetOffset!.y) : Infinity;
 
-    entity.velocity.x += sample.flow.x * dt * 0.04;
-    entity.velocity.y += sample.flow.y * dt * 0.04;
+    entity.velocity.x += sample.flow.x * dt * 0.034 + sample.nutrient * sample.fertilityGradient.x * dt * 5.2 - sample.gradient.x * dt * 2.2;
+    entity.velocity.y += sample.flow.y * dt * 0.034 + sample.nutrient * sample.fertilityGradient.y * dt * 5.2 - sample.gradient.y * dt * 2.2;
 
     if (residue && targetOffset && targetDistance < 260) {
       const dist = targetDistance || 1;
@@ -831,8 +839,8 @@ export class Simulation {
     if (sample.terrain === 'dense') {
       entity.stability = clamp(entity.stability + dt * 0.02, 0, 1.2);
       entity.energy = clamp(entity.energy + dt * 0.008, 0, 1.4);
-    } else if (sample.terrain === 'solid') {
-      entity.energy = clamp(entity.energy - dt * 0.012, 0, 1.4);
+    } else if (sample.terrain === 'solid' || sample.traversability < 0.24) {
+      entity.energy = clamp(entity.energy - dt * 0.014, 0, 1.4);
     }
 
     entity.harmony = clamp(lerp(entity.harmony, 0.18 + sample.resonance * 0.24 + entity.memory * 0.08, dt * 0.06), 0, 1.1);
@@ -918,17 +926,23 @@ export class Simulation {
       if (entity.reproductionCooldown > 0) continue;
       const localDensity = this.getNeighborsByEntity(entity, entity.type === 'plant' ? 150 : entity.type === 'cluster' ? 100 : 130).length;
 
+      const localSample = this.sampleField(entity.position.x, entity.position.y);
+
       if (
         entity.type === 'plant'
         && entity.stage !== 'birth'
         && entity.pollination > 0.58
         && entity.food > 0.72
         && entity.energy > 0.74
+        && localSample.fertility > 0.44
+        && localSample.moisture > 0.28
+        && localSample.slope < 0.62
         && counts.plant + additions.filter((candidate) => candidate.type === 'plant').length < MAX_PLANTS
       ) {
-        const birthRate = dt * clamp(0.01 + entity.pollination * 0.02 - localDensity * 0.005, 0.002, 0.04);
+        const birthRate = dt * clamp(0.008 + entity.pollination * 0.018 + localSample.fertility * 0.012 - localDensity * 0.005, 0.002, 0.04);
         if (this.rng.next() <= birthRate) {
-          additions.push(this.createEntity('plant', this.scatterAround(entity.position, 84)));
+          const position = this.findNearbySpawnPoint(entity.position, 84, (sample) => sample.fertility > 0.46 && sample.moisture > 0.3 && sample.slope < 0.6);
+          additions.push(this.createEntity('plant', position));
           entity.reproductionCooldown = this.rng.range(24, 34);
           entity.pollination *= 0.58;
           entity.food *= 0.82;
@@ -940,11 +954,13 @@ export class Simulation {
         && entity.food > 0.74
         && entity.energy > 0.72
         && entity.memory > 0.3
+        && localSample.traversability > 0.24
         && counts.flocker + additions.filter((candidate) => candidate.type === 'flocker').length < MAX_FLOCKERS
       ) {
-        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 - localDensity * 0.006, 0.001, 0.03);
+        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 + localSample.moisture * 0.01 - localDensity * 0.006, 0.001, 0.03);
         if (this.rng.next() <= birthRate) {
-          additions.push(this.createEntity('flocker', this.scatterAround(entity.position, 62)));
+          const position = this.findNearbySpawnPoint(entity.position, 62, (sample) => sample.moisture > 0.34 && sample.slope < 0.54 && sample.traversability > 0.28);
+          additions.push(this.createEntity('flocker', position));
           entity.reproductionCooldown = this.rng.range(20, 30);
           entity.food *= 0.7;
           entity.energy *= 0.82;
@@ -958,9 +974,11 @@ export class Simulation {
         && counts.cluster + additions.filter((candidate) => candidate.type === 'cluster').length < MAX_CLUSTERS
       ) {
         const nearbyResidue = this.findResidueTarget(entity.position, 140);
-        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) - localDensity * 0.006, 0.001, 0.024);
+        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) + (1 - localSample.traversability) * 0.006 - localDensity * 0.006, 0.001, 0.024);
         if (this.rng.next() <= birthRate) {
-          additions.push(this.createEntity('cluster', this.scatterAround(nearbyResidue?.position ?? entity.position, 48)));
+          const origin = nearbyResidue?.position ?? entity.position;
+          const position = this.findNearbySpawnPoint(origin, 48, (sample) => sample.nutrient > 0.2 && sample.traversability > 0.12 && sample.slope < 0.7);
+          additions.push(this.createEntity('cluster', position));
           entity.reproductionCooldown = this.rng.range(22, 34);
           entity.food *= 0.72;
           entity.energy *= 0.84;
@@ -1033,80 +1051,11 @@ export class Simulation {
   private sampleField(x: number, y: number): FieldSample {
     const worldX = wrap(x, WORLD_WIDTH);
     const worldY = wrap(y, WORLD_HEIGHT);
-    const driftX = Math.sin(this.time * 0.0035) * 220;
-    const driftY = Math.cos(this.time * 0.003) * 170;
-    const nx = (worldX + driftX) * 0.00054;
-    const ny = (worldY + driftY) * 0.00058;
-    const ridgeWarp = this.sampleNoise(nx * 0.44, ny * 0.4, 12.8) - 0.5;
-    const flowWarp = this.sampleNoise(nx * 0.36 + ridgeWarp * 0.8, ny * 0.34 - ridgeWarp * 0.6, 15.1) - 0.5;
-    const warpedX = nx + ridgeWarp * 0.32 + flowWarp * 0.14;
-    const warpedY = ny - ridgeWarp * 0.24 + flowWarp * 0.18;
-    let moisture = this.sampleNoise(warpedX * 0.92, warpedY * 1.06, 1.2);
-    let fertility = this.sampleNoise(warpedX * 1.08, warpedY * 0.82, 3.2);
-    let height = this.sampleNoise(warpedX * 0.72, warpedY * 0.78, 0.3);
-    const roughness = this.sampleNoise(warpedX * 1.18, warpedY * 1.14, 6.8);
-    const densityBand = this.sampleNoise(warpedX * 0.86, warpedY * 0.94, 9.4);
-    const contourField = this.sampleNoise(warpedX * 0.58 + flowWarp * 0.2, warpedY * 0.6 - ridgeWarp * 0.22, 18.4);
-
-    for (const modifier of this.terrainModifiers) {
-      const offset = this.delta({ x: worldX, y: worldY }, modifier.position);
-      const dist = Math.hypot(offset.x, offset.y);
-      if (dist > modifier.radius) continue;
-      const influence = smoothstep(modifier.radius, 0, dist) * (1 - modifier.age / modifier.duration);
-      fertility = clamp(fertility + modifier.fertility * influence, 0, 1);
-      moisture = clamp(moisture + modifier.moisture * influence, 0, 1);
-      height = clamp(height + modifier.solidity * influence, 0, 1);
-    }
-
-    const residueInfluence = this.getResidueInfluence(worldX, worldY);
-    fertility = clamp(fertility + residueInfluence * 0.18, 0, 1);
-    moisture = clamp(moisture + residueInfluence * 0.08, 0, 1);
-
-    const basin = smoothstep(0.58, 0.16, height + moisture * 0.08 - contourField * 0.04);
-    const ridge = smoothstep(0.66, 0.92, height + contourField * 0.08) * smoothstep(0.5, 0.88, roughness + contourField * 0.06);
-    const denseWeight = smoothstep(0.54, 0.8, densityBand * 0.68 + roughness * 0.4 + height * 0.2 + contourField * 0.12) * (1 - ridge * 0.9);
-    const fertileWeight = smoothstep(0.42, 0.88, fertility + moisture * 0.18 + residueInfluence * 0.36 + contourField * 0.08 - denseWeight * 0.14) * (1 - ridge * 0.82);
-    const terrain: TerrainType = ridge > 0.6 ? 'solid' : denseWeight > 0.54 ? 'dense' : fertileWeight > 0.46 ? 'fertile' : 'water';
-    const angle = this.sampleNoise(warpedX * 0.48 + basin * 0.4 + flowWarp * 0.24, warpedY * 0.52 + ridge * 0.18 - ridgeWarp * 0.16, 5.1 + this.time * 0.0009) * TWO_PI * 2;
-    const currentSweep = this.sampleNoise(warpedX * 0.22, warpedY * 0.24, 11.4) - 0.5;
-    const globalDrift = {
-      x: Math.cos(this.time * 0.005 + currentSweep) * 10,
-      y: Math.sin(this.time * 0.0045 - currentSweep) * 8,
-    };
-    const flowStrength = terrain === 'water'
-      ? 14 + basin * 16 + moisture * 8
-      : terrain === 'fertile'
-        ? 6 + fertility * 4
-        : terrain === 'dense'
-          ? 2.5 + roughness * 2
-          : 0.8 + roughness * 1.2;
-    const nutrient = clamp(residueInfluence * 0.85 + fertility * 0.42 + moisture * 0.08 + contourField * 0.08 + (terrain === 'fertile' ? 0.22 : terrain === 'water' ? 0.04 : 0), 0, 1);
-    const density = clamp(0.18 + fertility * 0.22 + moisture * 0.18 + nutrient * 0.1 + denseWeight * 0.24 - ridge * 0.06, 0, 1);
-    const resonance = clamp(0.26 + moisture * 0.26 + fertility * 0.18 + nutrient * 0.18 - roughness * 0.08 - denseWeight * 0.06, 0, 1);
-    const stability = clamp(0.38 + fertility * 0.18 + (1 - roughness) * 0.18 + nutrient * 0.18 + denseWeight * 0.12 - ridge * 0.07, 0, 1);
-    const hue = clamp(
-      terrain === 'water'
-        ? 0.5 + moisture * 0.12
-        : terrain === 'fertile'
-          ? 0.28 + fertility * 0.1
-          : terrain === 'dense'
-            ? 0.58 + denseWeight * 0.08
-            : 0.72 + roughness * 0.04,
-      0,
-      1,
-    );
-
-    return {
-      terrain,
-      fertility: terrain === 'solid' ? fertility * 0.16 : terrain === 'dense' ? fertility * 0.46 : terrain === 'water' ? fertility * 0.78 : clamp(fertility + 0.06, 0, 1),
-      stability,
-      density,
-      resonance,
-      roughness,
-      nutrient,
-      flow: { x: Math.cos(angle) * flowStrength + globalDrift.x, y: Math.sin(angle) * flowStrength + globalDrift.y },
-      hue,
-    };
+    return this.worldField.sample(worldX, worldY, this.time, {
+      residueInfluence: this.getResidueInfluence(worldX, worldY),
+      modifiers: this.terrainModifiers,
+      delta: (a, b) => this.delta(a, b),
+    });
   }
 
   private getResidueInfluence(x: number, y: number): number {
@@ -1353,11 +1302,25 @@ export class Simulation {
   }
 
   private randomTerrainPoint(preferred: TerrainType): Vec2 {
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    let bestPoint = this.randomPoint();
+    let bestScore = -Infinity;
+    for (let attempt = 0; attempt < 48; attempt += 1) {
       const point = this.randomPoint();
-      if (this.sampleField(point.x, point.y).terrain === preferred) return point;
+      const score = this.getSpawnSuitability(preferred, this.sampleField(point.x, point.y));
+      if (score > bestScore) {
+        bestScore = score;
+        bestPoint = point;
+      }
+      if (score > 0.82) return point;
     }
-    return this.randomPoint();
+    return bestPoint;
+  }
+
+  private getSpawnSuitability(preferred: TerrainType, sample: FieldSample): number {
+    if (preferred === 'water') return clamp(sample.moisture * 0.7 + (1 - sample.elevation) * 0.22 + (1 - sample.slope) * 0.08, 0, 1);
+    if (preferred === 'dense') return clamp(sample.density * 0.45 + (1 - sample.traversability) * 0.35 + sample.slope * 0.2, 0, 1);
+    if (preferred === 'solid') return clamp(sample.elevation * 0.58 + sample.slope * 0.28 + (1 - sample.traversability) * 0.14, 0, 1);
+    return clamp(sample.fertility * 0.48 + sample.moisture * 0.16 + sample.nutrient * 0.24 + (1 - sample.slope) * 0.12, 0, 1);
   }
 
   private randomPoint(): Vec2 {
@@ -1376,6 +1339,22 @@ export class Simulation {
       x: wrap(center.x + Math.cos(angle) * distance, WORLD_WIDTH),
       y: wrap(center.y + Math.sin(angle) * distance, WORLD_HEIGHT),
     };
+  }
+
+  private findNearbySpawnPoint(center: Vec2, radius: number, predicate: (sample: FieldSample) => boolean): Vec2 {
+    let fallback = this.scatterAround(center, radius);
+    let fallbackScore = -Infinity;
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const point = this.scatterAround(center, radius);
+      const sample = this.sampleField(point.x, point.y);
+      const score = sample.fertility + sample.moisture + sample.traversability + (1 - sample.slope);
+      if (score > fallbackScore) {
+        fallback = point;
+        fallbackScore = score;
+      }
+      if (predicate(sample)) return point;
+    }
+    return fallback;
   }
 
   private sampleNoise(x: number, y: number, seed: number): number {
