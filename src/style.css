@@ -53,6 +53,7 @@ input {
 .hud {
   position: fixed;
   inset: 0;
+  z-index: 10;
   pointer-events: none;
   display: flex;
   flex-direction: column;
@@ -96,6 +97,8 @@ input {
 }
 
 .hud__panel--settings {
+  position: relative;
+  z-index: 1;
   width: min(720px, calc(100vw - 36px));
   pointer-events: auto;
 }
@@ -244,6 +247,7 @@ input {
 .hud__settings {
   position: fixed;
   inset: 0;
+  z-index: 20;
   display: grid;
   place-items: center;
   padding: 18px;
@@ -354,4 +358,8 @@ input {
   .hud__settings {
     padding: 12px;
   }
+}
+
+.hud__settings[hidden] {
+  display: none;
 }
