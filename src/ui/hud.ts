@@ -129,7 +129,7 @@ export class Hud {
     } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
     } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
-      this.hintValue.textContent = 'Hold Resonance Focus to dim the wider garden and hear nearby life more clearly.';
+      this.hintValue.textContent = 'Hold Resonance Focus to brighten the interior, subdue the outside, and hear nearby life more clearly.';
     } else if (snapshot.tool.active === 'grow') {
       this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping plants mature and fruit.';
     } else if (snapshot.tool.active === 'feed') {

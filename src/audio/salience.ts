@@ -1,6 +1,13 @@
 import type { Entity, SimulationSnapshot, TerrainCell, Vec2 } from '../types/world';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const wrappedDistance = (a: Vec2, b: Vec2, width: number, height: number) => {
+  const dxRaw = a.x - b.x;
+  const dyRaw = a.y - b.y;
+  const dx = Math.abs(dxRaw) > width * 0.5 ? width - Math.abs(dxRaw) : Math.abs(dxRaw);
+  const dy = Math.abs(dyRaw) > height * 0.5 ? height - Math.abs(dyRaw) : Math.abs(dyRaw);
+  return Math.hypot(dx, dy);
+};
 
 const ENTITY_IMPORTANCE: Record<Entity['type'], number> = {
   plant: 0.45,
@@ -45,8 +52,6 @@ export interface ZoneSummary {
   resonance: number;
 }
 
-const getDistance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y);
-
 export const createAudioFocusContext = (snapshot: SimulationSnapshot): AudioFocusContext => {
   const active = snapshot.tool.active === 'observe' && (snapshot.tool.visible || snapshot.tool.strength > 0.18 || snapshot.stats.focus > 0.04);
   const intensity = active ? clamp(snapshot.tool.strength * 0.7 + snapshot.stats.focus * 0.8 + (snapshot.tool.visible ? 0.15 : 0), 0, 1) : 0;
@@ -67,9 +72,9 @@ export const scoreEntities = (
   const zoomDetail = clamp((snapshot.camera.zoom - 0.32) / (2.8 - 0.32), 0, 1);
 
   return snapshot.entities.map((entity) => {
-    const distance = getDistance(entity.position, snapshot.camera.center);
+    const distance = wrappedDistance(entity.position, snapshot.camera.center, snapshot.dimensions.width, snapshot.dimensions.height);
     const cameraCloseness = 1 - clamp(distance / hearingRadius, 0, 1);
-    const focusDistance = focus.active ? getDistance(entity.position, focus.center) : Infinity;
+    const focusDistance = focus.active ? wrappedDistance(entity.position, focus.center, snapshot.dimensions.width, snapshot.dimensions.height) : Infinity;
     const focusCloseness = focus.active ? 1 - clamp(focusDistance / focus.radius, 0, 1) : 0;
     const insideFocus = focus.active && focusDistance <= focus.radius;
     const activityScore = clamp(entity.activity, 0, 1);
@@ -87,21 +92,21 @@ export const scoreEntities = (
           ? 0.78
           : 0.66;
     const priorityScore = clamp(entityPriority.get(entity.id) ?? 0, 0, 1);
-    const focusBonus = insideFocus ? 0.32 + focus.intensity * 0.36 : focus.active ? -0.08 - focus.intensity * 0.18 : 0;
+    const focusBonus = insideFocus ? 0.42 + focus.intensity * 0.42 : focus.active ? -0.14 - focus.intensity * 0.22 : 0;
     const score = clamp(
-      cameraCloseness * 0.3
+      cameraCloseness * 0.36
         + activityScore * 0.18
         + ENTITY_IMPORTANCE[entity.type] * 0.12
         + rarityScore * 0.1
         + ecologicalScore * 0.12
         + interactionScore * 0.1
         + priorityScore * 0.18
-        + focusCloseness * 0.12
+        + focusCloseness * 0.16
         + focusBonus,
       0,
       2,
     );
-    const detail = clamp(cameraCloseness * 0.65 + focusCloseness * 0.55 + zoomDetail * 0.5, 0, 1.5);
+    const detail = clamp(cameraCloseness * 0.72 + focusCloseness * 0.68 + zoomDetail * 0.52, 0, 1.6);
 
     return { entity, distance, cameraCloseness, focusCloseness, insideFocus, score, detail };
   });
@@ -170,11 +175,11 @@ export const buildZoneSummaries = (
     }))
     .sort((a, b) => b.density - a.density);
 
-  const waterZone = buildWaterSummary(snapshot.terrain, snapshot.camera.center);
+  const waterZone = buildWaterSummary(snapshot.terrain, snapshot.camera.center, snapshot.dimensions.width, snapshot.dimensions.height);
   return waterZone ? [waterZone, ...zones].slice(0, 3) : zones.slice(0, 3);
 };
 
-const buildWaterSummary = (terrain: TerrainCell[], cameraCenter: Vec2): ZoneSummary | null => {
+const buildWaterSummary = (terrain: TerrainCell[], cameraCenter: Vec2, worldWidth: number, worldHeight: number): ZoneSummary | null => {
   const waterCells = terrain.filter((cell) => cell.terrain === 'water');
   if (waterCells.length === 0) return null;
 
@@ -186,7 +191,7 @@ const buildWaterSummary = (terrain: TerrainCell[], cameraCenter: Vec2): ZoneSumm
   let resonance = 0;
 
   for (const cell of waterCells) {
-    const distance = Math.hypot(cell.center.x - cameraCenter.x, cell.center.y - cameraCenter.y);
+    const distance = wrappedDistance(cell.center, cameraCenter, worldWidth, worldHeight);
     const weight = 1.4 - clamp(distance / 1200, 0, 1);
     weightedX += cell.center.x * weight;
     weightedY += cell.center.y * weight;

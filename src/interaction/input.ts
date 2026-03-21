@@ -95,7 +95,7 @@ export class PlayerInput {
     if (this.panPointerId === event.pointerId) {
       const camera = this.callbacks.getCamera();
       const rect = this.canvas.getBoundingClientRect();
-      const scale = Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * camera.zoom;
+      const scale = Math.max(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * camera.zoom;
       const dx = event.clientX - this.lastPan.x;
       const dy = event.clientY - this.lastPan.y;
       this.lastPan = { x: event.clientX, y: event.clientY };
@@ -174,7 +174,7 @@ export class PlayerInput {
   private project(clientX: number, clientY: number): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
     const camera = this.callbacks.getCamera();
-    const scale = Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * camera.zoom;
+    const scale = Math.max(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT) * camera.zoom;
     const offsetX = rect.width * 0.5 - camera.center.x * scale;
     const offsetY = rect.height * 0.5 - camera.center.y * scale;
 
