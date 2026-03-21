@@ -59,6 +59,8 @@ export class App {
       onPan: (deltaX, deltaY) => this.panCamera(deltaX, deltaY),
       onZoom: (deltaY, clientX, clientY) => this.zoomCamera(deltaY, clientX, clientY, canvas),
       onSelectTool: (tool) => this.selectTool(tool),
+      onToggleHud: () => this.hud.toggleHudHidden(),
+      onToggleSettings: () => this.hud.toggleSettings(),
       getCamera: () => this.camera,
     });
 

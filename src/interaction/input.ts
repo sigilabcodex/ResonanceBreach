@@ -11,6 +11,8 @@ export interface InputCallbacks {
   onPan(deltaX: number, deltaY: number): void;
   onZoom(deltaY: number, clientX: number, clientY: number): void;
   onSelectTool(tool: ToolType): void;
+  onToggleHud(): void;
+  onToggleSettings(): void;
   getCamera(): CameraState;
 }
 
@@ -129,6 +131,19 @@ export class PlayerInput {
     const key = event.key.toLowerCase();
     if (key === 'r') {
       this.callbacks.onRestart();
+      return;
+    }
+
+    if (key === 'h') {
+      event.preventDefault();
+      this.callbacks.onToggleHud();
+      return;
+    }
+
+    if (key === 'o') {
+      event.preventDefault();
+      this.callbacks.onToggleSettings();
+      this.callbacks.onInteract();
       return;
     }
 
