@@ -12,7 +12,7 @@ The project is now entering a more disciplined modular architecture phase. Curre
 - **Organic topography:** the world now drifts through water, fertile, and solid regions with contour-like outlines and soft boundaries rather than grid-like or boxed structure.
 - **Reduced density:** fewer entities are active at once, empty space is preserved, and only a subset of creatures visibly animate or sonify strongly at any given moment.
 - **First canonical species pass:** Rooted Blooms, Pollinator Drifters, and Decomposers now have distinct behavior, lifecycle timing, morphology, and audio roles.
-- **Tool redesign:** Resonance Focus is now hold-to-observe, Grow creates a persistent fertility field, Feed emits visible particles, Repel remains wave-like, and Disrupt is a delayed charge that bursts outward and perturbs terrain.
+- **Tool redesign:** ATTENTION now uses RTS-style selection: click an entity to follow it, drag to create a listening region, while Grow, Feed, Repel, and Disrupt remain direct field tools.
 - **Closed ecological loop:** blooms fruit, drifters improve bloom vitality, death leaves residue, decomposers recycle that residue, and returned nutrients support later bloom growth.
 
 ## Ecological loop
@@ -45,7 +45,7 @@ Each region is rendered with soft gradients and subtle contour-like outlines rat
 
 ## Controls
 
-- **Left click + hold with Resonance Focus:** isolate a local area visually and sonically.
+- **Left click in ATTENTION:** select an entity to follow and hear more clearly, or drag to define a listening region.
 - **Left click with other tools:** place a persistent intervention field.
 - **Mouse wheel:** zoom in and out.
 - **Right click / drag:** pan the camera.

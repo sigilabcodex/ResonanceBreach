@@ -26,11 +26,12 @@ import {
 } from '../../config';
 import { Rng } from '../random';
 import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../events';
-import { createDefaultCamera, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
+import { createDefaultAttentionState, createDefaultCamera, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
 import { WorldFieldModel } from '../fields/worldField';
 import type {
   Attractor,
+  AttentionState,
   CameraState,
   Entity,
   EventBurst,
@@ -86,7 +87,7 @@ export class Simulation {
   private nextBurstId = 1;
   private nextResidueId = 1;
   private nextModifierId = 1;
-  private observeHolding = false;
+  private attentionDragging = false;
 
   private get entities(): Entity[] { return this.world.entities; }
   private set entities(value: Entity[]) { this.world.entities = value; }
@@ -127,6 +128,9 @@ export class Simulation {
   private get tool(): ToolState { return this.world.tool; }
   private set tool(value: ToolState) { this.world.tool = value; }
 
+  private get attention(): AttentionState { return this.world.attention; }
+  private set attention(value: AttentionState) { this.world.attention = value; }
+
   private get stats(): GardenStats { return this.world.stats; }
   private set stats(value: GardenStats) { this.world.stats = value; }
 
@@ -154,9 +158,10 @@ export class Simulation {
     this.timeScale = 1;
     this.unlockedProgress = 0;
     this.energy = ENERGY_START;
-    this.observeHolding = false;
+    this.attentionDragging = false;
     this.camera = createDefaultCamera();
     this.tool = createDefaultToolState();
+    this.attention = createDefaultAttentionState();
     this.stats = createDefaultStats();
     this.world.events = [];
     this.world.notifications = { recent: [] };
@@ -173,25 +178,30 @@ export class Simulation {
   }
 
   setTool(type: ToolType): void {
-    if (this.tool.unlocked.includes(type)) {
-      this.tool.active = type;
-      this.tool.radius = TOOL_RADIUS[type];
-      this.tool.pulse = 1;
-      this.tool.blocked = false;
-      if (type !== 'observe') this.removeObserveField();
-      this.emitToolFeedback(type, this.tool.worldPosition, 0.38);
-    }
+    if (!this.tool.unlocked.includes(type)) return;
+
+    this.tool.active = type;
+    this.tool.radius = TOOL_RADIUS[type];
+    this.tool.pulse = 1;
+    this.tool.blocked = false;
+    if (type !== 'observe') this.cancelAttentionDrag();
+    this.emitToolFeedback(type, this.tool.worldPosition, type === 'observe' ? 0.22 : 0.38);
   }
 
   setToolEngaged(active: boolean, x: number, y: number): void {
     this.tool.visible = active || (x >= 0 && y >= 0);
-    this.tool.worldPosition.x = wrap(x, WORLD_WIDTH);
-    this.tool.worldPosition.y = wrap(y, WORLD_HEIGHT);
+    if (x >= 0 && y >= 0) {
+      this.tool.worldPosition.x = wrap(x, WORLD_WIDTH);
+      this.tool.worldPosition.y = wrap(y, WORLD_HEIGHT);
+    }
 
     if (this.tool.active === 'observe') {
-      this.observeHolding = active;
-      if (active) this.ensureObserveField();
-      else this.removeObserveField();
+      if (!active) {
+        this.finishAttentionDrag({ x: this.tool.worldPosition.x, y: this.tool.worldPosition.y });
+        return;
+      }
+
+      this.beginAttentionDrag({ x: this.tool.worldPosition.x, y: this.tool.worldPosition.y });
       return;
     }
 
@@ -202,13 +212,17 @@ export class Simulation {
   hoverTool(x: number, y: number): void {
     if (x < 0 || y < 0) {
       this.tool.visible = false;
-      if (!this.observeHolding) this.removeObserveField();
+      if (!this.attentionDragging) this.cancelAttentionDrag();
       return;
     }
+
     this.tool.visible = true;
     this.tool.worldPosition.x = wrap(x, WORLD_WIDTH);
     this.tool.worldPosition.y = wrap(y, WORLD_HEIGHT);
-    if (this.observeHolding && this.tool.active === 'observe') this.ensureObserveField();
+
+    if (this.attentionDragging && this.tool.active === 'observe') {
+      this.updateAttentionDrag({ x: this.tool.worldPosition.x, y: this.tool.worldPosition.y });
+    }
   }
 
   setCamera(centerX: number, centerY: number, zoom: number): void {
@@ -221,10 +235,22 @@ export class Simulation {
     this.timeScale = timeScale;
   }
 
+  getCameraFollowTarget(): Vec2 | null {
+    if (this.attention.mode !== 'entity' || this.attention.entityId === null) return null;
+    const entity = this.entities.find((candidate) => candidate.id === this.attention.entityId);
+    return entity ? { ...entity.position } : null;
+  }
+
   update(dt: number): void {
     this.time += dt;
     this.tool.pulse = Math.max(0, this.tool.pulse - dt * 0.22);
-    this.tool.strength = lerp(this.tool.strength, this.fields.some((field) => field.tool === this.tool.active) ? 1 : 0.12, dt * 2.4);
+    const attentionTargetStrength = this.attention.mode === 'none'
+      ? 0.08
+      : this.attention.mode === 'entity'
+        ? 1
+        : 0.92;
+    const fieldStrength = this.fields.some((field) => field.tool === this.tool.active && field.tool !== 'observe') ? 1 : 0.12;
+    this.tool.strength = lerp(this.tool.strength, this.tool.active === 'observe' ? attentionTargetStrength : fieldStrength, dt * 2.4);
     this.tool.blocked = false;
 
     this.unlockTools();
@@ -252,14 +278,14 @@ export class Simulation {
 
       const sample = this.sampleField(entity.position.x, entity.position.y);
       const neighbors = this.getNeighbors(i, NEIGHBOR_RADIUS);
-      const focusWeight = this.getObserveWeight(entity.position);
-      this.applyEntityBehavior(entity, sample, neighbors, dt, focusWeight, localStats);
+      this.applyEntityBehavior(entity, sample, neighbors, dt, 0, localStats);
 
       if (this.shouldPersist(entity)) survivors.push(entity);
       else this.handleDeath(entity);
     }
 
     this.entities = survivors;
+    this.syncAttentionState();
     this.spawnEntities(dt);
     this.updateEnergy(dt, localStats);
     this.stats = this.computeStats(localStats);
@@ -277,6 +303,132 @@ export class Simulation {
       x: wrap(position.x, WORLD_WIDTH),
       y: wrap(position.y, WORLD_HEIGHT),
     };
+  }
+
+  private beginAttentionDrag(position: Vec2): void {
+    this.attentionDragging = true;
+    this.tool.pulse = 1;
+    this.attention.dragging = true;
+    this.attention.dragStart = { ...position };
+    this.attention.dragCurrent = { ...position };
+  }
+
+  private updateAttentionDrag(position: Vec2): void {
+    if (!this.attentionDragging) return;
+    this.attention.dragging = true;
+    this.attention.dragCurrent = { ...position };
+  }
+
+  private finishAttentionDrag(position: Vec2): void {
+    if (!this.attentionDragging) return;
+
+    this.updateAttentionDrag(position);
+    const start = this.attention.dragStart ?? position;
+    const offset = this.delta(start, position);
+    const distance = Math.hypot(offset.x, offset.y);
+    const dragThreshold = clamp(26 / Math.max(this.camera.zoom, 0.35), 18, 60);
+
+    this.attentionDragging = false;
+    this.attention.dragging = false;
+
+    if (distance >= dragThreshold) {
+      const center = this.wrapPosition({
+        x: start.x + offset.x * 0.5,
+        y: start.y + offset.y * 0.5,
+      });
+      const radius = clamp(distance * 0.5, 84, TOOL_RADIUS.observe * 1.8);
+      this.setRegionAttention(center, radius);
+    } else {
+      const entity = this.findEntityAt(position);
+      if (entity) this.setEntityAttention(entity);
+      else this.clearAttention();
+    }
+
+    this.attention.dragStart = null;
+    this.attention.dragCurrent = null;
+  }
+
+  private cancelAttentionDrag(): void {
+    this.attentionDragging = false;
+    this.attention.dragging = false;
+    this.attention.dragStart = null;
+    this.attention.dragCurrent = null;
+  }
+
+  private clearAttention(): void {
+    this.attention.mode = 'none';
+    this.attention.entityId = null;
+    this.attention.radius = TOOL_RADIUS.observe;
+    this.attention.strength = 0;
+    this.attention.relatedEntityIds = [];
+    this.attention.position = { ...this.tool.worldPosition };
+  }
+
+  private setEntityAttention(entity: Entity): void {
+    this.attention.mode = 'entity';
+    this.attention.entityId = entity.id;
+    this.attention.position = { ...entity.position };
+    this.attention.radius = clamp(160 + entity.size * 8, 150, 240);
+    this.attention.strength = 1;
+    this.attention.relatedEntityIds = this.getRelatedEntityIds(entity);
+  }
+
+  private setRegionAttention(center: Vec2, radius: number): void {
+    this.attention.mode = 'region';
+    this.attention.entityId = null;
+    this.attention.position = { ...center };
+    this.attention.radius = radius;
+    this.attention.strength = clamp(0.52 + radius / (TOOL_RADIUS.observe * 1.9), 0.58, 1);
+    this.attention.relatedEntityIds = [];
+  }
+
+  private getRelatedEntityIds(entity: Entity): number[] {
+    return this.entities
+      .filter((candidate) => candidate.id !== entity.id)
+      .map((candidate) => ({
+        id: candidate.id,
+        distance: Math.hypot(this.delta(entity.position, candidate.position).x, this.delta(entity.position, candidate.position).y),
+        weight: (candidate.type === entity.type ? 0.12 : 0) + candidate.activity * 0.08 + candidate.energy * 0.06,
+      }))
+      .filter((candidate) => candidate.distance <= 240)
+      .sort((a, b) => (a.distance - a.weight * 40) - (b.distance - b.weight * 40))
+      .slice(0, 4)
+      .map((candidate) => candidate.id);
+  }
+
+  private findEntityAt(position: Vec2): Entity | undefined {
+    let best: Entity | undefined;
+    let bestScore = Infinity;
+    const pickRadius = clamp(28 / Math.max(this.camera.zoom, 0.3), 20, 78);
+
+    for (const entity of this.entities) {
+      const offset = this.delta(position, entity.position);
+      const distance = Math.hypot(offset.x, offset.y);
+      const threshold = pickRadius + entity.size * (entity.type === 'plant' ? 1.9 : 1.4);
+      if (distance > threshold) continue;
+      const score = distance - entity.activity * 3 - entity.visualPulse * 3;
+      if (score < bestScore) {
+        best = entity;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private syncAttentionState(): void {
+    if (this.attention.mode !== 'entity' || this.attention.entityId === null) return;
+
+    const entity = this.entities.find((candidate) => candidate.id === this.attention.entityId);
+    if (!entity) {
+      this.clearAttention();
+      return;
+    }
+
+    this.attention.position = { ...entity.position };
+    this.attention.radius = clamp(160 + entity.size * 8, 150, 240);
+    this.attention.strength = 1;
+    this.attention.relatedEntityIds = this.getRelatedEntityIds(entity);
   }
 
   private delta(a: Vec2, b: Vec2): Vec2 {
@@ -405,32 +557,6 @@ export class Simulation {
     }
   }
 
-  private ensureObserveField(): void {
-    let field = this.fields.find((candidate) => candidate.tool === 'observe');
-    if (!field) {
-      field = {
-        id: this.nextFieldId++,
-        tool: 'observe',
-        position: { ...this.tool.worldPosition },
-        radius: TOOL_RADIUS.observe,
-        strength: 1,
-        duration: TOOL_DURATION.observe,
-        age: 0,
-        pulse: 0.6,
-      };
-      this.fields.push(field);
-      this.emitToolFeedback('observe', this.tool.worldPosition, 0.26);
-    }
-    field.position = { ...this.tool.worldPosition };
-    field.age = 0;
-    field.strength = 1;
-    field.pulse = Math.max(field.pulse, 0.18);
-  }
-
-  private removeObserveField(): void {
-    this.fields = this.fields.filter((field) => field.tool !== 'observe');
-  }
-
   private deployToolField(tool: ToolType, position: Vec2): void {
     const cost = TOOL_ENERGY_COST[tool];
     if (this.energy < cost) {
@@ -483,13 +609,6 @@ export class Simulation {
   private updateFields(dt: number): void {
     const active: ToolField[] = [];
     for (const field of this.fields) {
-      if (field.tool === 'observe') {
-        field.age += dt;
-        field.pulse = lerp(field.pulse, 0.12, dt * 0.8);
-        active.push(field);
-        continue;
-      }
-
       field.age += dt;
       field.strength = clamp(1 - field.age / field.duration, 0, 1);
       field.pulse = lerp(field.pulse, 0.04, dt * 1.2);
@@ -566,7 +685,7 @@ export class Simulation {
     entity.memory = clamp(entity.memory - dt * 0.012, 0, 1.2);
     entity.pollination = clamp(entity.pollination - dt * (entity.type === 'plant' ? 0.012 : 0), 0, 1.6);
 
-    this.applyToolFields(entity, dt, focusWeight, localStats);
+    this.applyToolFields(entity, dt);
     entity.boundaryFade = lerp(entity.boundaryFade, clamp(0.58 + sample.traversability * 0.42, 0.52, 1), dt * 0.24);
 
     if (entity.type === 'plant') this.updatePlant(entity, sample, dt, localStats);
@@ -854,8 +973,6 @@ export class Simulation {
   private applyToolFields(
     entity: Entity,
     dt: number,
-    focusWeight: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number },
   ): void {
     for (const field of this.fields) {
       const offset = this.delta(entity.position, field.position);
@@ -864,14 +981,6 @@ export class Simulation {
       const falloff = smoothstep(field.radius, 0, dist) * Math.max(field.strength, 0.15);
       const nx = offset.x / dist;
       const ny = offset.y / dist;
-
-      if (field.tool === 'observe') {
-        entity.velocity.x *= 1 - dt * 0.08 * falloff;
-        entity.velocity.y *= 1 - dt * 0.08 * falloff;
-        entity.activity = clamp(entity.activity + dt * 0.08 * falloff, 0, 1);
-        localStats.focus += focusWeight;
-        continue;
-      }
 
       entity.pulse = Math.max(entity.pulse, 0.12 + falloff * 0.18);
       field.pulse = Math.max(field.pulse, falloff * 0.14);
@@ -1144,15 +1253,6 @@ export class Simulation {
       }
     }
     return best;
-  }
-
-  private getObserveWeight(position: Vec2): number {
-    const field = this.fields.find((candidate) => candidate.tool === 'observe');
-    if (!field) return 0;
-    const offset = this.delta(position, field.position);
-    const dist = Math.hypot(offset.x, offset.y);
-    if (dist > field.radius) return 0;
-    return smoothstep(field.radius, 0, dist);
   }
 
   private emitWorldEvent(event: WorldEventInput): void {

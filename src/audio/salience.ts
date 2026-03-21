@@ -25,17 +25,22 @@ const ECOLOGICAL_WEIGHT: Record<Entity['type'], number> = {
 
 export interface AudioFocusContext {
   active: boolean;
+  mode: 'none' | 'entity' | 'region';
   center: Vec2;
   radius: number;
   intensity: number;
+  entityId: number | null;
+  relatedEntityIds: Set<number>;
 }
 
 export interface ScoredEntity {
   entity: Entity;
   distance: number;
   cameraCloseness: number;
-  focusCloseness: number;
-  insideFocus: boolean;
+  attentionCloseness: number;
+  insideAttention: boolean;
+  isPrimary: boolean;
+  isRelated: boolean;
   score: number;
   detail: number;
 }
@@ -53,13 +58,15 @@ export interface ZoneSummary {
 }
 
 export const createAudioFocusContext = (snapshot: SimulationSnapshot): AudioFocusContext => {
-  const active = snapshot.tool.active === 'observe' && (snapshot.tool.visible || snapshot.tool.strength > 0.18 || snapshot.stats.focus > 0.04);
-  const intensity = active ? clamp(snapshot.tool.strength * 0.82 + snapshot.stats.focus * 0.92 + (snapshot.tool.visible ? 0.18 : 0), 0, 1) : 0;
+  const active = snapshot.attention.mode !== 'none';
   return {
     active,
-    center: active ? { ...snapshot.tool.worldPosition } : { ...snapshot.camera.center },
-    radius: active ? snapshot.tool.radius * (0.96 + intensity * 0.24) : 0,
-    intensity,
+    mode: snapshot.attention.mode,
+    center: active ? { ...snapshot.attention.position } : { ...snapshot.camera.center },
+    radius: active ? snapshot.attention.radius : 0,
+    intensity: active ? clamp(snapshot.attention.strength, 0, 1) : 0,
+    entityId: snapshot.attention.entityId,
+    relatedEntityIds: new Set(snapshot.attention.relatedEntityIds),
   };
 };
 
@@ -74,9 +81,11 @@ export const scoreEntities = (
   return snapshot.entities.map((entity) => {
     const distance = wrappedDistance(entity.position, snapshot.camera.center, snapshot.dimensions.width, snapshot.dimensions.height);
     const cameraCloseness = 1 - clamp(distance / hearingRadius, 0, 1);
-    const focusDistance = focus.active ? wrappedDistance(entity.position, focus.center, snapshot.dimensions.width, snapshot.dimensions.height) : Infinity;
-    const focusCloseness = focus.active ? 1 - clamp(focusDistance / focus.radius, 0, 1) : 0;
-    const insideFocus = focus.active && focusDistance <= focus.radius;
+    const attentionDistance = focus.active ? wrappedDistance(entity.position, focus.center, snapshot.dimensions.width, snapshot.dimensions.height) : Infinity;
+    const attentionCloseness = focus.active && focus.radius > 0 ? 1 - clamp(attentionDistance / focus.radius, 0, 1) : 0;
+    const insideAttention = focus.active && attentionDistance <= focus.radius;
+    const isPrimary = focus.mode === 'entity' && focus.entityId === entity.id;
+    const isRelated = focus.mode === 'entity' && focus.relatedEntityIds.has(entity.id);
     const activityScore = clamp(entity.activity, 0, 1);
     const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'cluster' ? 0.52 : entity.type === 'plant' ? 0.58 : 0.64;
     const ecologicalScore = clamp(
@@ -92,28 +101,49 @@ export const scoreEntities = (
           ? 0.78
           : 0.66;
     const priorityScore = clamp(entityPriority.get(entity.id) ?? 0, 0, 1);
-    const focusBonus = insideFocus ? 0.52 + focus.intensity * 0.54 : focus.active ? -0.18 - focus.intensity * 0.28 : 0;
+
+    let attentionBonus = 0;
+    if (focus.mode === 'entity') {
+      attentionBonus = isPrimary
+        ? 1.08
+        : isRelated
+          ? 0.18 + attentionCloseness * 0.34 + focus.intensity * 0.12
+          : -0.06 + attentionCloseness * 0.08;
+    } else if (focus.mode === 'region') {
+      attentionBonus = insideAttention
+        ? 0.32 + attentionCloseness * 0.34 + focus.intensity * 0.08
+        : -0.12 - focus.intensity * 0.08;
+    }
+
     const score = clamp(
-      cameraCloseness * 0.34
+      cameraCloseness * 0.3
         + activityScore * 0.16
         + ENTITY_IMPORTANCE[entity.type] * 0.1
         + rarityScore * 0.08
         + ecologicalScore * 0.11
         + interactionScore * 0.09
-        + priorityScore * 0.22
-        + focusCloseness * 0.26
-        + focusBonus,
+        + priorityScore * 0.2
+        + attentionCloseness * (focus.mode === 'region' ? 0.24 : 0.18)
+        + attentionBonus,
+      0,
+      2.4,
+    );
+
+    const detail = clamp(
+      cameraCloseness * 0.76
+        + zoomDetail * 0.58
+        + attentionCloseness * (focus.mode === 'entity' ? 0.82 : 0.56)
+        + (isPrimary ? 0.42 : isRelated ? 0.14 : 0),
       0,
       2,
     );
-    const detail = clamp(cameraCloseness * 0.76 + focusCloseness * 0.94 + zoomDetail * 0.58, 0, 1.8);
 
-    return { entity, distance, cameraCloseness, focusCloseness, insideFocus, score, detail };
+    return { entity, distance, cameraCloseness, attentionCloseness, insideAttention, isPrimary, isRelated, score, detail };
   });
 };
 
 export const selectForegroundVoices = (scored: ScoredEntity[], maxVoices: number): ScoredEntity[] => scored
-  .filter((entry) => entry.score > 0.42)
+  .filter((entry) => entry.score > 0.4 || entry.isPrimary)
   .sort((a, b) => b.score - a.score)
   .slice(0, maxVoices);
 

@@ -12,6 +12,7 @@ const wrapDelta = (from: number, to: number, size: number) => {
   return delta;
 };
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const wrap = (value: number, size: number) => ((value % size) + size) % size;
 
 const entityPalette: Record<EntityType, readonly [number, number, number]> = {
   flocker: [220, 235, 244],
@@ -77,12 +78,11 @@ export class Renderer {
     this.drawBursts(snapshot.bursts, snapshot.camera);
     this.drawEntityAuras(snapshot.entities, snapshot.camera);
     this.drawEntities(snapshot.entities, snapshot.camera, snapshot.time, settings);
+    this.drawAttentionWorld(snapshot, settings);
     this.drawToolPreview(snapshot);
 
     ctx.restore();
 
-    this.drawFocusedInterior(snapshot, view.scale, view.offsetX, view.offsetY, settings);
-    this.drawFocusMask(snapshot, width, height, view.scale, view.offsetX, view.offsetY, settings);
     this.drawOverlay(snapshot, width, height, settings, audioDebug);
   }
 
@@ -545,14 +545,14 @@ export class Renderer {
   }
 
   private drawToolPreview(snapshot: SimulationSnapshot): void {
-    if (!snapshot.tool.visible) return;
+    if (!snapshot.tool.visible || snapshot.tool.active === 'observe') return;
     const { ctx } = this;
     const color = toolPalette[snapshot.tool.active];
     const position = this.wrappedPoint(snapshot.tool.worldPosition, snapshot.camera);
     ctx.save();
     ctx.strokeStyle = rgba(color, snapshot.tool.blocked ? 0.24 : 0.14 + snapshot.tool.pulse * 0.1);
-    ctx.lineWidth = snapshot.tool.active === 'observe' ? 1.25 : 1;
-    ctx.setLineDash(snapshot.tool.active === 'observe' ? [] : [10, 16]);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([10, 16]);
     ctx.beginPath();
     ctx.arc(position.x, position.y, snapshot.tool.radius, 0, Math.PI * 2);
     ctx.stroke();
@@ -560,104 +560,107 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawFocusMask(snapshot: SimulationSnapshot, width: number, height: number, scale: number, offsetX: number, offsetY: number, settings: GameSettings): void {
-    const focusField = snapshot.fields.find((field) => field.tool === 'observe');
-    if (!focusField) return;
-    const { ctx } = this;
-    const wrapped = this.wrappedPoint(focusField.position, snapshot.camera);
-    const x = wrapped.x * scale + offsetX;
-    const y = wrapped.y * scale + offsetY;
-    const radius = focusField.radius * scale;
-    const exteriorDim = settings.visuals.reduceMotion ? 0.09 : 0.14;
-
-    ctx.save();
-    ctx.fillStyle = `rgba(2, 6, 10, ${exteriorDim + snapshot.stats.focus * 0.08})`;
-    ctx.fillRect(0, 0, width, height);
-    ctx.globalCompositeOperation = 'destination-out';
-    const aperture = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius * 1.16);
-    aperture.addColorStop(0, 'rgba(0,0,0,0.98)');
-    aperture.addColorStop(0.68, 'rgba(0,0,0,0.88)');
-    aperture.addColorStop(0.9, 'rgba(0,0,0,0.26)');
-    aperture.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = aperture;
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 1.16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    const glow = ctx.createRadialGradient(x, y, radius * 0.58, x, y, radius * 1.08);
-    glow.addColorStop(0, 'rgba(255,255,255,0)');
-    glow.addColorStop(0.72, `rgba(210, 236, 248, ${0.08 + snapshot.stats.focus * 0.06})`);
-    glow.addColorStop(1, `rgba(160, 212, 236, ${0.18 + snapshot.stats.focus * 0.12})`);
-    ctx.strokeStyle = `rgba(208, 236, 248, ${0.28 + snapshot.stats.focus * 0.18})`;
-    ctx.lineWidth = 1.35;
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.995, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.strokeStyle = glow;
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 1.01, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.setLineDash([12, 22]);
-    ctx.strokeStyle = `rgba(232, 248, 255, ${0.14 + snapshot.stats.focus * 0.08})`;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.9, Math.PI * 0.15, Math.PI * 1.95);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  private drawFocusedInterior(snapshot: SimulationSnapshot, scale: number, offsetX: number, offsetY: number, settings: GameSettings): void {
-    const focusField = snapshot.fields.find((field) => field.tool === 'observe');
-    if (!focusField) return;
-
-    const { ctx } = this;
-    const wrapped = this.wrappedPoint(focusField.position, snapshot.camera);
-    const x = wrapped.x * scale + offsetX;
-    const y = wrapped.y * scale + offsetY;
-    const radius = focusField.radius * scale;
-    const magnify = settings.visuals.reduceMotion ? 1.012 : 1.03;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.985, 0, Math.PI * 2);
-    ctx.clip();
-
-    ctx.fillStyle = `rgba(226, 242, 250, ${0.04 + snapshot.stats.focus * 0.05})`;
-    ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
-
-    ctx.translate(x, y);
-    ctx.scale(magnify, magnify);
-    ctx.translate(-x, -y);
-    ctx.filter = `brightness(${1.04 + snapshot.stats.focus * 0.08}) contrast(${1.06 + snapshot.stats.focus * 0.14}) saturate(${1.02 + snapshot.stats.focus * 0.08})`;
-    ctx.translate(offsetX, offsetY);
-    ctx.scale(scale, scale);
-
-    if (settings.visuals.terrainLines) {
-      this.drawTerrain(snapshot.terrain, snapshot.camera, snapshot.time, settings);
-      this.drawEnvironmentalFlows(snapshot.terrain, snapshot.camera, snapshot.time, settings);
+  private drawAttentionWorld(snapshot: SimulationSnapshot, settings: GameSettings): void {
+    const dragStart = snapshot.attention.dragStart;
+    const dragCurrent = snapshot.attention.dragCurrent;
+    if (snapshot.attention.dragging && dragStart && dragCurrent) {
+      this.drawAttentionRegion(dragStart, dragCurrent, snapshot.camera, true, settings);
     }
-    this.drawEntityAuras(snapshot.entities, snapshot.camera);
-    this.drawResidues(snapshot.residues, snapshot.camera);
-    this.drawParticles(snapshot.particles, snapshot.camera);
-    this.drawEntities(snapshot.entities, snapshot.camera, snapshot.time, settings);
-    ctx.restore();
 
+    if (snapshot.attention.mode === 'region') {
+      this.drawAttentionRegion(snapshot.attention.position, undefined, snapshot.camera, false, settings, snapshot.attention.radius);
+      return;
+    }
+
+    if (snapshot.attention.mode !== 'entity' || snapshot.attention.entityId === null) return;
+    const selected = snapshot.entities.find((entity) => entity.id === snapshot.attention.entityId);
+    if (!selected) return;
+
+    const relatedIds = new Set(snapshot.attention.relatedEntityIds);
+    for (const entity of snapshot.entities) {
+      if (!relatedIds.has(entity.id)) continue;
+      const position = this.wrappedPoint(entity.position, snapshot.camera);
+      this.drawAttentionEntityMarker(position, entity.size * 2.2, 0.18, false);
+    }
+
+    const position = this.wrappedPoint(selected.position, snapshot.camera);
+    this.drawAttentionEntityMarker(position, selected.size * 2.8, 0.42, true);
+  }
+
+  private drawAttentionEntityMarker(position: Vec2, radius: number, alpha: number, primary: boolean): void {
+    const { ctx } = this;
     ctx.save();
-    const interiorGlow = ctx.createRadialGradient(x, y, radius * 0.18, x, y, radius * 0.98);
-    interiorGlow.addColorStop(0, `rgba(255,255,255,${0.02 + snapshot.stats.focus * 0.03})`);
-    interiorGlow.addColorStop(0.72, `rgba(208, 234, 244, ${0.03 + snapshot.stats.focus * 0.04})`);
-    interiorGlow.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = interiorGlow;
+    const glow = ctx.createRadialGradient(position.x, position.y, radius * 0.25, position.x, position.y, radius * 1.8);
+    glow.addColorStop(0, `rgba(212, 238, 248, ${alpha * 0.22})`);
+    glow.addColorStop(0.72, `rgba(182, 220, 242, ${alpha * 0.12})`);
+    glow.addColorStop(1, 'rgba(182, 220, 242, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(x, y, radius * 0.98, 0, Math.PI * 2);
+    ctx.arc(position.x, position.y, radius * 1.8, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.strokeStyle = `rgba(212, 236, 248, ${alpha})`;
+    ctx.lineWidth = primary ? 1.45 : 1;
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    if (primary) {
+      ctx.strokeStyle = `rgba(236, 248, 255, ${alpha * 0.92})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, radius * 1.32, Math.PI * 0.18, Math.PI * 1.82);
+      ctx.stroke();
+    }
     ctx.restore();
   }
+
+  private drawAttentionRegion(
+    anchor: Vec2,
+    current: Vec2 | undefined,
+    camera: CameraState,
+    preview: boolean,
+    settings: GameSettings,
+    fixedRadius?: number,
+  ): void {
+    const { ctx } = this;
+    const center = current
+      ? this.wrapPosition({
+        x: anchor.x + wrapDelta(anchor.x, current.x, WORLD_WIDTH) * 0.5,
+        y: anchor.y + wrapDelta(anchor.y, current.y, WORLD_HEIGHT) * 0.5,
+      })
+      : anchor;
+    const radius = fixedRadius ?? Math.hypot(wrapDelta(anchor.x, current!.x, WORLD_WIDTH), wrapDelta(anchor.y, current!.y, WORLD_HEIGHT)) * 0.5;
+    const wrapped = this.wrappedPoint(center, camera);
+    const motionAlpha = settings.visuals.reduceMotion ? 0.16 : 0.22;
+
+    const gradient = ctx.createRadialGradient(wrapped.x, wrapped.y, radius * 0.2, wrapped.x, wrapped.y, radius * 1.02);
+    gradient.addColorStop(0, preview ? 'rgba(214, 236, 246, 0.035)' : `rgba(214, 236, 246, ${motionAlpha * 0.24})`);
+    gradient.addColorStop(0.78, preview ? 'rgba(214, 236, 246, 0.01)' : `rgba(214, 236, 246, ${motionAlpha * 0.08})`);
+    gradient.addColorStop(1, 'rgba(214, 236, 246, 0)');
+
+    ctx.save();
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = preview ? 'rgba(214, 236, 246, 0.32)' : 'rgba(214, 236, 246, 0.24)';
+    ctx.lineWidth = preview ? 1.1 : 1.25;
+    if (preview) ctx.setLineDash([12, 12]);
+    ctx.beginPath();
+    ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  private wrapPosition(position: Vec2): Vec2 {
+    return {
+      x: wrap(position.x, WORLD_WIDTH),
+      y: wrap(position.y, WORLD_HEIGHT),
+    };
+  }
+
 
   private drawOverlay(snapshot: SimulationSnapshot, width: number, height: number, settings: GameSettings, audioDebug?: AudioDebugState): void {
     const { ctx } = this;
@@ -665,16 +668,6 @@ export class Renderer {
     ctx.font = '500 11px Inter, system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(GAME_TITLE, width - 16, height - 16);
-
-    if (snapshot.stats.focus > 0.06) {
-      ctx.save();
-      ctx.strokeStyle = `rgba(182,220,242,${0.08 + snapshot.stats.focus * 0.08})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(width * 0.5, height * 0.5, Math.min(width, height) * 0.12, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
 
     if (!settings.visuals.debugOverlays) return;
 
@@ -684,11 +677,34 @@ export class Renderer {
     ctx.fillStyle = 'rgba(214, 230, 242, 0.78)';
     const lines = [
       `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
-      `wrap ${snapshot.dimensions.width} × ${snapshot.dimensions.height} torus`,
+      `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
       `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,
       `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
     ];
     lines.forEach((line, index) => ctx.fillText(line, 18, height - 58 - index * 16));
+
+    if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
+      const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);
+      if (entity) {
+        const panelWidth = 220;
+        const panelHeight = 74;
+        const x = width - panelWidth - 18;
+        const y = 18;
+        ctx.fillStyle = 'rgba(8, 15, 20, 0.62)';
+        ctx.fillRect(x, y, panelWidth, panelHeight);
+        ctx.strokeStyle = 'rgba(198, 226, 240, 0.18)';
+        ctx.strokeRect(x, y, panelWidth, panelHeight);
+        ctx.fillStyle = 'rgba(228, 240, 248, 0.9)';
+        ctx.fillText(`ATTENTION · ${entity.type}`, x + 12, y + 20);
+        ctx.fillStyle = 'rgba(208, 224, 234, 0.78)';
+        ctx.fillText(`state ${entity.visualState} · stage ${entity.stage}`, x + 12, y + 40);
+        ctx.fillText(`energy ${Math.round(entity.energy * 100)}% · activity ${Math.round(entity.activity * 100)}%`, x + 12, y + 58);
+      }
+    } else if (snapshot.attention.mode === 'region') {
+      ctx.fillStyle = 'rgba(208, 224, 234, 0.78)';
+      ctx.fillText(`region radius ${Math.round(snapshot.attention.radius)}`, width - 150, 24);
+    }
+
     ctx.restore();
   }
 }

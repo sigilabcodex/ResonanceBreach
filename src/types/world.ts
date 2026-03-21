@@ -149,6 +149,20 @@ export interface ToolState {
   feedback?: ToolFeedback;
 }
 
+export type AttentionMode = 'none' | 'entity' | 'region';
+
+export interface AttentionState {
+  mode: AttentionMode;
+  entityId: number | null;
+  position: Vec2;
+  radius: number;
+  strength: number;
+  relatedEntityIds: number[];
+  dragging: boolean;
+  dragStart: Vec2 | null;
+  dragCurrent: Vec2 | null;
+}
+
 export interface CameraState {
   center: Vec2;
   zoom: number;
@@ -182,6 +196,7 @@ export interface WorldState {
   bursts: EventBurst[];
   stats: GardenStats;
   tool: ToolState;
+  attention: AttentionState;
   camera: CameraState;
   time: number;
   timeScale: number;

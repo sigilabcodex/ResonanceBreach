@@ -13,7 +13,7 @@ A very quiet always-on layer summarizes the whole garden state.
 - two low-cost oscillators provide the stable foundation
 - pitch follows the current harmony root and mode
 - filter motion follows stability, harmony, growth, and threat
-- the bed ducks slightly when the focus tool is isolating a local pocket
+- the bed ducks slightly when ATTENTION is emphasizing an entity or region
 
 ### 2. Grouped zone / cluster voices
 
@@ -45,14 +45,14 @@ Supported event types:
 - `residueCreated`
 - `toolUsed`
 
-The audio engine also keeps observe-tool feedback so the focus tool still feels like a listening instrument while held.
+The audio engine keeps light ATTENTION feedback so selection changes feel intentional without becoming noisy.
 
 ## Salience model
 
 Foreground selection is explicit and efficient. Each entity gets a salience score using:
 
 - **distance to camera** via camera closeness within a hearing radius
-- **focus-circle inclusion** and focus closeness when the observe tool is active
+- **attention inclusion** and proximity to the selected entity or listening region
 - **current activity** from the sim state
 - **species importance** using fixed per-type importance weights
 - **ecological importance** from growth, resonance, harmony, and energy
@@ -62,8 +62,8 @@ Foreground selection is explicit and efficient. Each entity gets a salience scor
 ### Resulting behavior
 
 - nearby, active, rare, or recently involved entities rise into the foreground
-- entities inside the focus circle receive a strong salience bonus
-- entities outside the focus circle are explicitly penalized when focus is active
+- the selected entity becomes dominant while nearby related organisms stay present
+- entities inside a selected region are clarified while the outside world shifts toward ambience
 - event-linked entities temporarily become more likely to surface
 
 ## Harmony system
@@ -115,23 +115,21 @@ Distance now changes more than volume.
 - individual foreground voices are more likely to emerge
 - grouped layers become brighter and less smeared
 
-### Focus interaction
+### Attention interaction
 
-The observe tool acts like a listening microscope.
+ATTENTION behaves like an RTS-style listening model rather than a temporary lens.
 
-Inside the focus circle:
+Entity selection:
 
-- louder
-- brighter
-- more detailed
-- less likely to be collapsed into grouped ambience
+- the chosen organism becomes dominant
+- nearby related organisms remain softly present
+- filters open for clarity without muting the ecology around it
 
-Outside the focus circle:
+Region selection:
 
-- quieter
-- lower-passed
-- less likely to win foreground selection
-- more likely to merge into zone textures or disappear into the bed
+- entities inside the region are clearer
+- internal balance is preserved instead of collapsing to one source
+- the outside world remains present as softer ambience
 
 ## Event integration
 

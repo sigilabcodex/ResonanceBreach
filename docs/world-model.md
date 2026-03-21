@@ -81,16 +81,16 @@ This pass supports that through:
 
 The intended effect is being inside a broad moving surface, not looking at a contained playfield.
 
-## Focus tool behavior
+## Attention behavior
 
-Observe / Resonance Focus is now tuned as perceptual clarification rather than darkness.
+Observe has been replaced by an ATTENTION system inspired by RTS selection.
 
-- The exterior is only gently subdued.
-- The interior gains brightness and local contrast.
-- Nearby life remains more visually and sonically legible.
-- The world is not heavily dimmed into a spotlight tunnel.
+- Clicking an entity selects it as the current attention target.
+- The camera can softly follow that organism.
+- Dragging defines a persistent listening region in world space.
+- Clicking empty space clears attention and returns to the global mix.
 
-The perception target is selective attention: less distant clutter, more local clarity.
+The perception target is deliberate selective listening: clear intent, readable focus, and less apparent randomness.
 
 ## Lightweight settings system
 

@@ -75,7 +75,7 @@ export class Hud {
         <div class="hud__panel hud__panel--tools">
           <div class="hud__row hud__row--tools-head">
             <span>Field tools</span>
-            <span data-tool-hint>1–5 · hold focus, click to place other fields</span>
+            <span data-tool-hint>1–5 · ATTENTION selects/follows · other tools place fields</span>
           </div>
           <div class="hud__tool-grid"></div>
         </div>
@@ -192,8 +192,8 @@ export class Hud {
       this.hintValue.textContent = latestNotification;
     } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
-    } else if (snapshot.tool.active === 'observe' || snapshot.stats.focus > 0.16) {
-      this.hintValue.textContent = 'Hold Resonance Focus to sharpen the interior like a listening lens: nearby life brightens, distant life softens, and grouped sound resolves into detail.';
+    } else if (snapshot.tool.active === 'observe') {
+      this.hintValue.textContent = 'ATTENTION mode: click an entity to follow and clarify it, drag to create a listening region, and click empty space to clear.';
     } else if (snapshot.tool.active === 'grow') {
       this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and hold pollination.';
     } else if (snapshot.tool.active === 'feed') {
@@ -209,7 +209,7 @@ export class Hud {
     }
 
     this.minimalHintValue.textContent = this.hidden
-      ? `HUD hidden · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores HUD · O opens settings`
+      ? `HUD hidden · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · click selects · drag makes region · H restores HUD · O opens settings`
       : this.minimalHintValue.textContent;
   }
 
