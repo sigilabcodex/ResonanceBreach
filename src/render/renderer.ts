@@ -724,12 +724,12 @@ export class Renderer {
 
 
   private drawOverlay(
-    snapshot: SimulationSnapshot,
+    _snapshot: SimulationSnapshot,
     width: number,
     height: number,
-    settings: GameSettings,
-    audioDebug?: AudioDebugState,
-    performanceStats?: PerformanceStats,
+    _settings: GameSettings,
+    _audioDebug?: AudioDebugState,
+    _performanceStats?: PerformanceStats,
   ): void {
     const { ctx } = this;
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
@@ -737,44 +737,6 @@ export class Renderer {
     ctx.textAlign = 'right';
     ctx.fillText(GAME_TITLE, width - 16, height - 16);
 
-    if (!settings.visuals.debugOverlays) return;
 
-    ctx.save();
-    ctx.textAlign = 'left';
-    ctx.font = '500 12px Inter, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(214, 230, 242, 0.78)';
-    const lines = [
-      `fps ${performanceStats?.fps.toFixed(1) ?? '0.0'} · frame ${performanceStats?.frameTimeMs.toFixed(2) ?? '0.00'} ms · steps ${performanceStats?.simSteps ?? 0}`,
-      `update ${performanceStats?.updateTimeMs.toFixed(2) ?? '0.00'} ms · render ${performanceStats?.renderTimeMs.toFixed(2) ?? '0.00'} ms · draws ${performanceStats?.drawCallEstimate ?? 0}`,
-      `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
-      `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
-      `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,
-      `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
-    ];
-    lines.forEach((line, index) => ctx.fillText(line, 18, height - 58 - index * 16));
-
-    if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
-      const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);
-      if (entity) {
-        const panelWidth = 220;
-        const panelHeight = 74;
-        const x = width - panelWidth - 18;
-        const y = 18;
-        ctx.fillStyle = 'rgba(8, 15, 20, 0.62)';
-        ctx.fillRect(x, y, panelWidth, panelHeight);
-        ctx.strokeStyle = 'rgba(198, 226, 240, 0.18)';
-        ctx.strokeRect(x, y, panelWidth, panelHeight);
-        ctx.fillStyle = 'rgba(228, 240, 248, 0.9)';
-        ctx.fillText(`ATTENTION · ${entity.type}`, x + 12, y + 20);
-        ctx.fillStyle = 'rgba(208, 224, 234, 0.78)';
-        ctx.fillText(`state ${entity.visualState} · stage ${entity.stage}`, x + 12, y + 40);
-        ctx.fillText(`energy ${Math.round(entity.energy * 100)}% · activity ${Math.round(entity.activity * 100)}%`, x + 12, y + 58);
-      }
-    } else if (snapshot.attention.mode === 'region') {
-      ctx.fillStyle = 'rgba(208, 224, 234, 0.78)';
-      ctx.fillText(`region radius ${Math.round(snapshot.attention.radius)}`, width - 150, 24);
-    }
-
-    ctx.restore();
   }
 }
