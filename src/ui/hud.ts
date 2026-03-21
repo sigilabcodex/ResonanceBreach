@@ -16,6 +16,8 @@ export class Hud {
   readonly restartButton: HTMLButtonElement;
   private readonly settingsButton: HTMLButtonElement;
   private readonly settingsPanel: HTMLDivElement;
+  private readonly settingsDialog: HTMLDivElement;
+  private readonly settingsCloseButton: HTMLButtonElement;
   private readonly harmonyValue: HTMLSpanElement;
   private readonly growthValue: HTMLSpanElement;
   private readonly threatValue: HTMLSpanElement;
@@ -33,6 +35,7 @@ export class Hud {
   private readonly toggleInputs = new Map<string, HTMLInputElement>();
   private settingsOpen = false;
   private settings: GameSettings;
+  private lastFocusedElement: HTMLElement | null = null;
 
   constructor(
     onToolSelect: (tool: ToolType) => void,
@@ -81,11 +84,11 @@ export class Hud {
         </div>
       </div>
       <div class="hud__settings" data-settings-panel hidden>
-        <div class="hud__panel hud__panel--settings">
+        <div class="hud__panel hud__panel--settings" data-settings-dialog role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
           <div class="hud__settings-head">
             <div>
               <p class="hud__eyebrow">World substrate</p>
-              <h2>Settings</h2>
+              <h2 id="settings-title">Settings</h2>
             </div>
             <button class="hud__action" data-settings-close type="button">Close</button>
           </div>
@@ -104,6 +107,8 @@ export class Hud {
     this.restartButton = this.element.querySelector('.hud__restart') as HTMLButtonElement;
     this.settingsButton = this.element.querySelector('[data-settings-toggle]') as HTMLButtonElement;
     this.settingsPanel = this.element.querySelector('[data-settings-panel]') as HTMLDivElement;
+    this.settingsDialog = this.element.querySelector('[data-settings-dialog]') as HTMLDivElement;
+    this.settingsCloseButton = this.element.querySelector('[data-settings-close]') as HTMLButtonElement;
     this.energyValue = this.element.querySelector('[data-energy]') as HTMLSpanElement;
     this.harmonyValue = this.element.querySelector('[data-harmony]') as HTMLSpanElement;
     this.stabilityValue = this.element.querySelector('[data-stability]') as HTMLSpanElement;
@@ -130,7 +135,17 @@ export class Hud {
     });
 
     this.settingsButton.addEventListener('click', () => this.setSettingsOpen(!this.settingsOpen));
-    (this.element.querySelector('[data-settings-close]') as HTMLButtonElement).addEventListener('click', () => this.setSettingsOpen(false));
+    this.settingsCloseButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setSettingsOpen(false);
+    });
+    this.settingsPanel.addEventListener('click', (event) => {
+      if (event.target === this.settingsPanel) this.setSettingsOpen(false);
+    });
+    this.settingsDialog.addEventListener('click', (event) => event.stopPropagation());
+    this.settingsDialog.addEventListener('pointerdown', (event) => event.stopPropagation());
+    window.addEventListener('keydown', this.handleWindowKeyDown);
   }
 
   attach(target: HTMLElement): void {
@@ -203,10 +218,39 @@ export class Hud {
   }
 
   private setSettingsOpen(open: boolean): void {
+    if (this.settingsOpen === open) return;
+
+    if (open) {
+      this.lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+
     this.settingsOpen = open;
     this.settingsPanel.hidden = !open;
     this.settingsButton.setAttribute('aria-expanded', String(open));
+
+    if (open) {
+      window.requestAnimationFrame(() => {
+        this.settingsDialog.focus({ preventScroll: true });
+      });
+      return;
+    }
+
+    const focusTarget = this.lastFocusedElement && this.lastFocusedElement.isConnected
+      ? this.lastFocusedElement
+      : this.settingsButton;
+    this.lastFocusedElement = null;
+    window.requestAnimationFrame(() => {
+      focusTarget.focus({ preventScroll: true });
+    });
   }
+
+  private readonly handleWindowKeyDown = (event: KeyboardEvent): void => {
+    if (!this.settingsOpen || event.key !== 'Escape') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.setSettingsOpen(false);
+  };
 
   private buildControls(): void {
     const audioGroup = this.element.querySelector('[data-group="audio"]') as HTMLElement;
