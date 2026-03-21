@@ -20,9 +20,9 @@ export const SETTINGS_STORAGE_KEY = 'resonance-garden-settings';
 
 export const DEFAULT_SETTINGS: GameSettings = {
   audio: {
-    masterVolume: 0.72,
-    ambienceVolume: 0.68,
-    entityVolume: 0.76,
+    masterVolume: 0.84,
+    ambienceVolume: 0.78,
+    entityVolume: 0.88,
   },
   visuals: {
     terrainLines: true,

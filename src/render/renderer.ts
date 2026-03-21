@@ -1,4 +1,5 @@
 import { GAME_TITLE, WORLD_HEIGHT, WORLD_WIDTH, type EntityType, type TerrainType, type ToolType } from '../config';
+import type { AudioDebugState } from '../audio/audioEngine';
 import type { GameSettings } from '../settings';
 import type { Attractor, CameraState, Entity, EventBurst, FeedParticle, Residue, SimulationSnapshot, TerrainCell, ToolField, Vec2 } from '../types/world';
 
@@ -52,7 +53,7 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  render(snapshot: SimulationSnapshot, settings: GameSettings): void {
+  render(snapshot: SimulationSnapshot, settings: GameSettings, audioDebug?: AudioDebugState): void {
     const { ctx, canvas } = this;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -82,7 +83,7 @@ export class Renderer {
 
     this.drawFocusedInterior(snapshot, view.scale, view.offsetX, view.offsetY, settings);
     this.drawFocusMask(snapshot, width, height, view.scale, view.offsetX, view.offsetY, settings);
-    this.drawOverlay(snapshot, width, height, settings);
+    this.drawOverlay(snapshot, width, height, settings, audioDebug);
   }
 
   private getView(camera: CameraState, width: number, height: number) {
@@ -295,13 +296,21 @@ export class Renderer {
       ctx.stroke();
 
       if (field.tool === 'observe') {
-        ctx.strokeStyle = rgba(color, 0.08 + fade * 0.12);
+        ctx.strokeStyle = rgba(color, 0.1 + fade * 0.16);
         for (let i = 0; i < 3; i += 1) {
-          const ring = field.radius * (0.36 + i * 0.18);
+          const ring = field.radius * (0.34 + i * 0.19);
           ctx.beginPath();
           ctx.arc(position.x, position.y, ring, 0, Math.PI * 2);
           ctx.stroke();
         }
+
+        ctx.save();
+        ctx.strokeStyle = rgba(color, 0.22 + fade * 0.18);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(position.x, position.y, field.radius * 0.98, Math.PI * 0.16, Math.PI * 1.88);
+        ctx.stroke();
+        ctx.restore();
       }
 
       if (field.tool === 'grow') {
@@ -541,8 +550,8 @@ export class Renderer {
     const color = toolPalette[snapshot.tool.active];
     const position = this.wrappedPoint(snapshot.tool.worldPosition, snapshot.camera);
     ctx.save();
-    ctx.strokeStyle = rgba(color, snapshot.tool.blocked ? 0.24 : 0.12 + snapshot.tool.pulse * 0.08);
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = rgba(color, snapshot.tool.blocked ? 0.24 : 0.14 + snapshot.tool.pulse * 0.1);
+    ctx.lineWidth = snapshot.tool.active === 'observe' ? 1.25 : 1;
     ctx.setLineDash(snapshot.tool.active === 'observe' ? [] : [10, 16]);
     ctx.beginPath();
     ctx.arc(position.x, position.y, snapshot.tool.radius, 0, Math.PI * 2);
@@ -559,36 +568,45 @@ export class Renderer {
     const x = wrapped.x * scale + offsetX;
     const y = wrapped.y * scale + offsetY;
     const radius = focusField.radius * scale;
-    const exteriorDim = settings.visuals.reduceMotion ? 0.12 : 0.16;
+    const exteriorDim = settings.visuals.reduceMotion ? 0.09 : 0.14;
 
     ctx.save();
-    ctx.fillStyle = `rgba(1, 4, 8, ${exteriorDim + snapshot.stats.focus * 0.08})`;
+    ctx.fillStyle = `rgba(2, 6, 10, ${exteriorDim + snapshot.stats.focus * 0.08})`;
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
-    const aperture = ctx.createRadialGradient(x, y, radius * 0.18, x, y, radius * 1.18);
-    aperture.addColorStop(0, 'rgba(0,0,0,0.96)');
-    aperture.addColorStop(0.58, 'rgba(0,0,0,0.52)');
+    const aperture = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius * 1.16);
+    aperture.addColorStop(0, 'rgba(0,0,0,0.98)');
+    aperture.addColorStop(0.68, 'rgba(0,0,0,0.88)');
+    aperture.addColorStop(0.9, 'rgba(0,0,0,0.26)');
     aperture.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = aperture;
     ctx.beginPath();
-    ctx.arc(x, y, radius * 1.18, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * 1.16, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
     ctx.save();
-    const glow = ctx.createRadialGradient(x, y, radius * 0.08, x, y, radius * 1.04);
-    glow.addColorStop(0, `rgba(236, 248, 255, ${0.1 + snapshot.stats.focus * 0.14})`);
-    glow.addColorStop(0.44, `rgba(204, 232, 246, ${0.06 + snapshot.stats.focus * 0.08})`);
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = glow;
+    const glow = ctx.createRadialGradient(x, y, radius * 0.58, x, y, radius * 1.08);
+    glow.addColorStop(0, 'rgba(255,255,255,0)');
+    glow.addColorStop(0.72, `rgba(210, 236, 248, ${0.08 + snapshot.stats.focus * 0.06})`);
+    glow.addColorStop(1, `rgba(160, 212, 236, ${0.18 + snapshot.stats.focus * 0.12})`);
+    ctx.strokeStyle = `rgba(208, 236, 248, ${0.28 + snapshot.stats.focus * 0.18})`;
+    ctx.lineWidth = 1.35;
     ctx.beginPath();
-    ctx.arc(x, y, radius * 1.02, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(x, y, radius * 0.995, 0, Math.PI * 2);
+    ctx.stroke();
 
-    ctx.strokeStyle = `rgba(196, 226, 244, ${0.16 + snapshot.stats.focus * 0.12})`;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = glow;
+    ctx.lineWidth = 5;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * 1.01, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.setLineDash([12, 22]);
+    ctx.strokeStyle = `rgba(232, 248, 255, ${0.14 + snapshot.stats.focus * 0.08})`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.9, Math.PI * 0.15, Math.PI * 1.95);
     ctx.stroke();
     ctx.restore();
   }
@@ -602,27 +620,46 @@ export class Renderer {
     const x = wrapped.x * scale + offsetX;
     const y = wrapped.y * scale + offsetY;
     const radius = focusField.radius * scale;
+    const magnify = settings.visuals.reduceMotion ? 1.012 : 1.03;
 
     ctx.save();
     ctx.beginPath();
-    ctx.arc(x, y, radius * 0.98, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * 0.985, 0, Math.PI * 2);
     ctx.clip();
+
+    ctx.fillStyle = `rgba(226, 242, 250, ${0.04 + snapshot.stats.focus * 0.05})`;
+    ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
+
+    ctx.translate(x, y);
+    ctx.scale(magnify, magnify);
+    ctx.translate(-x, -y);
+    ctx.filter = `brightness(${1.04 + snapshot.stats.focus * 0.08}) contrast(${1.06 + snapshot.stats.focus * 0.14}) saturate(${1.02 + snapshot.stats.focus * 0.08})`;
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
-    ctx.globalAlpha = 0.18 + snapshot.stats.focus * 0.12;
+
     if (settings.visuals.terrainLines) {
       this.drawTerrain(snapshot.terrain, snapshot.camera, snapshot.time, settings);
       this.drawEnvironmentalFlows(snapshot.terrain, snapshot.camera, snapshot.time, settings);
     }
-    ctx.globalAlpha = 0.22 + snapshot.stats.focus * 0.18;
     this.drawEntityAuras(snapshot.entities, snapshot.camera);
     this.drawResidues(snapshot.residues, snapshot.camera);
     this.drawParticles(snapshot.particles, snapshot.camera);
     this.drawEntities(snapshot.entities, snapshot.camera, snapshot.time, settings);
     ctx.restore();
+
+    ctx.save();
+    const interiorGlow = ctx.createRadialGradient(x, y, radius * 0.18, x, y, radius * 0.98);
+    interiorGlow.addColorStop(0, `rgba(255,255,255,${0.02 + snapshot.stats.focus * 0.03})`);
+    interiorGlow.addColorStop(0.72, `rgba(208, 234, 244, ${0.03 + snapshot.stats.focus * 0.04})`);
+    interiorGlow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = interiorGlow;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.98, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
-  private drawOverlay(snapshot: SimulationSnapshot, width: number, height: number, settings: GameSettings): void {
+  private drawOverlay(snapshot: SimulationSnapshot, width: number, height: number, settings: GameSettings, audioDebug?: AudioDebugState): void {
     const { ctx } = this;
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.font = '500 11px Inter, system-ui, sans-serif';
@@ -649,6 +686,7 @@ export class Renderer {
       `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
       `wrap ${snapshot.dimensions.width} × ${snapshot.dimensions.height} torus`,
       `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,
+      `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
     ];
     lines.forEach((line, index) => ctx.fillText(line, 18, height - 58 - index * 16));
     ctx.restore();

@@ -10,7 +10,7 @@ export const TOOL_DEFINITIONS: Record<ToolType, ToolDefinition> = {
   observe: {
     id: 'observe',
     label: 'Resonance Focus',
-    description: 'Hold to isolate a quiet local pocket of sound and motion',
+    description: 'Hold to sharpen a local pocket of sight and sound like a perceptual microscope',
   },
   grow: {
     id: 'grow',
