@@ -99,7 +99,7 @@ export class App {
 
   private zoomCamera(deltaY: number, clientX: number, clientY: number, canvas: HTMLCanvasElement): void {
     const rect = canvas.getBoundingClientRect();
-    const baseScale = Math.min(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT);
+    const baseScale = Math.max(rect.width / WORLD_WIDTH, rect.height / WORLD_HEIGHT);
     const beforeScale = baseScale * this.cameraTarget.zoom;
     const worldX = this.cameraTarget.center.x + (clientX - rect.left - rect.width * 0.5) / beforeScale;
     const worldY = this.cameraTarget.center.y + (clientY - rect.top - rect.height * 0.5) / beforeScale;

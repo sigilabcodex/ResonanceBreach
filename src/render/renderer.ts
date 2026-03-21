@@ -75,12 +75,13 @@ export class Renderer {
 
     ctx.restore();
 
+    this.drawFocusedInterior(snapshot, view.scale, view.offsetX, view.offsetY);
     this.drawFocusMask(snapshot, width, height, view.scale, view.offsetX, view.offsetY);
     this.drawOverlay(snapshot, width, height);
   }
 
   private getView(camera: CameraState, width: number, height: number) {
-    const scale = Math.min(width / WORLD_WIDTH, height / WORLD_HEIGHT) * camera.zoom;
+    const scale = Math.max(width / WORLD_WIDTH, height / WORLD_HEIGHT) * camera.zoom;
     return {
       scale,
       offsetX: width * 0.5 - camera.center.x * scale,
@@ -119,27 +120,30 @@ export class Renderer {
 
     ctx.save();
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(170, 188, 196, 0.038)';
-    for (let band = 0; band < 7; band += 1) {
-      const baseY = (band + 0.7) * (height / 7);
+    ctx.strokeStyle = 'rgba(170, 188, 196, 0.032)';
+    for (let band = 0; band < 6; band += 1) {
+      const baseY = (band + 0.62) * (height / 6);
       ctx.beginPath();
-      for (let step = 0; step <= 22; step += 1) {
-        const x = (step / 22) * width;
-        const y = baseY + Math.sin(step * 0.72 + band * 1.4 + snapshot.time * 0.035) * 10 + Math.cos(step * 0.31 + band + snapshot.time * 0.024) * 6;
+      for (let step = 0; step <= 26; step += 1) {
+        const x = (step / 26) * width;
+        const y = baseY
+          + Math.sin(step * 0.58 + band * 1.2 + snapshot.time * 0.028) * 12
+          + Math.cos(step * 0.23 + band * 0.9 + snapshot.time * 0.018) * 7
+          + Math.sin((x / Math.max(1, width)) * Math.PI * 3.1 + band * 0.7) * 4;
         if (step === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
     }
 
-    ctx.strokeStyle = 'rgba(154, 174, 184, 0.026)';
-    for (let i = 0; i < 24; i += 1) {
-      const x = ((i + 0.5) / 24) * width;
-      const y = height * (0.16 + ((i * 37) % 100) / 140);
-      const len = 18 + ((i * 23) % 24);
+    ctx.strokeStyle = 'rgba(154, 174, 184, 0.022)';
+    for (let i = 0; i < 18; i += 1) {
+      const x = ((i + 0.35) / 18) * width;
+      const y = height * (0.14 + ((i * 37) % 100) / 150);
+      const len = 18 + ((i * 23) % 20);
       ctx.beginPath();
-      ctx.moveTo(x - len * 0.5, y - 3);
-      ctx.quadraticCurveTo(x, y + 4, x + len * 0.5, y - 2);
+      ctx.moveTo(x - len * 0.55, y - 2);
+      ctx.quadraticCurveTo(x, y + 5, x + len * 0.45, y - 3);
       ctx.stroke();
     }
     ctx.restore();
@@ -151,16 +155,15 @@ export class Renderer {
     for (const sample of samples) {
       const center = this.wrappedPoint(sample.center, camera);
       const palette = terrainColors[sample.terrain];
-      const baseRadius = sample.radius * (sample.terrain === 'water' ? 1.48 : sample.terrain === 'fertile' ? 1.34 : sample.terrain === 'dense' ? 1.22 : 1.08);
-      const stretch = sample.terrain === 'water' ? 0.86 : sample.terrain === 'dense' ? 0.78 : 0.82;
-      const rotation = Math.atan2(sample.flow.y, sample.flow.x) * 0.3;
-      const gradient = ctx.createRadialGradient(center.x, center.y, baseRadius * 0.12, center.x, center.y, baseRadius * 1.08);
-      gradient.addColorStop(0, hsla(palette.hue + sample.hue * 8, palette.sat + sample.nutrient * 8, palette.light + sample.fertility * 10, 0.18));
-      gradient.addColorStop(0.58, hsla(palette.hue, palette.sat, palette.light + sample.nutrient * 5, 0.08));
+      const baseRadius = sample.radius * (sample.terrain === 'water' ? 1.64 : sample.terrain === 'fertile' ? 1.44 : sample.terrain === 'dense' ? 1.3 : 1.14);
+      const stretch = sample.terrain === 'water' ? 0.76 : sample.terrain === 'dense' ? 0.68 : 0.74;
+      const rotation = Math.atan2(sample.flow.y, sample.flow.x) * 0.48 + sample.height * 0.4;
+      const gradient = ctx.createRadialGradient(center.x, center.y, baseRadius * 0.1, center.x, center.y, baseRadius * 1.14);
+      gradient.addColorStop(0, hsla(palette.hue + sample.hue * 7, palette.sat + sample.nutrient * 7, palette.light + sample.fertility * 10, 0.13));
+      gradient.addColorStop(0.52, hsla(palette.hue, palette.sat, palette.light + sample.nutrient * 4, 0.06));
       gradient.addColorStop(1, hsla(palette.hue, palette.sat, palette.light, 0));
       ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.ellipse(center.x, center.y, baseRadius, baseRadius * stretch, rotation, 0, Math.PI * 2);
+      this.traceWarpedPatch(center, baseRadius, stretch, rotation, sample, time);
       ctx.fill();
     }
 
@@ -168,43 +171,79 @@ export class Renderer {
     for (const sample of samples) {
       const center = this.wrappedPoint(sample.center, camera);
       const palette = terrainColors[sample.terrain];
-      const detail = sample.terrain === 'solid' ? 3 : sample.terrain === 'dense' ? 2 : 2;
-      ctx.strokeStyle = hsla(palette.hue, palette.sat + 4, 72, sample.terrain === 'solid' ? 0.12 : 0.08);
-      ctx.lineWidth = sample.terrain === 'solid' ? 1.1 : 0.85;
-      for (let ring = 0; ring < detail; ring += 1) {
-        const radius = sample.radius * (0.42 + ring * 0.22);
-        ctx.beginPath();
-        for (let step = 0; step <= 28; step += 1) {
-          const angle = (step / 28) * Math.PI * 2;
-          const wobble = 1 + Math.sin(time * 0.045 + sample.index * 0.6 + angle * 2 + ring * 0.6) * 0.028 + Math.cos(sample.height * 4 + angle * 3) * 0.02;
-          const x = center.x + Math.cos(angle) * radius * wobble;
-          const y = center.y + Math.sin(angle) * radius * wobble * (sample.terrain === 'water' ? 0.76 : 0.84);
-          if (step === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+      const detail = sample.terrain === 'solid' ? 3 : 2;
+      ctx.strokeStyle = hsla(palette.hue, palette.sat + 3, 72, sample.terrain === 'solid' ? 0.1 : 0.065);
+      ctx.lineWidth = sample.terrain === 'solid' ? 1 : 0.8;
+      for (let band = 0; band < detail; band += 1) {
+        this.traceContourBand(center, sample, time, band);
         ctx.stroke();
       }
 
-      if (sample.terrain !== 'solid') {
-        const accent = terrainColors[sample.terrain].accent;
-        ctx.strokeStyle = rgba(accent, sample.terrain === 'water' ? 0.05 : 0.038);
-        ctx.lineWidth = 0.7;
-        for (let strand = 0; strand < 2; strand += 1) {
-          const angle = Math.atan2(sample.flow.y, sample.flow.x) + strand * 0.5 - 0.2;
-          const arc = sample.radius * (0.38 + strand * 0.14);
-          ctx.beginPath();
-          ctx.moveTo(center.x - Math.cos(angle) * arc, center.y - Math.sin(angle) * arc * 0.7);
-          ctx.quadraticCurveTo(
-            center.x + Math.cos(angle + 0.45) * arc * 0.28,
-            center.y + Math.sin(angle + 0.45) * arc * 0.22,
-            center.x + Math.cos(angle) * arc,
-            center.y + Math.sin(angle) * arc * 0.7,
-          );
-          ctx.stroke();
-        }
-      }
+      const accent = terrainColors[sample.terrain].accent;
+      ctx.strokeStyle = rgba(accent, sample.terrain === 'water' ? 0.048 : 0.032);
+      ctx.lineWidth = 0.72;
+      this.traceFlowBand(center, sample, time, -1);
+      ctx.stroke();
+      this.traceFlowBand(center, sample, time, 1);
+      ctx.stroke();
     }
     ctx.restore();
+  }
+
+  private traceWarpedPatch(center: Vec2, radius: number, stretch: number, rotation: number, sample: TerrainCell, time: number): void {
+    const { ctx } = this;
+    ctx.beginPath();
+    for (let step = 0; step <= 20; step += 1) {
+      const angle = (step / 20) * Math.PI * 2;
+      const sweep = angle + rotation;
+      const swell = 1
+        + Math.sin(sample.index * 0.41 + angle * 2.3 + time * 0.014) * 0.09
+        + Math.cos(sample.height * 5.4 + angle * 1.7) * 0.06
+        + Math.sin(sample.roughness * 6 + angle * 3.2) * 0.03;
+      const localRadius = radius * swell;
+      const x = center.x + Math.cos(sweep) * localRadius;
+      const y = center.y + Math.sin(sweep) * localRadius * stretch;
+      if (step === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  private traceContourBand(center: Vec2, sample: TerrainCell, time: number, band: number): void {
+    const { ctx } = this;
+    const flowAngle = Math.atan2(sample.flow.y, sample.flow.x);
+    const arcStart = flowAngle - 1.1 + sample.height * 0.7 + band * 0.2;
+    const arcLength = Math.PI * (0.84 + sample.roughness * 0.18);
+    const radius = sample.radius * (0.44 + band * 0.2 + sample.height * 0.08);
+    ctx.beginPath();
+    for (let step = 0; step <= 18; step += 1) {
+      const angle = arcStart + (step / 18) * arcLength;
+      const wobble = 1
+        + Math.sin(time * 0.022 + sample.index * 0.4 + angle * 2.1 + band) * 0.03
+        + Math.cos(sample.height * 4.2 + angle * 1.4) * 0.02;
+      const x = center.x + Math.cos(angle) * radius * wobble;
+      const y = center.y + Math.sin(angle) * radius * wobble * (sample.terrain === 'water' ? 0.68 : 0.82);
+      if (step === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+  }
+
+  private traceFlowBand(center: Vec2, sample: TerrainCell, time: number, side: -1 | 1): void {
+    const { ctx } = this;
+    const flowAngle = Math.atan2(sample.flow.y, sample.flow.x);
+    const normalAngle = flowAngle + Math.PI * 0.5;
+    const offset = sample.radius * (0.12 + sample.height * 0.06) * side;
+    const length = sample.radius * (0.68 + sample.nutrient * 0.12);
+    const startX = center.x - Math.cos(flowAngle) * length * 0.52 + Math.cos(normalAngle) * offset;
+    const startY = center.y - Math.sin(flowAngle) * length * 0.52 + Math.sin(normalAngle) * offset * 0.8;
+    const endX = center.x + Math.cos(flowAngle) * length * 0.52 + Math.cos(normalAngle) * offset * 0.6;
+    const endY = center.y + Math.sin(flowAngle) * length * 0.52 + Math.sin(normalAngle) * offset * 0.5;
+    const drift = Math.sin(time * 0.018 + sample.index * 0.31 + side) * sample.radius * 0.1;
+    const controlX = center.x + Math.cos(flowAngle + side * 0.5) * length * 0.18 + Math.cos(normalAngle) * drift;
+    const controlY = center.y + Math.sin(flowAngle + side * 0.5) * length * 0.18 + Math.sin(normalAngle) * drift * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(controlX, controlY, endX, endY);
   }
 
   private drawAttractors(attractors: Attractor[], camera: CameraState): void {
@@ -466,23 +505,23 @@ export class Renderer {
     const radius = focusField.radius * scale;
 
     ctx.save();
-    ctx.fillStyle = `rgba(1, 4, 8, ${0.32 + snapshot.stats.focus * 0.18})`;
+    ctx.fillStyle = `rgba(1, 4, 8, ${0.42 + snapshot.stats.focus * 0.22})`;
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'destination-out';
-    const aperture = ctx.createRadialGradient(x, y, radius * 0.38, x, y, radius * 1.16);
-    aperture.addColorStop(0, 'rgba(0,0,0,0.92)');
-    aperture.addColorStop(0.7, 'rgba(0,0,0,0.34)');
+    const aperture = ctx.createRadialGradient(x, y, radius * 0.32, x, y, radius * 1.22);
+    aperture.addColorStop(0, 'rgba(0,0,0,0.98)');
+    aperture.addColorStop(0.62, 'rgba(0,0,0,0.42)');
     aperture.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = aperture;
     ctx.beginPath();
-    ctx.arc(x, y, radius * 1.16, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * 1.22, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
     ctx.save();
-    const glow = ctx.createRadialGradient(x, y, radius * 0.16, x, y, radius);
-    glow.addColorStop(0, `rgba(214, 236, 246, ${0.08 + snapshot.stats.focus * 0.14})`);
-    glow.addColorStop(0.56, 'rgba(182, 220, 242, 0.03)');
+    const glow = ctx.createRadialGradient(x, y, radius * 0.1, x, y, radius);
+    glow.addColorStop(0, `rgba(228, 244, 250, ${0.12 + snapshot.stats.focus * 0.18})`);
+    glow.addColorStop(0.56, `rgba(190, 226, 246, ${0.05 + snapshot.stats.focus * 0.06})`);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
@@ -503,6 +542,32 @@ export class Renderer {
       ctx.arc(x, y, ring, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  private drawFocusedInterior(snapshot: SimulationSnapshot, scale: number, offsetX: number, offsetY: number): void {
+    const focusField = snapshot.fields.find((field) => field.tool === 'observe');
+    if (!focusField) return;
+
+    const { ctx } = this;
+    const wrapped = this.wrappedPoint(focusField.position, snapshot.camera);
+    const x = wrapped.x * scale + offsetX;
+    const y = wrapped.y * scale + offsetY;
+    const radius = focusField.radius * scale;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.98, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = 0.42 + snapshot.stats.focus * 0.2;
+    this.drawTerrain(snapshot.terrain, snapshot.camera, snapshot.time);
+    ctx.globalAlpha = 0.56 + snapshot.stats.focus * 0.24;
+    this.drawEntityAuras(snapshot.entities, snapshot.camera);
+    this.drawResidues(snapshot.residues, snapshot.camera);
+    this.drawParticles(snapshot.particles, snapshot.camera);
+    this.drawEntities(snapshot.entities, snapshot.camera, snapshot.time);
     ctx.restore();
   }
 

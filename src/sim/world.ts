@@ -21,13 +21,13 @@ export const createDefaultStats = (): GardenStats => ({
   harmony: 0.54,
   activity: 0.22,
   threat: 0.08,
-  growth: 0.32,
+  growth: 0.38,
   energy: ENERGY_START / ENERGY_MAX,
-  stability: 0.62,
+  stability: 0.68,
   biodiversity: 0.42,
   focus: 0,
-  nutrients: 0.2,
-  fruit: 0.12,
+  nutrients: 0.3,
+  fruit: 0.18,
 });
 
 export const createWorldState = (): WorldState => ({

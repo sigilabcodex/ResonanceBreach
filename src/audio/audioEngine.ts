@@ -144,7 +144,7 @@ export class AudioEngine {
     this.updateZoneVoices(snapshot, harmony, focus, zones, zoomNorm, now);
     this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now);
 
-    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.1 : 1;
+    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.06 : 1;
     this.master.gain.setTargetAtTime((0.05 + snapshot.stats.energy * 0.025) * focusMasterDip, now, 1.1);
 
     if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
@@ -190,7 +190,7 @@ export class AudioEngine {
     const lowFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.stability, -1);
     const midFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.harmony, 0);
     const bedLevel = 0.012 + snapshot.stats.stability * 0.01 + (1 - zoomNorm) * 0.01;
-    const focusDuck = focus.active ? 1 - focus.intensity * 0.28 : 1;
+    const focusDuck = focus.active ? 1 - focus.intensity * 0.34 : 1;
 
     this.bedLowOsc.frequency.setTargetAtTime(lowFreq, now, 1.8);
     this.bedMidOsc.frequency.setTargetAtTime(midFreq, now, 1.6);
@@ -214,16 +214,16 @@ export class AudioEngine {
         return;
       }
 
-      const inFocus = focus.active && this.distance(zone.position, focus.center) <= focus.radius;
-      const focusBoost = inFocus ? 0.24 + focus.intensity * 0.44 : focus.active ? -0.08 - focus.intensity * 0.2 : 0;
+      const inFocus = focus.active && this.distance(zone.position, focus.center, snapshot) <= focus.radius;
+      const focusBoost = inFocus ? 0.34 + focus.intensity * 0.52 : focus.active ? -0.16 - focus.intensity * 0.24 : 0;
       const densitySuppression = clamp((1 - zoomNorm) * 0.45 + (1 - zone.detail) * 0.35, 0.22, 0.88);
-      const gain = clamp(0.004 + zone.density * 0.006 + zone.count * 0.0004, 0.003, 0.022) * densitySuppression * (1 + focusBoost);
+      const gain = clamp(0.0044 + zone.density * 0.0074 + zone.count * 0.0005, 0.0034, 0.028) * densitySuppression * (1 + focusBoost);
       const contour = clamp(zone.activity * 0.55 + zone.tone * 0.45, 0, 1);
       const octaveOffset = zone.kind === 'rooted' ? -1 : zone.kind === 'water' ? -1 : zone.kind === 'predator' ? 0 : 0;
       const filterFrequency = inFocus
-        ? 600 + zone.detail * 900 + focus.intensity * 500
+        ? 720 + zone.detail * 980 + focus.intensity * 560
         : focus.active
-          ? 220 + zone.detail * 260
+          ? 170 + zone.detail * 220
           : 320 + zone.detail * 520;
 
       voice.oscillator.type = ZONE_WAVEFORM[zone.kind];
@@ -252,13 +252,13 @@ export class AudioEngine {
       }
 
       const detailLift = clamp(candidate.detail, 0, 1.4);
-      const focusLift = candidate.insideFocus ? 0.3 + focus.intensity * 0.55 : focus.active ? -0.12 - focus.intensity * 0.22 : 0;
-      const gain = clamp(0.006 + candidate.score * 0.01 + detailLift * 0.004, 0.006, 0.028) * (0.82 + zoomNorm * 0.28 + focusLift);
+      const focusLift = candidate.insideFocus ? 0.42 + focus.intensity * 0.64 : focus.active ? -0.18 - focus.intensity * 0.26 : 0;
+      const gain = clamp(0.0072 + candidate.score * 0.011 + detailLift * 0.005, 0.007, 0.036) * (0.84 + zoomNorm * 0.3 + focusLift);
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);
       const filterFrequency = candidate.insideFocus
-        ? 920 + detailLift * 980 + focus.intensity * 420
+        ? 1040 + detailLift * 1060 + focus.intensity * 520
         : focus.active
-          ? 320 + detailLift * 320
+          ? 240 + detailLift * 260
           : 540 + detailLift * 620;
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
@@ -446,12 +446,19 @@ export class AudioEngine {
     osc.stop(now + settings.dur + 0.08);
   }
 
-  private distance(a: Vec2, b: Vec2): number {
-    return Math.hypot(a.x - b.x, a.y - b.y);
+  private distance(a: Vec2, b: Vec2, snapshot: SimulationSnapshot): number {
+    const dxRaw = a.x - b.x;
+    const dyRaw = a.y - b.y;
+    const dx = Math.abs(dxRaw) > snapshot.dimensions.width * 0.5 ? snapshot.dimensions.width - Math.abs(dxRaw) : Math.abs(dxRaw);
+    const dy = Math.abs(dyRaw) > snapshot.dimensions.height * 0.5 ? snapshot.dimensions.height - Math.abs(dyRaw) : Math.abs(dyRaw);
+    return Math.hypot(dx, dy);
   }
 
   private panFromPosition(x: number, snapshot: SimulationSnapshot): number {
     const radius = 420 / snapshot.camera.zoom;
-    return clamp((x - snapshot.camera.center.x) / radius, -0.9, 0.9);
+    let delta = x - snapshot.camera.center.x;
+    if (delta > snapshot.dimensions.width * 0.5) delta -= snapshot.dimensions.width;
+    else if (delta < -snapshot.dimensions.width * 0.5) delta += snapshot.dimensions.width;
+    return clamp(delta / radius, -0.9, 0.9);
   }
 }
