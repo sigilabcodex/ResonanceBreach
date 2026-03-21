@@ -1,4 +1,5 @@
 import type { WorldEvent } from '../sim/events';
+import type { GameSettings } from '../settings';
 import type { SimulationSnapshot, ToolState, Vec2 } from '../types/world';
 import { buildZoneSummaries, createAudioFocusContext, scoreEntities, selectForegroundVoices, type AudioFocusContext, type ScoredEntity, type ZoneSummary } from './salience';
 import { createHarmonyState, getHarmonyFrequency, type HarmonyState } from './harmony';
@@ -97,7 +98,7 @@ export class AudioEngine {
     const foregroundVoices = Array.from({ length: FOREGROUND_VOICE_COUNT }, (_, index) => this.createVoice(context, index === 2 ? 'sawtooth' : 'triangle', master));
 
     const eventBus = context.createGain();
-    eventBus.gain.value = 0.18;
+    eventBus.gain.value = 0.14;
     eventBus.connect(master);
 
     this.context = context;
@@ -113,7 +114,7 @@ export class AudioEngine {
     this.started = true;
   }
 
-  update(snapshot: SimulationSnapshot): void {
+  update(snapshot: SimulationSnapshot, settings: GameSettings): void {
     if (
       !this.context
       || !this.master
@@ -140,12 +141,13 @@ export class AudioEngine {
     const zones = buildZoneSummaries(snapshot, scored, foreground);
     const zoomNorm = clamp((snapshot.camera.zoom - 0.32) / (2.8 - 0.32), 0, 1);
 
-    this.updateGlobalBed(snapshot, harmony, focus, zoomNorm, now);
-    this.updateZoneVoices(snapshot, harmony, focus, zones, zoomNorm, now);
-    this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now);
+    this.updateGlobalBed(snapshot, harmony, focus, zoomNorm, now, settings);
+    this.updateZoneVoices(snapshot, harmony, focus, zones, zoomNorm, now, settings);
+    this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now, settings);
 
-    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.06 : 1;
-    this.master.gain.setTargetAtTime((0.05 + snapshot.stats.energy * 0.025) * focusMasterDip, now, 1.1);
+    this.eventBus.gain.setTargetAtTime(0.08 + settings.audio.entityVolume * 0.1, now, 0.2);
+    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.04 : 1;
+    this.master.gain.setTargetAtTime((0.04 + snapshot.stats.energy * 0.022) * focusMasterDip * settings.audio.masterVolume, now, 1.1);
 
     if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
       this.lastFeedbackId = snapshot.tool.feedback.id;
@@ -184,13 +186,14 @@ export class AudioEngine {
     focus: AudioFocusContext,
     zoomNorm: number,
     now: number,
+    settings: GameSettings,
   ): void {
     if (!this.bedGain || !this.bedLowFilter || !this.bedMidFilter || !this.bedLowOsc || !this.bedMidOsc) return;
 
     const lowFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.stability, -1);
     const midFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.harmony, 0);
-    const bedLevel = 0.012 + snapshot.stats.stability * 0.01 + (1 - zoomNorm) * 0.01;
-    const focusDuck = focus.active ? 1 - focus.intensity * 0.34 : 1;
+    const bedLevel = (0.012 + snapshot.stats.stability * 0.01 + (1 - zoomNorm) * 0.01) * settings.audio.ambienceVolume;
+    const focusDuck = focus.active ? 1 - focus.intensity * 0.24 : 1;
 
     this.bedLowOsc.frequency.setTargetAtTime(lowFreq, now, 1.8);
     this.bedMidOsc.frequency.setTargetAtTime(midFreq, now, 1.6);
@@ -206,6 +209,7 @@ export class AudioEngine {
     zones: ZoneSummary[],
     zoomNorm: number,
     now: number,
+    settings: GameSettings,
   ): void {
     this.zoneVoices.forEach((voice, index) => {
       const zone = zones[index];
@@ -217,7 +221,7 @@ export class AudioEngine {
       const inFocus = focus.active && this.distance(zone.position, focus.center, snapshot) <= focus.radius;
       const focusBoost = inFocus ? 0.34 + focus.intensity * 0.52 : focus.active ? -0.16 - focus.intensity * 0.24 : 0;
       const densitySuppression = clamp((1 - zoomNorm) * 0.45 + (1 - zone.detail) * 0.35, 0.22, 0.88);
-      const gain = clamp(0.0044 + zone.density * 0.0074 + zone.count * 0.0005, 0.0034, 0.028) * densitySuppression * (1 + focusBoost);
+      const gain = clamp(0.0044 + zone.density * 0.0074 + zone.count * 0.0005, 0.0034, 0.028) * densitySuppression * (1 + focusBoost) * settings.audio.ambienceVolume;
       const contour = clamp(zone.activity * 0.55 + zone.tone * 0.45, 0, 1);
       const octaveOffset = zone.kind === 'rooted' ? -1 : zone.kind === 'water' ? -1 : zone.kind === 'cluster' ? -1 : 0;
       const filterFrequency = inFocus
@@ -243,6 +247,7 @@ export class AudioEngine {
     foreground: ScoredEntity[],
     zoomNorm: number,
     now: number,
+    settings: GameSettings,
   ): void {
     this.foregroundVoices.forEach((voice, index) => {
       const candidate = foreground[index];
@@ -253,7 +258,7 @@ export class AudioEngine {
 
       const detailLift = clamp(candidate.detail, 0, 1.4);
       const focusLift = candidate.insideFocus ? 0.42 + focus.intensity * 0.64 : focus.active ? -0.18 - focus.intensity * 0.26 : 0;
-      const gain = clamp(0.0072 + candidate.score * 0.011 + detailLift * 0.005, 0.007, 0.036) * (0.84 + zoomNorm * 0.3 + focusLift);
+      const gain = clamp(0.0072 + candidate.score * 0.011 + detailLift * 0.005, 0.007, 0.036) * (0.84 + zoomNorm * 0.3 + focusLift) * settings.audio.entityVolume;
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);
       const filterFrequency = candidate.insideFocus
         ? 1040 + detailLift * 1060 + focus.intensity * 520
