@@ -18,6 +18,7 @@ export class Hud {
   private readonly settingsPanel: HTMLDivElement;
   private readonly settingsDialog: HTMLDivElement;
   private readonly settingsCloseButton: HTMLButtonElement;
+  private readonly minimalHintValue: HTMLSpanElement;
   private readonly harmonyValue: HTMLSpanElement;
   private readonly growthValue: HTMLSpanElement;
   private readonly threatValue: HTMLSpanElement;
@@ -34,6 +35,7 @@ export class Hud {
   private readonly rangeOutputs = new Map<string, HTMLSpanElement>();
   private readonly toggleInputs = new Map<string, HTMLInputElement>();
   private settingsOpen = false;
+  private hidden = false;
   private settings: GameSettings;
   private lastFocusedElement: HTMLElement | null = null;
 
@@ -102,6 +104,9 @@ export class Hud {
           </div>
         </div>
       </div>
+      <div class="hud__minimal" data-minimal-overlay aria-live="polite">
+        <span data-minimal-hint>HUD hidden · H restores the interface · O opens settings</span>
+      </div>
     `;
 
     this.restartButton = this.element.querySelector('.hud__restart') as HTMLButtonElement;
@@ -109,6 +114,7 @@ export class Hud {
     this.settingsPanel = this.element.querySelector('[data-settings-panel]') as HTMLDivElement;
     this.settingsDialog = this.element.querySelector('[data-settings-dialog]') as HTMLDivElement;
     this.settingsCloseButton = this.element.querySelector('[data-settings-close]') as HTMLButtonElement;
+    this.minimalHintValue = this.element.querySelector('[data-minimal-hint]') as HTMLSpanElement;
     this.energyValue = this.element.querySelector('[data-energy]') as HTMLSpanElement;
     this.harmonyValue = this.element.querySelector('[data-harmony]') as HTMLSpanElement;
     this.stabilityValue = this.element.querySelector('[data-stability]') as HTMLSpanElement;
@@ -201,6 +207,10 @@ export class Hud {
     } else {
       this.hintValue.textContent = 'Observe the garden long enough to see blooms fruit, drifters visit, residue linger, and decomposers return it to the soil.';
     }
+
+    this.minimalHintValue.textContent = this.hidden
+      ? `HUD hidden · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores HUD · O opens settings`
+      : this.minimalHintValue.textContent;
   }
 
   syncSettings(settings: GameSettings): void {
@@ -215,6 +225,22 @@ export class Hud {
     this.toggleInputs.get('motionTrails')!.checked = this.settings.visuals.motionTrails;
     this.toggleInputs.get('debugOverlays')!.checked = this.settings.visuals.debugOverlays;
     this.toggleInputs.get('reduceMotion')!.checked = this.settings.visuals.reduceMotion;
+    this.element.classList.toggle('is-reduced-motion', this.settings.visuals.reduceMotion);
+  }
+
+  setHudHidden(hidden: boolean): void {
+    if (this.hidden === hidden) return;
+
+    this.hidden = hidden;
+    this.element.classList.toggle('is-hidden', hidden);
+  }
+
+  toggleHudHidden(): void {
+    this.setHudHidden(!this.hidden);
+  }
+
+  toggleSettings(): void {
+    this.setSettingsOpen(!this.settingsOpen);
   }
 
   private setSettingsOpen(open: boolean): void {
@@ -235,9 +261,10 @@ export class Hud {
       return;
     }
 
+    const fallbackFocusTarget = this.hidden ? document.body : this.settingsButton;
     const focusTarget = this.lastFocusedElement && this.lastFocusedElement.isConnected
       ? this.lastFocusedElement
-      : this.settingsButton;
+      : fallbackFocusTarget;
     this.lastFocusedElement = null;
     window.requestAnimationFrame(() => {
       focusTarget.focus({ preventScroll: true });

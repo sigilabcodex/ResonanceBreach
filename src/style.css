@@ -68,6 +68,7 @@ input {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .hud__panel {
@@ -78,6 +79,7 @@ input {
   background: rgba(5, 11, 16, 0.44);
   backdrop-filter: blur(16px);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.16);
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .hud__panel--title {
@@ -254,6 +256,46 @@ input {
   background: rgba(1, 4, 8, 0.18);
   backdrop-filter: blur(8px);
   pointer-events: auto;
+}
+
+.hud__minimal {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translate(-50%, 12px);
+  padding: 8px 12px;
+  border: 1px solid rgba(168, 205, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(5, 11, 16, 0.34);
+  backdrop-filter: blur(12px);
+  color: rgba(228, 237, 248, 0.74);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.hud.is-hidden .hud__top,
+.hud.is-hidden .hud__bottom {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+.hud.is-hidden .hud__panel {
+  transform: translateY(8px);
+}
+
+.hud.is-hidden .hud__minimal {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud.is-reduced-motion .hud__top,
+.hud.is-reduced-motion .hud__bottom,
+.hud.is-reduced-motion .hud__panel,
+.hud.is-reduced-motion .hud__minimal {
+  transition: none;
 }
 
 .hud__settings-head {
