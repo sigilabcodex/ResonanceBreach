@@ -1,4 +1,4 @@
-import type { EntityType, LifecycleStage, TerrainType, ToolType } from '../config';
+import type { EntityType, HabitatType, LifecycleStage, TerrainType, ToolType } from '../config';
 import type { WorldEvent } from '../sim/events';
 
 export interface Vec2 {
@@ -17,6 +17,12 @@ export interface TerrainCell {
   center: Vec2;
   radius: number;
   terrain: TerrainType;
+  habitat: HabitatType;
+  habitatWeights: {
+    wetland: number;
+    highland: number;
+    basin: number;
+  };
   density: number;
   fertility: number;
   moisture: number;

@@ -209,6 +209,24 @@ export class AudioEngine {
     return { gain, filter, panner, oscillator };
   }
 
+  private summarizeHabitats(snapshot: SimulationSnapshot) {
+    let wetland = 0;
+    let highland = 0;
+    let basin = 0;
+    let total = 0;
+    for (const cell of snapshot.terrain) {
+      const distance = this.distance(cell.center, snapshot.camera.center, snapshot);
+      const weight = 1.2 - clamp(distance / 1400, 0, 1);
+      if (weight <= 0) continue;
+      wetland += cell.habitatWeights.wetland * weight;
+      highland += cell.habitatWeights.highland * weight;
+      basin += cell.habitatWeights.basin * weight;
+      total += weight;
+    }
+    if (total <= 0) return { wetland: 0, highland: 0, basin: 0 };
+    return { wetland: wetland / total, highland: highland / total, basin: basin / total };
+  }
+
   private updateGlobalBed(
     snapshot: SimulationSnapshot,
     harmony: HarmonyState,
@@ -219,16 +237,17 @@ export class AudioEngine {
   ): void {
     if (!this.bedGain || !this.bedLowFilter || !this.bedMidFilter || !this.bedLowOsc || !this.bedMidOsc) return;
 
-    const lowFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.stability, -1);
-    const midFreq = getHarmonyFrequency(harmony, 'bed', snapshot.stats.harmony, 0);
+    const habitat = this.summarizeHabitats(snapshot);
+    const lowFreq = getHarmonyFrequency(harmony, 'bed', clamp(snapshot.stats.stability * 0.76 + habitat.basin * 0.24, 0, 1), -1);
+    const midFreq = getHarmonyFrequency(harmony, habitat.wetland > habitat.highland ? 'water' : 'bed', clamp(snapshot.stats.harmony * 0.74 + habitat.wetland * 0.16 + habitat.basin * 0.1, 0, 1), 0);
     const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
-    const bedLevel = (0.045 + snapshot.stats.stability * 0.03 + (1 - zoomNorm) * 0.018) * ambienceLevel;
+    const bedLevel = (0.042 + snapshot.stats.stability * 0.024 + habitat.basin * 0.012 + habitat.wetland * 0.008 + (1 - zoomNorm) * 0.016) * ambienceLevel;
     const focusDuck = focus.mode === 'entity' ? 1 - focus.intensity * 0.12 : focus.active ? 1 - focus.intensity * 0.18 : 1;
 
-    this.bedLowOsc.frequency.setTargetAtTime(lowFreq, now, 1.8);
-    this.bedMidOsc.frequency.setTargetAtTime(midFreq, now, 1.6);
-    this.bedLowFilter.frequency.setTargetAtTime(220 + snapshot.stats.stability * 160 + (1 - snapshot.stats.threat) * 60, now, 1.1);
-    this.bedMidFilter.frequency.setTargetAtTime(340 + snapshot.stats.harmony * 320 + snapshot.stats.growth * 90, now, 0.9);
+    this.bedLowOsc.frequency.setTargetAtTime(lowFreq * (1 - habitat.highland * 0.08), now, 1.8);
+    this.bedMidOsc.frequency.setTargetAtTime(midFreq * (1 + habitat.wetland * 0.04 - habitat.highland * 0.03), now, 1.6);
+    this.bedLowFilter.frequency.setTargetAtTime(210 + snapshot.stats.stability * 120 + habitat.basin * 90 + habitat.wetland * 70 - habitat.highland * 40 + (1 - snapshot.stats.threat) * 40, now, 1.1);
+    this.bedMidFilter.frequency.setTargetAtTime(320 + snapshot.stats.harmony * 220 + snapshot.stats.growth * 80 + habitat.wetland * 90 - habitat.highland * 70, now, 0.9);
     this.bedGain.gain.setTargetAtTime(bedLevel * focusDuck, now, 0.45);
   }
 

@@ -1,4 +1,4 @@
-import type { TerrainType } from '../../config';
+import type { HabitatType, TerrainType } from '../../config';
 import type { TerrainModifier, WorldFieldSample } from './types';
 import type { Vec2 } from '../../types/world';
 
@@ -118,29 +118,41 @@ export class WorldFieldModel {
     moisture = clamp(moisture + influence.residueInfluence * 0.1, 0, 1);
 
     const step = 18;
-    const elevationDx = this.sampleLayers(x + step, y, time).elevation - this.sampleLayers(x - step, y, time).elevation;
-    const elevationDy = this.sampleLayers(x, y + step, time).elevation - this.sampleLayers(x, y - step, time).elevation;
-    const fertilityDx = this.sampleLayers(x + step, y, time).fertility - this.sampleLayers(x - step, y, time).fertility;
-    const fertilityDy = this.sampleLayers(x, y + step, time).fertility - this.sampleLayers(x, y - step, time).fertility;
-    const moistureDx = this.sampleLayers(x + step, y, time).moisture - this.sampleLayers(x - step, y, time).moisture;
-    const moistureDy = this.sampleLayers(x, y + step, time).moisture - this.sampleLayers(x, y - step, time).moisture;
+    const samplePlusX = this.sampleLayers(x + step, y, time);
+    const sampleMinusX = this.sampleLayers(x - step, y, time);
+    const samplePlusY = this.sampleLayers(x, y + step, time);
+    const sampleMinusY = this.sampleLayers(x, y - step, time);
+
+    const elevationDx = samplePlusX.elevation - sampleMinusX.elevation;
+    const elevationDy = samplePlusY.elevation - sampleMinusY.elevation;
+    const fertilityDx = samplePlusX.fertility - sampleMinusX.fertility;
+    const fertilityDy = samplePlusY.fertility - sampleMinusY.fertility;
+    const moistureDx = samplePlusX.moisture - sampleMinusX.moisture;
+    const moistureDy = samplePlusY.moisture - sampleMinusY.moisture;
 
     const slope = clamp(Math.hypot(elevationDx, elevationDy) * 8.5, 0, 1);
-    const basin = smoothstep(0.72, 0.2, elevation + slope * 0.18 - moisture * 0.16);
-    const ridge = smoothstep(0.58, 0.92, elevation + slope * 0.26 + layers.contour * 0.08);
-    const waterWeight = smoothstep(0.46, 0.86, moisture + basin * 0.38 - ridge * 0.28);
-    const fertileWeight = smoothstep(0.42, 0.88, fertility + moisture * 0.2 + influence.residueInfluence * 0.34 - slope * 0.2 - ridge * 0.24);
+    const basin = smoothstep(0.74, 0.18, elevation + slope * 0.24 - moisture * 0.24 - fertility * 0.1);
+    const ridge = smoothstep(0.56, 0.92, elevation + slope * 0.28 + layers.contour * 0.12 + layers.roughness * 0.08);
+    const wetland = smoothstep(0.48, 0.9, moisture + basin * 0.42 - ridge * 0.36 - slope * 0.12);
+    const fertileBasin = smoothstep(0.4, 0.9, basin * 0.54 + fertility * 0.34 + moisture * 0.18 + influence.residueInfluence * 0.24 - ridge * 0.22);
+    const highland = smoothstep(0.46, 0.94, ridge * 0.62 + elevation * 0.2 + slope * 0.18 + layers.roughness * 0.08);
     const denseWeight = smoothstep(0.46, 0.82, layers.density * 0.62 + layers.roughness * 0.3 + fertility * 0.24 - ridge * 0.18);
 
-    const terrain: TerrainType = ridge > 0.68
+    const habitat: HabitatType = highland >= fertileBasin && highland >= wetland
+      ? 'highland'
+      : wetland >= fertileBasin
+        ? 'wetland'
+        : 'basin';
+
+    const terrain: TerrainType = highland > 0.7
       ? 'solid'
-      : waterWeight > 0.62 && elevation < 0.7
+      : wetland > 0.64 && elevation < 0.76
         ? 'water'
-        : fertileWeight > 0.56
+        : fertileBasin > 0.52
           ? 'fertile'
           : denseWeight > 0.48
             ? 'dense'
-            : moisture > 0.6
+            : moisture > 0.62
               ? 'water'
               : 'fertile';
 
@@ -157,41 +169,52 @@ export class WorldFieldModel {
       y: clamp(moistureDy * 130, -1, 1),
     };
 
-    const directional = { x: Math.cos(layers.flowAngle), y: Math.sin(layers.flowAngle) };
-    const flowStrength = terrain === 'water'
-      ? 18 + waterWeight * 10 + moisture * 8
-      : terrain === 'fertile'
-        ? 8 + fertility * 4
-        : terrain === 'dense'
-          ? 4 + layers.density * 2
-          : 1.4 + slope * 2;
+    const directional = {
+      x: Math.cos(layers.flowAngle) * (wetland > 0.38 ? 0.62 : 1),
+      y: Math.sin(layers.flowAngle) * (wetland > 0.38 ? 0.76 : 1),
+    };
+    const flowStrength = highland > 0.58
+      ? 1.2 + slope * 1.8 + highland * 0.8
+      : terrain === 'water'
+        ? 16 + wetland * 14 + moisture * 8 + basin * 5
+        : fertileBasin > 0.4
+          ? 7 + fertileBasin * 5 + fertility * 4
+          : terrain === 'dense'
+            ? 4 + layers.density * 2
+            : 1.6 + slope * 2;
     const flow = {
-      x: (directional.x * 0.52 + downhill.x * 0.78 + fertilityGradient.x * 0.24 + layers.flowBias * 0.18) * flowStrength,
-      y: (directional.y * 0.52 + downhill.y * 0.78 + fertilityGradient.y * 0.24 - layers.flowBias * 0.18) * flowStrength,
+      x: (directional.x * (wetland > 0.48 ? 0.68 : 0.48) + downhill.x * (highland > 0.4 ? 0.94 : 0.72) + fertilityGradient.x * (fertileBasin > 0.46 ? 0.34 : 0.2) + layers.flowBias * 0.18) * flowStrength,
+      y: (directional.y * (wetland > 0.48 ? 0.72 : 0.48) + downhill.y * (highland > 0.4 ? 0.9 : 0.72) + fertilityGradient.y * (fertileBasin > 0.46 ? 0.34 : 0.2) - layers.flowBias * 0.18) * flowStrength,
     };
 
-    const traversability = clamp(1 - slope * 0.72 - ridge * 0.38 - (terrain === 'water' ? 0.26 : 0) - (terrain === 'dense' ? 0.18 : 0), 0, 1);
-    const nutrient = clamp(influence.residueInfluence * 0.82 + fertility * 0.48 + moisture * 0.12 + (terrain === 'fertile' ? 0.18 : terrain === 'water' ? 0.06 : 0), 0, 1);
-    const density = clamp(0.18 + fertility * 0.2 + moisture * 0.18 + denseWeight * 0.3 - ridge * 0.08, 0, 1);
-    const resonance = clamp(0.24 + moisture * 0.24 + fertility * 0.24 + nutrient * 0.16 - slope * 0.12, 0, 1);
-    const stability = clamp(0.34 + fertility * 0.16 + traversability * 0.26 + nutrient * 0.16 - waterWeight * 0.08, 0, 1);
+    const traversability = clamp(1 - slope * 0.66 - highland * 0.44 - wetland * 0.16 - (terrain === 'dense' ? 0.15 : 0), 0, 1);
+    const nutrient = clamp(influence.residueInfluence * 0.84 + fertility * 0.42 + moisture * 0.12 + fertileBasin * 0.24 + wetland * 0.06 - highland * 0.18, 0, 1);
+    const density = clamp(0.18 + fertility * 0.18 + moisture * 0.12 + denseWeight * 0.28 + highland * 0.08 + fertileBasin * 0.1, 0, 1);
+    const resonance = clamp(0.2 + moisture * 0.22 + fertility * 0.22 + nutrient * 0.14 + wetland * 0.08 + fertileBasin * 0.1 - highland * 0.1, 0, 1);
+    const stability = clamp(0.28 + fertileBasin * 0.22 + traversability * 0.24 + nutrient * 0.16 + highland * 0.08 - wetland * 0.05, 0, 1);
     const hue = clamp(
       terrain === 'water'
-        ? 0.48 + moisture * 0.14
+        ? 0.46 + moisture * 0.12 + wetland * 0.04
         : terrain === 'fertile'
-          ? 0.24 + fertility * 0.14
+          ? 0.22 + fertility * 0.1 + fertileBasin * 0.08
           : terrain === 'dense'
-            ? 0.56 + denseWeight * 0.08
-            : 0.7 + ridge * 0.06,
+            ? 0.54 + denseWeight * 0.08
+            : 0.68 + highland * 0.08,
       0,
       1,
     );
 
     return {
       terrain,
+      habitat,
+      habitatWeights: {
+        wetland,
+        highland,
+        basin: fertileBasin,
+      },
       elevation,
       moisture,
-      fertility: terrain === 'solid' ? fertility * 0.18 : terrain === 'dense' ? fertility * 0.52 : terrain === 'water' ? fertility * 0.72 : clamp(fertility + 0.08, 0, 1),
+      fertility: terrain === 'solid' ? fertility * 0.16 : terrain === 'dense' ? fertility * 0.54 : terrain === 'water' ? fertility * 0.68 + fertileBasin * 0.06 : clamp(fertility + fertileBasin * 0.12, 0, 1),
       slope,
       traversability,
       stability,

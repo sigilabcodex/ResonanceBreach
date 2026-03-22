@@ -22,6 +22,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
   type EntityType,
+  type HabitatType,
   type LifecycleStage,
   type TerrainType,
   type ToolType,
@@ -77,6 +78,9 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
   const t = clamp((value - edge0) / (edge1 - edge0 || 1), 0, 1);
   return t * t * (3 - 2 * t);
 };
+const maxHabitatWeight = (sample: FieldSample) => Math.max(sample.habitatWeights.wetland, sample.habitatWeights.highland, sample.habitatWeights.basin);
+const habitatMatch = (sample: FieldSample, preferred: HabitatType) => sample.habitatWeights[preferred];
+const habitatPenalty = (sample: FieldSample, avoided: HabitatType) => sample.habitatWeights[avoided];
 const fract = (value: number) => value - Math.floor(value);
 const wrap = (value: number, size: number) => ((value % size) + size) % size;
 const wrapDelta = (from: number, to: number, size: number) => {
@@ -189,11 +193,11 @@ export class Simulation {
     this.world.notifications = { recent: [] };
     this.attractors = this.createAttractors();
 
-    for (let i = 0; i < INITIAL_PLANT_COUNT; i += 1) this.entities.push(this.createEntity('plant', this.randomTerrainPoint('fertile')));
-    for (let i = 0; i < INITIAL_FLOCKER_COUNT; i += 1) this.entities.push(this.createEntity('flocker', this.randomTerrainPoint(i % 3 === 0 ? 'water' : 'fertile')));
-    for (let i = 0; i < INITIAL_CLUSTER_COUNT; i += 1) this.entities.push(this.createEntity('cluster', this.randomTerrainPoint('fertile')));
-    for (let i = 0; i < INITIAL_GRAZER_COUNT; i += 1) this.entities.push(this.createEntity('grazer', this.randomTerrainPoint('fertile')));
-    for (let i = 0; i < INITIAL_PREDATOR_COUNT; i += 1) this.entities.push(this.createEntity('predator', this.randomTerrainPoint('water')));
+    for (let i = 0; i < INITIAL_PLANT_COUNT; i += 1) this.entities.push(this.createEntity('plant', this.randomSpawnPointForEntity('plant')));
+    for (let i = 0; i < INITIAL_FLOCKER_COUNT; i += 1) this.entities.push(this.createEntity('flocker', this.randomSpawnPointForEntity('flocker')));
+    for (let i = 0; i < INITIAL_CLUSTER_COUNT; i += 1) this.entities.push(this.createEntity('cluster', this.randomSpawnPointForEntity('cluster')));
+    for (let i = 0; i < INITIAL_GRAZER_COUNT; i += 1) this.entities.push(this.createEntity('grazer', this.randomSpawnPointForEntity('grazer')));
+    for (let i = 0; i < INITIAL_PREDATOR_COUNT; i += 1) this.entities.push(this.createEntity('predator', this.randomSpawnPointForEntity('predator')));
     this.seedInitialNutrients();
     this.rebuildParticleBuckets();
     this.rebuildResidueBuckets();
@@ -506,8 +510,10 @@ export class Simulation {
       samples.push({
         index,
         center,
-        radius: TERRAIN_SAMPLE_RADIUS * (0.54 + radiusNoise * 0.26 + sample.slope * 0.22),
+        radius: TERRAIN_SAMPLE_RADIUS * (0.54 + radiusNoise * 0.22 + sample.slope * 0.18 + sample.habitatWeights.highland * 0.12 - sample.habitatWeights.wetland * 0.04),
         terrain: sample.terrain,
+        habitat: sample.habitat,
+        habitatWeights: { ...sample.habitatWeights },
         density: sample.density,
         fertility: sample.fertility,
         moisture: sample.moisture,
@@ -868,8 +874,11 @@ export class Simulation {
       y: entity.position.y + entity.velocity.y * dt,
     });
 
-    const fertilityScore = sample.fertility * 0.5 + sample.nutrient * 0.46 + sample.moisture * 0.18 + entity.pollination * 0.18;
-    const stress = (1 - sample.traversability) * 0.05 + sample.slope * 0.035 + (sample.terrain === 'solid' ? 0.08 : sample.terrain === 'water' ? 0.012 : 0) + Math.max(0, 0.34 - fertilityScore) * 0.05;
+    const basinBoost = habitatMatch(sample, 'basin');
+    const wetBoost = habitatMatch(sample, 'wetland');
+    const ridgeStress = habitatPenalty(sample, 'highland');
+    const fertilityScore = sample.fertility * 0.42 + sample.nutrient * 0.38 + sample.moisture * 0.12 + entity.pollination * 0.16 + basinBoost * 0.22 + wetBoost * 0.08;
+    const stress = (1 - sample.traversability) * 0.04 + sample.slope * 0.028 + ridgeStress * 0.08 + (sample.terrain === 'solid' ? 0.06 : sample.terrain === 'water' ? 0.016 : 0) + Math.max(0, 0.36 - fertilityScore) * 0.05;
     entity.growth = clamp(entity.growth + dt * (fertilityScore * 0.05 - stress), 0, 1.8);
     entity.energy = clamp(entity.energy + dt * (fertilityScore * 0.08 - stress * 1.25), 0, 1.4);
     entity.food = clamp(entity.food + dt * (sample.nutrient * 0.065 + sample.fertility * 0.04 - stress * 0.8), 0, 1.5);
@@ -971,8 +980,11 @@ export class Simulation {
     const wanderTheta = this.time * (0.03 + entity.activityBias * 0.028) + entity.id * 0.6;
     entity.velocity.x += Math.cos(wanderTheta) * dt * 1.6 * entity.activity;
     entity.velocity.y += Math.sin(wanderTheta * 0.85) * dt * 1.2 * entity.activity;
-    entity.velocity.x += sample.flow.x * dt * (0.06 + entity.activity * 0.07) + sample.fertilityGradient.x * dt * 7.5 - sample.gradient.x * dt * 4.2;
-    entity.velocity.y += sample.flow.y * dt * (0.06 + entity.activity * 0.07) + sample.fertilityGradient.y * dt * 7.5 - sample.gradient.y * dt * 4.2;
+    const wetPull = habitatMatch(sample, 'wetland');
+    const basinPull = habitatMatch(sample, 'basin');
+    const ridgePush = habitatPenalty(sample, 'highland');
+    entity.velocity.x += sample.flow.x * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.x * dt * (5.8 + basinPull * 3.8) - sample.gradient.x * dt * (4.2 + ridgePush * 4.8);
+    entity.velocity.y += sample.flow.y * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.y * dt * (5.8 + basinPull * 3.8) - sample.gradient.y * dt * (4.2 + ridgePush * 4.8);
 
     if (bloomTarget && nearestOffset && nearestDistance < 320) {
       const dist = nearestDistance || 1;
@@ -1015,23 +1027,24 @@ export class Simulation {
       entity.velocity.y += separationY * dt * 7.5;
     }
 
-    if (sample.traversability < 0.28 || sample.terrain === 'solid') {
-      entity.velocity.x -= sample.gradient.x * dt * 12 + sample.flow.x * dt * 0.05;
-      entity.velocity.y -= sample.gradient.y * dt * 12 + sample.flow.y * dt * 0.05;
-      entity.energy -= dt * 0.022;
-      entity.stability = clamp(entity.stability - dt * 0.038, 0, 1.2);
+    if (sample.traversability < 0.28 || sample.terrain === 'solid' || ridgePush > 0.72) {
+      entity.velocity.x -= sample.gradient.x * dt * (10 + ridgePush * 8) + sample.flow.x * dt * 0.04;
+      entity.velocity.y -= sample.gradient.y * dt * (10 + ridgePush * 8) + sample.flow.y * dt * 0.04;
+      entity.energy -= dt * (0.016 + ridgePush * 0.018);
+      entity.stability = clamp(entity.stability - dt * (0.024 + ridgePush * 0.028), 0, 1.2);
     } else if (sample.terrain === 'dense') {
-      entity.velocity.x *= Math.pow(0.92, dt * 60);
-      entity.velocity.y *= Math.pow(0.92, dt * 60);
+      entity.velocity.x *= Math.pow(0.93, dt * 60);
+      entity.velocity.y *= Math.pow(0.93, dt * 60);
       entity.stability = clamp(entity.stability + dt * 0.008, 0, 1.2);
-    } else if (sample.terrain === 'fertile') {
-      entity.energy = clamp(entity.energy + dt * 0.012, 0, 1.5);
-    } else if (sample.terrain === 'water') {
-      entity.velocity.x += sample.moistureGradient.x * dt * 2.4;
-      entity.velocity.y += sample.moistureGradient.y * dt * 2.4;
+    } else if (sample.terrain === 'fertile' || basinPull > 0.42) {
+      entity.energy = clamp(entity.energy + dt * (0.008 + basinPull * 0.012), 0, 1.5);
+    } else if (sample.terrain === 'water' || wetPull > 0.48) {
+      entity.velocity.x += sample.moistureGradient.x * dt * (1.8 + wetPull * 1.2);
+      entity.velocity.y += sample.moistureGradient.y * dt * (1.8 + wetPull * 1.2);
+      entity.stability = clamp(entity.stability + dt * 0.006, 0, 1.2);
     }
 
-    const damping = 0.982;
+    const damping = 0.982 - wetPull * 0.012 - ridgePush * 0.018;
     entity.velocity.x *= Math.pow(damping, dt * 60);
     entity.velocity.y *= Math.pow(damping, dt * 60);
     entity.position = this.wrapPosition({
@@ -1050,8 +1063,11 @@ export class Simulation {
     const nearestFruit = this.findFoodTarget(entity.position, 300, (particle) => particle.kind === 'fruit');
     const bloomTarget = nearestFruit ? undefined : this.findGrazerBloomTarget(entity.position);
 
-    entity.velocity.x += sample.flow.x * dt * 0.028 + sample.fertilityGradient.x * dt * 4.4 - sample.gradient.x * dt * 2.8;
-    entity.velocity.y += sample.flow.y * dt * 0.028 + sample.fertilityGradient.y * dt * 4.4 - sample.gradient.y * dt * 2.8;
+    const basinPull = habitatMatch(sample, 'basin');
+    const wetPenalty = habitatPenalty(sample, 'wetland');
+    const ridgePenalty = habitatPenalty(sample, 'highland');
+    entity.velocity.x += sample.flow.x * dt * 0.024 + sample.fertilityGradient.x * dt * (3.6 + basinPull * 4.2) - sample.gradient.x * dt * (2.6 + ridgePenalty * 3.8);
+    entity.velocity.y += sample.flow.y * dt * 0.024 + sample.fertilityGradient.y * dt * (3.6 + basinPull * 4.2) - sample.gradient.y * dt * (2.6 + ridgePenalty * 3.8);
 
     let separationX = 0;
     let separationY = 0;
@@ -1116,15 +1132,16 @@ export class Simulation {
       entity.velocity.y += separationY * dt * 6.2;
     }
 
-    if (sample.terrain === 'fertile') {
-      entity.stability = clamp(entity.stability + dt * 0.012, 0, 1.2);
-    } else if (sample.terrain === 'solid' || sample.traversability < 0.22) {
-      entity.energy = clamp(entity.energy - dt * 0.024, 0, 1.5);
-      entity.stability = clamp(entity.stability - dt * 0.024, 0, 1.2);
-    } else if (sample.terrain === 'water') {
-      entity.velocity.x += sample.moistureGradient.x * dt * 1.4;
-      entity.velocity.y += sample.moistureGradient.y * dt * 1.4;
-      entity.energy = clamp(entity.energy - dt * 0.018, 0, 1.5);
+    if (sample.terrain === 'fertile' || basinPull > 0.38) {
+      entity.stability = clamp(entity.stability + dt * (0.008 + basinPull * 0.014), 0, 1.2);
+      entity.energy = clamp(entity.energy + dt * basinPull * 0.012, 0, 1.5);
+    } else if (sample.terrain === 'solid' || sample.traversability < 0.22 || ridgePenalty > 0.7) {
+      entity.energy = clamp(entity.energy - dt * (0.016 + ridgePenalty * 0.022), 0, 1.5);
+      entity.stability = clamp(entity.stability - dt * (0.016 + ridgePenalty * 0.024), 0, 1.2);
+    } else if (sample.terrain === 'water' || wetPenalty > 0.44) {
+      entity.velocity.x += sample.moistureGradient.x * dt * 1.1;
+      entity.velocity.y += sample.moistureGradient.y * dt * 1.1;
+      entity.energy = clamp(entity.energy - dt * (0.01 + wetPenalty * 0.016), 0, 1.5);
     }
 
     entity.harmony = clamp(lerp(entity.harmony, 0.24 + sample.resonance * 0.22 + entity.food * 0.16, dt * 0.05), 0, 1.1);
@@ -1147,8 +1164,11 @@ export class Simulation {
     let targetOffset = residue ? this.delta(entity.position, residue.position) : undefined;
     let targetDistance = residue ? Math.hypot(targetOffset!.x, targetOffset!.y) : Infinity;
 
-    entity.velocity.x += sample.flow.x * dt * 0.034 + sample.nutrient * sample.fertilityGradient.x * dt * 5.2 - sample.gradient.x * dt * 2.2;
-    entity.velocity.y += sample.flow.y * dt * 0.034 + sample.nutrient * sample.fertilityGradient.y * dt * 5.2 - sample.gradient.y * dt * 2.2;
+    const wetBias = habitatMatch(sample, 'wetland');
+    const basinBias = habitatMatch(sample, 'basin');
+    const ridgePenalty = habitatPenalty(sample, 'highland');
+    entity.velocity.x += sample.flow.x * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.x * dt * (3.8 + basinBias * 2.2) - sample.gradient.x * dt * (2 + ridgePenalty * 3.2);
+    entity.velocity.y += sample.flow.y * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.y * dt * (3.8 + basinBias * 2.2) - sample.gradient.y * dt * (2 + ridgePenalty * 3.2);
 
     if (residue && targetOffset && targetDistance < 260) {
       const dist = targetDistance || 1;
@@ -1193,11 +1213,11 @@ export class Simulation {
       entity.velocity.y -= (offset.y / dist) * proximity * proximity * dt * 1.8;
     }
 
-    if (sample.terrain === 'dense') {
-      entity.stability = clamp(entity.stability + dt * 0.02, 0, 1.2);
-      entity.energy = clamp(entity.energy + dt * 0.008, 0, 1.4);
-    } else if (sample.terrain === 'solid' || sample.traversability < 0.24) {
-      entity.energy = clamp(entity.energy - dt * 0.014, 0, 1.4);
+    if (sample.terrain === 'dense' || wetBias > 0.34 || basinBias > 0.34) {
+      entity.stability = clamp(entity.stability + dt * (0.01 + wetBias * 0.018 + basinBias * 0.012), 0, 1.2);
+      entity.energy = clamp(entity.energy + dt * (0.004 + wetBias * 0.008 + basinBias * 0.006), 0, 1.4);
+    } else if (sample.terrain === 'solid' || sample.traversability < 0.24 || ridgePenalty > 0.64) {
+      entity.energy = clamp(entity.energy - dt * (0.008 + ridgePenalty * 0.014), 0, 1.4);
     }
 
     entity.harmony = clamp(lerp(entity.harmony, 0.18 + sample.resonance * 0.24 + entity.memory * 0.08, dt * 0.06), 0, 1.1);
@@ -1283,14 +1303,16 @@ export class Simulation {
         && entity.pollination > 0.58
         && entity.food > 0.72
         && entity.energy > 0.74
-        && localSample.fertility > 0.44
-        && localSample.moisture > 0.28
+        && localSample.fertility > 0.42
+        && localSample.moisture > 0.24
+        && habitatMatch(localSample, 'basin') > 0.3
+        && habitatPenalty(localSample, 'highland') < 0.54
         && localSample.slope < 0.62
         && counts.plant + additions.filter((candidate) => candidate.type === 'plant').length < MAX_PLANTS
       ) {
         const birthRate = dt * clamp(0.008 + entity.pollination * 0.018 + localSample.fertility * 0.012 - localDensity * 0.005, 0.002, 0.04);
         if (this.rng.next() <= birthRate) {
-          const position = this.findNearbySpawnPoint(entity.position, 84, (sample) => sample.fertility > 0.46 && sample.moisture > 0.3 && sample.slope < 0.6);
+          const position = this.findNearbySpawnPoint(entity.position, 84, (sample) => sample.fertility > 0.44 && sample.moisture > 0.26 && habitatMatch(sample, 'basin') > 0.34 && habitatPenalty(sample, 'highland') < 0.46 && sample.slope < 0.58);
           additions.push(this.createEntity('plant', position));
           entity.reproductionCooldown = this.rng.range(24, 34);
           entity.pollination *= 0.58;
@@ -1304,11 +1326,12 @@ export class Simulation {
         && entity.energy > 0.72
         && entity.memory > 0.3
         && localSample.traversability > 0.24
+        && habitatPenalty(localSample, 'highland') < 0.72
         && counts.flocker + additions.filter((candidate) => candidate.type === 'flocker').length < MAX_FLOCKERS
       ) {
-        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 + localSample.moisture * 0.01 - localDensity * 0.006, 0.001, 0.03);
+        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 + localSample.moisture * 0.008 + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.006 - localDensity * 0.006, 0.001, 0.03);
         if (this.rng.next() <= birthRate) {
-          const position = this.findNearbySpawnPoint(entity.position, 62, (sample) => sample.moisture > 0.34 && sample.slope < 0.54 && sample.traversability > 0.28);
+          const position = this.findNearbySpawnPoint(entity.position, 62, (sample) => sample.moisture > 0.32 && sample.slope < 0.56 && sample.traversability > 0.24 && habitatPenalty(sample, 'highland') < 0.58);
           additions.push(this.createEntity('flocker', position));
           entity.reproductionCooldown = this.rng.range(20, 30);
           entity.food *= 0.7;
@@ -1321,13 +1344,14 @@ export class Simulation {
         && entity.energy > 0.8
         && entity.memory > 0.28
         && localSample.traversability > 0.22
+        && habitatMatch(localSample, 'basin') > 0.24
         && counts.grazer + additions.filter((candidate) => candidate.type === 'grazer').length < MAX_GRAZERS
       ) {
         const nearbyFruit = this.findFoodTarget(entity.position, 180, (particle) => particle.kind === 'fruit');
-        const birthRate = dt * clamp(0.006 + entity.food * 0.012 + entity.energy * 0.012 + (nearbyFruit ? 0.008 : 0) - localDensity * 0.007, 0.001, 0.024);
+        const birthRate = dt * clamp(0.006 + entity.food * 0.012 + entity.energy * 0.012 + habitatMatch(localSample, 'basin') * 0.01 - habitatPenalty(localSample, 'wetland') * 0.006 + (nearbyFruit ? 0.008 : 0) - localDensity * 0.007, 0.001, 0.024);
         if (this.rng.next() <= birthRate) {
           const origin = nearbyFruit?.position ?? entity.position;
-          const position = this.findNearbySpawnPoint(origin, 54, (terrain) => terrain.traversability > 0.26 && terrain.fertility > 0.34 && terrain.slope < 0.58);
+          const position = this.findNearbySpawnPoint(origin, 54, (terrain) => terrain.traversability > 0.24 && terrain.fertility > 0.34 && habitatMatch(terrain, 'basin') > 0.26 && habitatPenalty(terrain, 'wetland') < 0.5 && habitatPenalty(terrain, 'highland') < 0.54 && terrain.slope < 0.58);
           additions.push(this.createEntity('grazer', position));
           entity.reproductionCooldown = this.rng.range(28, 40);
           entity.food *= 0.62;
@@ -1342,10 +1366,10 @@ export class Simulation {
         && counts.cluster + additions.filter((candidate) => candidate.type === 'cluster').length < MAX_CLUSTERS
       ) {
         const nearbyResidue = this.findResidueTarget(entity.position, 140);
-        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) + (1 - localSample.traversability) * 0.006 - localDensity * 0.006, 0.001, 0.024);
+        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.005 - habitatPenalty(localSample, 'highland') * 0.01 - localDensity * 0.006, 0.001, 0.024);
         if (this.rng.next() <= birthRate) {
           const origin = nearbyResidue?.position ?? entity.position;
-          const position = this.findNearbySpawnPoint(origin, 48, (sample) => sample.nutrient > 0.2 && sample.traversability > 0.12 && sample.slope < 0.7);
+          const position = this.findNearbySpawnPoint(origin, 48, (sample) => sample.nutrient > 0.2 && sample.traversability > 0.1 && habitatPenalty(sample, 'highland') < 0.68 && sample.slope < 0.7);
           additions.push(this.createEntity('cluster', position));
           entity.reproductionCooldown = this.rng.range(22, 34);
           entity.food *= 0.72;
@@ -1493,7 +1517,8 @@ export class Simulation {
       const offset = this.delta(position, candidate.position);
       const dist = Math.hypot(offset.x, offset.y);
       if (dist > 340) return;
-      const score = (1 - dist / 340) * 0.6 + candidate.pollination * -0.28 + candidate.energy * 0.18 + candidate.growth * 0.22 + (candidate.stage === 'mature' ? 0.14 : 0);
+      const sample = this.sampleField(candidate.position.x, candidate.position.y);
+      const score = (1 - dist / 340) * 0.54 + candidate.pollination * -0.24 + candidate.energy * 0.16 + candidate.growth * 0.2 + habitatMatch(sample, 'basin') * 0.16 + habitatMatch(sample, 'wetland') * 0.06 - habitatPenalty(sample, 'highland') * 0.14 + (candidate.stage === 'mature' ? 0.14 : 0);
       if (score > bestScore) {
         best = candidate;
         bestScore = score;
@@ -1509,7 +1534,8 @@ export class Simulation {
       const offset = this.delta(position, residue.position);
       const dist = Math.hypot(offset.x, offset.y);
       if (dist > radius) return;
-      const score = (1 - dist / radius) * 0.62 + residue.richness * 0.52 + residue.nutrient * 0.3;
+      const sample = this.sampleField(residue.position.x, residue.position.y);
+      const score = (1 - dist / radius) * 0.52 + residue.richness * 0.42 + residue.nutrient * 0.24 + habitatMatch(sample, 'wetland') * 0.18 + habitatMatch(sample, 'basin') * 0.12 - habitatPenalty(sample, 'highland') * 0.18;
       if (score > bestScore) {
         best = residue;
         bestScore = score;
@@ -1545,7 +1571,8 @@ export class Simulation {
       const dist = Math.hypot(offset.x, offset.y);
       if (dist > 260) return;
       const edible = candidate.stage === 'mature' ? 0.18 : 0;
-      const score = (1 - dist / 260) * 0.52 + candidate.pollination * 0.24 + candidate.energy * 0.18 + candidate.growth * 0.12 + edible;
+      const sample = this.sampleField(candidate.position.x, candidate.position.y);
+      const score = (1 - dist / 260) * 0.44 + candidate.pollination * 0.22 + candidate.energy * 0.14 + candidate.growth * 0.1 + habitatMatch(sample, 'basin') * 0.18 - habitatPenalty(sample, 'wetland') * 0.12 - habitatPenalty(sample, 'highland') * 0.14 + edible;
       if (score > bestScore && score > 0.34) {
         bestScore = score;
         best = candidate;
@@ -1739,6 +1766,44 @@ export class Simulation {
     );
   }
 
+  private getHabitatSuitability(sample: FieldSample, preferred: HabitatType): number {
+    const primaryMatch = habitatMatch(sample, preferred);
+    const dominantMatch = sample.habitat === preferred ? 0.16 : 0;
+    const mixedness = 1 - maxHabitatWeight(sample);
+    return clamp(primaryMatch * 0.78 + dominantMatch + mixedness * 0.06, 0, 1);
+  }
+
+  private getEntitySpawnSuitability(type: EntityType, sample: FieldSample): number {
+    if (type === 'plant') {
+      return clamp(sample.fertility * 0.34 + sample.nutrient * 0.18 + this.getHabitatSuitability(sample, 'basin') * 0.34 + sample.moisture * 0.08 - habitatPenalty(sample, 'highland') * 0.26, 0, 1);
+    }
+    if (type === 'flocker') {
+      return clamp(sample.resonance * 0.16 + sample.moisture * 0.18 + this.getHabitatSuitability(sample, 'wetland') * 0.22 + this.getHabitatSuitability(sample, 'basin') * 0.14 + sample.traversability * 0.18 - habitatPenalty(sample, 'highland') * 0.08, 0, 1);
+    }
+    if (type === 'cluster') {
+      return clamp(sample.nutrient * 0.3 + sample.moisture * 0.14 + this.getHabitatSuitability(sample, 'wetland') * 0.24 + this.getHabitatSuitability(sample, 'basin') * 0.18 - habitatPenalty(sample, 'highland') * 0.18, 0, 1);
+    }
+    if (type === 'grazer') {
+      return clamp(sample.fertility * 0.22 + sample.traversability * 0.18 + this.getHabitatSuitability(sample, 'basin') * 0.28 - habitatPenalty(sample, 'wetland') * 0.16 - habitatPenalty(sample, 'highland') * 0.18, 0, 1);
+    }
+    return clamp(sample.moisture * 0.28 + sample.traversability * 0.16 + this.getHabitatSuitability(sample, 'wetland') * 0.22 + sample.elevation * 0.1, 0, 1);
+  }
+
+  private randomSpawnPointForEntity(type: EntityType): Vec2 {
+    let bestPoint = this.randomPoint();
+    let bestScore = -Infinity;
+    for (let attempt = 0; attempt < 52; attempt += 1) {
+      const point = this.randomPoint();
+      const score = this.getEntitySpawnSuitability(type, this.sampleField(point.x, point.y));
+      if (score > bestScore) {
+        bestScore = score;
+        bestPoint = point;
+      }
+      if (score > 0.84) return point;
+    }
+    return bestPoint;
+  }
+
   private randomTerrainPoint(preferred: TerrainType): Vec2 {
     let bestPoint = this.randomPoint();
     let bestScore = -Infinity;
@@ -1755,10 +1820,10 @@ export class Simulation {
   }
 
   private getSpawnSuitability(preferred: TerrainType, sample: FieldSample): number {
-    if (preferred === 'water') return clamp(sample.moisture * 0.7 + (1 - sample.elevation) * 0.22 + (1 - sample.slope) * 0.08, 0, 1);
-    if (preferred === 'dense') return clamp(sample.density * 0.45 + (1 - sample.traversability) * 0.35 + sample.slope * 0.2, 0, 1);
-    if (preferred === 'solid') return clamp(sample.elevation * 0.58 + sample.slope * 0.28 + (1 - sample.traversability) * 0.14, 0, 1);
-    return clamp(sample.fertility * 0.48 + sample.moisture * 0.16 + sample.nutrient * 0.24 + (1 - sample.slope) * 0.12, 0, 1);
+    if (preferred === 'water') return clamp(sample.moisture * 0.42 + this.getHabitatSuitability(sample, 'wetland') * 0.4 + (1 - sample.elevation) * 0.12 + (1 - sample.slope) * 0.06, 0, 1);
+    if (preferred === 'dense') return clamp(sample.density * 0.34 + habitatPenalty(sample, 'highland') * 0.2 + this.getHabitatSuitability(sample, 'wetland') * 0.16 + (1 - sample.traversability) * 0.18, 0, 1);
+    if (preferred === 'solid') return clamp(sample.elevation * 0.38 + sample.slope * 0.18 + this.getHabitatSuitability(sample, 'highland') * 0.36 + (1 - sample.traversability) * 0.08, 0, 1);
+    return clamp(sample.fertility * 0.34 + sample.nutrient * 0.22 + this.getHabitatSuitability(sample, 'basin') * 0.28 + sample.moisture * 0.08 + (1 - sample.slope) * 0.08, 0, 1);
   }
 
   private randomPoint(): Vec2 {

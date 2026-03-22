@@ -171,12 +171,12 @@ export class Renderer {
       const palette = terrainColors[sample.terrain];
       const density = this.getTerrainDensity(sample);
       const contourAngle = Math.atan2(sample.gradient.y || sample.flow.y || 0.001, sample.gradient.x || sample.flow.x || 0.001) + Math.PI * 0.5;
-      const lineCount = Math.max(1, Math.round(1 + sample.slope * 3 + sample.density * 2));
-      const spacing = sample.radius * (0.12 + (1 - sample.slope) * 0.16);
-      const halfLength = sample.radius * (0.2 + sample.traversability * 0.2 + density * 0.1);
+      const lineCount = Math.max(1, Math.round(1 + sample.slope * 2 + sample.density * 1.4 + sample.habitatWeights.highland * 3 + sample.habitatWeights.basin * 1.2));
+      const spacing = sample.radius * (0.16 - sample.habitatWeights.highland * 0.07 + sample.habitatWeights.wetland * 0.04 + (1 - sample.slope) * 0.08);
+      const halfLength = sample.radius * (0.18 + sample.traversability * 0.16 + density * 0.08 + sample.habitatWeights.wetland * 0.1);
 
-      ctx.strokeStyle = hsla(palette.hue + sample.hue * 6, palette.sat, palette.light + sample.nutrient * 8, 0.045 + density * 0.05 + sample.slope * 0.05);
-      ctx.lineWidth = 0.55 + sample.slope * 0.38 + (sample.terrain === 'solid' ? 0.18 : 0);
+      ctx.strokeStyle = hsla(palette.hue + sample.hue * 7, palette.sat, palette.light + sample.nutrient * 8 - sample.habitatWeights.highland * 3, 0.036 + density * 0.04 + sample.slope * 0.04 + sample.habitatWeights.highland * 0.03 + sample.habitatWeights.wetland * 0.012);
+      ctx.lineWidth = 0.5 + sample.slope * 0.26 + sample.habitatWeights.highland * 0.4 + sample.habitatWeights.wetland * 0.08;
 
       for (let band = 0; band < lineCount; band += 1) {
         const offsetAmount = (band - (lineCount - 1) * 0.5) * spacing;
@@ -201,14 +201,14 @@ export class Renderer {
       if (!this.isVisible(center, sample.radius * this.view.scale + 48)) continue;
       const accent = terrainColors[sample.terrain].accent;
       const alpha = sample.terrain === 'water'
-        ? 0.065 + sample.resonance * 0.03
+        ? 0.058 + sample.resonance * 0.024 + sample.habitatWeights.wetland * 0.02
         : sample.terrain === 'fertile'
-          ? 0.028 + sample.nutrient * 0.022
-          : 0.014 + sample.density * 0.014;
+          ? 0.024 + sample.nutrient * 0.02 + sample.habitatWeights.basin * 0.012
+          : 0.012 + sample.density * 0.012;
       ctx.strokeStyle = rgba(accent, alpha);
-      ctx.lineWidth = 0.42 + (sample.terrain === 'water' ? 0.2 : 0) + sample.moisture * 0.12;
+      ctx.lineWidth = 0.38 + sample.habitatWeights.wetland * 0.22 + sample.moisture * 0.08;
 
-      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 2 + (sample.terrain === 'water' ? 1 : 0)));
+      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 1.6 + sample.habitatWeights.wetland * 2 + sample.habitatWeights.basin * 0.8));
       for (let stream = 0; stream < streamCount; stream += 1) {
         this.traceFlowLine(center, sample, time * motion, stream);
         ctx.stroke();
@@ -225,15 +225,16 @@ export class Renderer {
 
   private traceContourStroke(center: Vec2, sample: TerrainCell, contourAngle: number, time: number, offsetAmount: number, halfLength: number, band: number): void {
     const { ctx } = this;
-    const alongAngle = contourAngle;
+    const alongAngle = contourAngle + sample.habitatWeights.wetland * 0.18 - sample.habitatWeights.highland * 0.06;
     const normalAngle = contourAngle + Math.PI * 0.5;
-    const curvature = (sample.flowTendency.x * Math.cos(normalAngle) + sample.flowTendency.y * Math.sin(normalAngle)) * sample.radius * 0.12;
+    const curvature = (sample.flowTendency.x * Math.cos(normalAngle) + sample.flowTendency.y * Math.sin(normalAngle)) * sample.radius * (0.06 + sample.habitatWeights.basin * 0.08 + sample.habitatWeights.wetland * 0.12);
+    const wobbleStrength = sample.habitatWeights.highland * 0.008 + sample.habitatWeights.basin * 0.012 + sample.habitatWeights.wetland * 0.01;
     ctx.beginPath();
     for (let step = 0; step <= 12; step += 1) {
       const t = step / 12;
       const along = (t - 0.5) * halfLength * 2;
-      const wobble = Math.sin(time * 0.8 + sample.index * 0.23 + band * 0.6 + t * Math.PI * 2) * sample.radius * 0.016;
-      const bend = Math.sin(t * Math.PI + sample.roughness * 4.8 + band) * curvature;
+      const wobble = Math.sin(time * (0.55 + sample.habitatWeights.wetland * 0.22) + sample.index * 0.23 + band * 0.6 + t * Math.PI * 2) * sample.radius * wobbleStrength;
+      const bend = Math.sin(t * Math.PI + sample.roughness * (4.2 + sample.habitatWeights.highland * 2.2) + band) * curvature;
       const x = center.x + Math.cos(alongAngle) * along + Math.cos(normalAngle) * (offsetAmount + bend + wobble);
       const y = center.y + Math.sin(alongAngle) * along + Math.sin(normalAngle) * (offsetAmount + bend + wobble);
       if (step === 0) ctx.moveTo(x, y);
@@ -243,16 +244,16 @@ export class Renderer {
 
   private traceFlowLine(center: Vec2, sample: TerrainCell, time: number, stream: number): void {
     const { ctx } = this;
-    const flowAngle = Math.atan2(sample.flow.y || sample.flowTendency.y || 0.001, sample.flow.x || sample.flowTendency.x || 0.001);
+    const flowAngle = Math.atan2(sample.flow.y || sample.flowTendency.y || 0.001, sample.flow.x || sample.flowTendency.x || 0.001) + sample.habitatWeights.wetland * 0.08;
     const normalAngle = flowAngle + Math.PI * 0.5;
-    const span = sample.radius * (0.34 + sample.moisture * 0.22 + (sample.terrain === 'water' ? 0.22 : 0));
-    const offset = sample.radius * ((stream - 1) * 0.14 + (sample.density - 0.5) * 0.06);
+    const span = sample.radius * (0.28 + sample.moisture * 0.18 + sample.habitatWeights.wetland * 0.26 + sample.habitatWeights.basin * 0.08);
+    const offset = sample.radius * ((stream - 1) * 0.12 + (sample.density - 0.5) * 0.04);
     ctx.beginPath();
     for (let step = 0; step <= 16; step += 1) {
       const t = step / 16;
       const along = (t - 0.5) * span * 2;
-      const drift = Math.sin(time * 0.9 + sample.index * 0.13 + stream * 0.8 + t * Math.PI * 2) * sample.radius * 0.026;
-      const turbulence = (sample.gradient.x * Math.cos(normalAngle) + sample.gradient.y * Math.sin(normalAngle)) * sample.radius * 0.08 * Math.sin(t * Math.PI);
+      const drift = Math.sin(time * (0.72 + sample.habitatWeights.wetland * 0.28) + sample.index * 0.13 + stream * 0.8 + t * Math.PI * 2) * sample.radius * (0.012 + sample.habitatWeights.wetland * 0.022);
+      const turbulence = (sample.gradient.x * Math.cos(normalAngle) + sample.gradient.y * Math.sin(normalAngle)) * sample.radius * (0.03 + sample.habitatWeights.highland * 0.07) * Math.sin(t * Math.PI);
       const x = center.x + Math.cos(flowAngle) * along + Math.cos(normalAngle) * (offset + drift + turbulence);
       const y = center.y + Math.sin(flowAngle) * along + Math.sin(normalAngle) * (offset + drift + turbulence);
       if (step === 0) ctx.moveTo(x, y);

@@ -1,8 +1,16 @@
-import type { TerrainType } from '../../config';
+import type { HabitatType, TerrainType } from '../../config';
 import type { Vec2 } from '../../types/world';
+
+export interface HabitatWeights {
+  wetland: number;
+  highland: number;
+  basin: number;
+}
 
 export interface FieldSample {
   terrain: TerrainType;
+  habitat: HabitatType;
+  habitatWeights: HabitatWeights;
   fertility: number;
   stability: number;
   density: number;
