@@ -69,5 +69,8 @@ export type EntityType = (typeof ENTITY_TYPES)[number];
 export const TERRAIN_TYPES = ['water', 'fertile', 'dense', 'solid'] as const;
 export type TerrainType = (typeof TERRAIN_TYPES)[number];
 
+export const HABITAT_TYPES = ['wetland', 'highland', 'basin'] as const;
+export type HabitatType = (typeof HABITAT_TYPES)[number];
+
 export const LIFECYCLE_STAGES = ['birth', 'growth', 'mature', 'decay'] as const;
 export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
