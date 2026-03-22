@@ -124,6 +124,7 @@ export class Simulation {
   private fieldSampleCache = new Map<string, FieldSample>();
   private diagnostics: SimulationDiagnostics = createDefaultDiagnostics();
   private attentionRefreshTimer = 0;
+  private attentionPressEntityId: number | null = null;
 
   private get entities(): Entity[] { return this.world.entities; }
   private set entities(value: Entity[]) { this.world.entities = value; }
@@ -203,6 +204,7 @@ export class Simulation {
     this.fieldSampleCache.clear();
     this.diagnostics = createDefaultDiagnostics();
     this.attentionRefreshTimer = 0;
+    this.attentionPressEntityId = null;
     this.time = 0;
     this.timeScale = 1;
     this.unlockedProgress = 0;
@@ -395,6 +397,7 @@ export class Simulation {
     this.attention.dragging = true;
     this.attention.dragStart = { ...position };
     this.attention.dragCurrent = { ...position };
+    this.attentionPressEntityId = this.findEntityAt(position, 1.18)?.id ?? null;
   }
 
   private updateAttentionDrag(position: Vec2): void {
@@ -423,11 +426,13 @@ export class Simulation {
       const radius = clamp(distance * 0.5, 84, TOOL_RADIUS.observe * 1.8);
       this.setRegionAttention(center, radius);
     } else {
-      const entity = this.findEntityAt(position);
+      const entity = this.findEntityAt(position)
+        ?? (this.attentionPressEntityId !== null ? this.findEntityByIdNear(this.attentionPressEntityId, start, 104) : undefined);
       if (entity) this.setEntityAttention(entity);
       else this.clearAttention();
     }
 
+    this.attentionPressEntityId = null;
     this.attention.dragStart = null;
     this.attention.dragCurrent = null;
   }
@@ -435,6 +440,7 @@ export class Simulation {
   private cancelAttentionDrag(): void {
     this.attentionDragging = false;
     this.attention.dragging = false;
+    this.attentionPressEntityId = null;
     this.attention.dragStart = null;
     this.attention.dragCurrent = null;
   }
@@ -466,6 +472,13 @@ export class Simulation {
     this.attention.relatedEntityIds = [];
   }
 
+  private findEntityByIdNear(id: number, position: Vec2, slackRadius: number): Entity | undefined {
+    const entity = this.entityById.get(id);
+    if (!entity) return undefined;
+    const offset = this.delta(position, entity.position);
+    return Math.hypot(offset.x, offset.y) <= slackRadius ? entity : undefined;
+  }
+
   private getRelatedEntityIds(entity: Entity): number[] {
     this.diagnostics.queryCounts.focusSelections += 1;
     return this.entities
@@ -481,17 +494,22 @@ export class Simulation {
       .map((candidate) => candidate.id);
   }
 
-  private findEntityAt(position: Vec2): Entity | undefined {
+  private findEntityAt(position: Vec2, radiusBias = 1): Entity | undefined {
     let best: Entity | undefined;
     let bestScore = Infinity;
-    const pickRadius = clamp(28 / Math.max(this.camera.zoom, 0.3), 20, 78);
+    const pickRadius = clamp((28 / Math.max(this.camera.zoom, 0.3)) * radiusBias, 20, 92);
 
     for (const entity of this.entities) {
       const offset = this.delta(position, entity.position);
       const distance = Math.hypot(offset.x, offset.y);
-      const threshold = pickRadius + entity.size * (entity.type === 'plant' ? 1.9 : 1.4);
+      const threshold = pickRadius + entity.size * (entity.type === 'plant' ? 2.2 : entity.type === 'cluster' ? 1.8 : 1.55);
       if (distance > threshold) continue;
-      const score = distance - entity.activity * 3 - entity.visualPulse * 3;
+      const normalizedDistance = distance / Math.max(18, threshold);
+      const score = normalizedDistance * 42
+        - entity.activity * 4
+        - entity.visualPulse * 5
+        - entity.energy * 2
+        - (this.attention.entityId === entity.id ? 3.5 : 0);
       if (score < bestScore) {
         best = entity;
         bestScore = score;

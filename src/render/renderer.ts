@@ -751,29 +751,35 @@ export class Renderer {
   private drawAttentionEntityMarker(position: Vec2, radius: number, alpha: number, primary: boolean): void {
     const { ctx } = this;
     ctx.save();
-    const glow = ctx.createRadialGradient(position.x, position.y, radius * 0.25, position.x, position.y, radius * 1.8);
-    glow.addColorStop(0, `rgba(212, 238, 248, ${alpha * 0.22})`);
-    glow.addColorStop(0.72, `rgba(182, 220, 242, ${alpha * 0.12})`);
+    const glow = ctx.createRadialGradient(position.x, position.y, radius * 0.2, position.x, position.y, radius * 1.95);
+    glow.addColorStop(0, `rgba(212, 238, 248, ${alpha * 0.18})`);
+    glow.addColorStop(0.64, `rgba(182, 220, 242, ${alpha * 0.1})`);
     glow.addColorStop(1, 'rgba(182, 220, 242, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(position.x, position.y, radius * 1.8, 0, Math.PI * 2);
+    ctx.arc(position.x, position.y, radius * 1.95, 0, Math.PI * 2);
     ctx.fill();
     this.drawCallEstimate += 1;
 
-    ctx.strokeStyle = `rgba(212, 236, 248, ${alpha})`;
-    ctx.lineWidth = primary ? 1.45 : 1;
+    ctx.strokeStyle = `rgba(212, 236, 248, ${alpha * (primary ? 0.88 : 0.8)})`;
+    ctx.lineWidth = primary ? 1.3 : 0.9;
     ctx.beginPath();
     ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
     ctx.stroke();
     this.drawCallEstimate += 1;
 
     if (primary) {
-      ctx.strokeStyle = `rgba(236, 248, 255, ${alpha * 0.92})`;
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(236, 248, 255, ${alpha * 0.72})`;
+      ctx.lineWidth = 0.95;
       ctx.beginPath();
-      ctx.arc(position.x, position.y, radius * 1.32, Math.PI * 0.18, Math.PI * 1.82);
+      ctx.arc(position.x, position.y, radius * 1.28, Math.PI * 0.16, Math.PI * 1.84);
       ctx.stroke();
+      this.drawCallEstimate += 1;
+
+      ctx.fillStyle = `rgba(230, 244, 252, ${alpha * 0.18})`;
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, Math.max(1.2, radius * 0.12), 0, Math.PI * 2);
+      ctx.fill();
       this.drawCallEstimate += 1;
     }
     ctx.restore();
@@ -797,11 +803,11 @@ export class Renderer {
     const radius = fixedRadius ?? Math.hypot(wrapDelta(anchor.x, current!.x, WORLD_WIDTH), wrapDelta(anchor.y, current!.y, WORLD_HEIGHT)) * 0.5;
     const wrapped = this.wrappedPoint(center, camera);
     if (!this.isVisible(wrapped, radius * this.view.scale + 20)) return;
-    const motionAlpha = settings.visuals.reduceMotion ? 0.16 : 0.22;
+    const motionAlpha = settings.visuals.reduceMotion ? 0.14 : 0.2;
 
     const gradient = ctx.createRadialGradient(wrapped.x, wrapped.y, radius * 0.2, wrapped.x, wrapped.y, radius * 1.02);
-    gradient.addColorStop(0, preview ? 'rgba(214, 236, 246, 0.035)' : `rgba(214, 236, 246, ${motionAlpha * 0.24})`);
-    gradient.addColorStop(0.78, preview ? 'rgba(214, 236, 246, 0.01)' : `rgba(214, 236, 246, ${motionAlpha * 0.08})`);
+    gradient.addColorStop(0, preview ? 'rgba(214, 236, 246, 0.03)' : `rgba(214, 236, 246, ${motionAlpha * 0.22})`);
+    gradient.addColorStop(0.7, preview ? 'rgba(214, 236, 246, 0.014)' : `rgba(214, 236, 246, ${motionAlpha * 0.1})`);
     gradient.addColorStop(1, 'rgba(214, 236, 246, 0)');
 
     ctx.save();
@@ -810,14 +816,27 @@ export class Renderer {
     ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
     ctx.fill();
     this.drawCallEstimate += 1;
-    ctx.strokeStyle = preview ? 'rgba(214, 236, 246, 0.32)' : 'rgba(214, 236, 246, 0.24)';
-    ctx.lineWidth = preview ? 1.1 : 1.25;
+    ctx.strokeStyle = preview ? 'rgba(214, 236, 246, 0.28)' : 'rgba(214, 236, 246, 0.22)';
+    ctx.lineWidth = preview ? 1 : 1.15;
     if (preview) ctx.setLineDash([12, 12]);
     ctx.beginPath();
     ctx.arc(wrapped.x, wrapped.y, radius, 0, Math.PI * 2);
     ctx.stroke();
     this.drawCallEstimate += 1;
     ctx.setLineDash([]);
+
+    ctx.strokeStyle = preview ? 'rgba(236, 246, 252, 0.12)' : 'rgba(236, 246, 252, 0.14)';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.arc(wrapped.x, wrapped.y, radius * 0.82, Math.PI * 0.14, Math.PI * 1.86);
+    ctx.stroke();
+    this.drawCallEstimate += 1;
+
+    ctx.fillStyle = preview ? 'rgba(226, 240, 248, 0.16)' : 'rgba(226, 240, 248, 0.18)';
+    ctx.beginPath();
+    ctx.arc(wrapped.x, wrapped.y, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    this.drawCallEstimate += 1;
     ctx.restore();
   }
 

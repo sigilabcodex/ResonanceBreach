@@ -107,14 +107,14 @@ export const scoreEntities = (
     let attentionBonus = 0;
     if (focus.mode === 'entity') {
       attentionBonus = isPrimary
-        ? 1.08
+        ? 1.2 + focus.intensity * 0.16
         : isRelated
-          ? 0.18 + attentionCloseness * 0.34 + focus.intensity * 0.12
-          : -0.06 + attentionCloseness * 0.08;
+          ? 0.24 + attentionCloseness * 0.4 + focus.intensity * 0.14
+          : -0.14 + attentionCloseness * 0.05;
     } else if (focus.mode === 'region') {
       attentionBonus = insideAttention
-        ? 0.32 + attentionCloseness * 0.34 + focus.intensity * 0.08
-        : -0.12 - focus.intensity * 0.08;
+        ? 0.44 + attentionCloseness * 0.4 + focus.intensity * 0.12
+        : -0.18 - focus.intensity * 0.14;
     }
 
     const score = clamp(
@@ -135,7 +135,7 @@ export const scoreEntities = (
       cameraCloseness * 0.76
         + zoomDetail * 0.58
         + attentionCloseness * (focus.mode === 'entity' ? 0.82 : 0.56)
-        + (isPrimary ? 0.42 : isRelated ? 0.14 : 0),
+        + (isPrimary ? 0.58 : isRelated ? 0.18 : 0),
       0,
       2,
     );
@@ -164,9 +164,19 @@ export const buildZoneSummaries = (
   const foregroundIds = new Set(foreground.map((entry) => entry.entity.id));
   const buckets = new Map<string, ZoneSummary>();
   const bucketSize = 260;
+  const regionFocusActive = snapshot.attention.mode === 'region' && snapshot.attention.radius > 0;
+  const regionCenter = snapshot.attention.position;
+  const regionRadius = snapshot.attention.radius;
 
   for (const entry of scored) {
     if (foregroundIds.has(entry.entity.id)) continue;
+    const regionDistance = regionFocusActive
+      ? wrappedDistance(entry.entity.position, regionCenter, snapshot.dimensions.width, snapshot.dimensions.height)
+      : Infinity;
+    const regionWeight = regionFocusActive
+      ? clamp(1.2 - regionDistance / Math.max(regionRadius * 1.1, 1), 0.18, 1.36)
+      : 1;
+    if (regionFocusActive && regionDistance > regionRadius * 1.3 && entry.score < 0.62) continue;
     const bucketX = Math.floor(entry.entity.position.x / bucketSize);
     const bucketY = Math.floor(entry.entity.position.y / bucketSize);
     const kind = zoneKindForEntity(entry.entity);
@@ -187,8 +197,8 @@ export const buildZoneSummaries = (
     existing.position.x += entry.entity.position.x;
     existing.position.y += entry.entity.position.y;
     existing.activity += entry.entity.activity;
-    existing.density += entry.score * (1.08 - clamp(entry.detail * 0.52, 0, 0.6));
-    existing.detail += entry.detail;
+    existing.density += entry.score * (1.08 - clamp(entry.detail * 0.52, 0, 0.6)) * regionWeight;
+    existing.detail += entry.detail * (0.82 + regionWeight * 0.28);
     existing.tone += entry.entity.tone;
     existing.resonance += entry.entity.resonance;
     buckets.set(key, existing);
@@ -207,7 +217,12 @@ export const buildZoneSummaries = (
     }))
     .sort((a, b) => b.density - a.density);
 
-  const waterZone = buildWaterSummary(snapshot.terrain, snapshot.camera.center, snapshot.dimensions.width, snapshot.dimensions.height);
+  const waterZone = buildWaterSummary(
+    snapshot.terrain,
+    regionFocusActive ? regionCenter : snapshot.camera.center,
+    snapshot.dimensions.width,
+    snapshot.dimensions.height,
+  );
   return waterZone ? [waterZone, ...zones].slice(0, 3) : zones.slice(0, 3);
 };
 
