@@ -1,5 +1,5 @@
 import { ENERGY_MAX, ENERGY_START, TOOL_RADIUS, WORLD_HEIGHT, WORLD_WIDTH } from '../config';
-import type { AttentionState, CameraState, GardenStats, ToolState, WorldState } from '../types/world';
+import type { AttentionState, CameraState, GardenStats, SimulationDiagnostics, ToolState, WorldState } from '../types/world';
 
 export const createDefaultCamera = (): CameraState => ({
   center: { x: WORLD_WIDTH * 0.5, y: WORLD_HEIGHT * 0.5 },
@@ -43,6 +43,44 @@ export const createDefaultStats = (): GardenStats => ({
   fruit: 0.18,
 });
 
+export const createDefaultDiagnostics = (): SimulationDiagnostics => ({
+  speciesUpdateTimeMs: {
+    flocker: 0,
+    cluster: 0,
+    plant: 0,
+    grazer: 0,
+    predator: 0,
+  },
+  queryCounts: {
+    neighbors: 0,
+    foodSearches: 0,
+    bloomSearches: 0,
+    grazerBloomSearches: 0,
+    residueSearches: 0,
+    terrainSamples: 0,
+    residueInfluenceSamples: 0,
+    terrainModifierChecks: 0,
+    attentionRefreshes: 0,
+    focusSelections: 0,
+    targetReuses: 0,
+    targetRetargets: 0,
+  },
+  counts: {
+    entities: 0,
+    fruit: 0,
+    feed: 0,
+    residues: 0,
+    particles: 0,
+    terrainModifiers: 0,
+    focusedEntities: 0,
+  },
+  timingsMs: {
+    attention: 0,
+    spawning: 0,
+  },
+  topHotspots: [],
+});
+
 export const createWorldState = (): WorldState => ({
   dimensions: {
     width: WORLD_WIDTH,
@@ -66,4 +104,5 @@ export const createWorldState = (): WorldState => ({
   energy: ENERGY_START,
   events: [],
   notifications: { recent: [] },
+  diagnostics: createDefaultDiagnostics(),
 });
