@@ -270,8 +270,8 @@ export class AudioEngine {
 
       const inFocus = focus.active && this.distance(zone.position, focus.center, snapshot) <= focus.radius;
       const focusBoost = focus.mode === 'entity'
-        ? inFocus ? 0.18 + focus.intensity * 0.28 : -0.05
-        : inFocus ? 0.34 + focus.intensity * 0.42 : focus.active ? -0.16 - focus.intensity * 0.18 : 0;
+        ? inFocus ? 0.2 + focus.intensity * 0.32 : -0.08
+        : inFocus ? 0.46 + focus.intensity * 0.52 : focus.active ? -0.22 - focus.intensity * 0.22 : 0;
       const densitySuppression = clamp((1 - zoomNorm) * 0.42 + (1 - zone.detail) * 0.28, 0.26, 0.86);
       const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
       const gain = clamp(0.014 + zone.density * 0.016 + zone.count * 0.0011, 0.009, 0.068) * densitySuppression * (1 + focusBoost) * ambienceLevel;
@@ -312,15 +312,15 @@ export class AudioEngine {
       const detailLift = clamp(candidate.detail, 0, 1.4);
       const focusLift = focus.mode === 'entity'
         ? candidate.isPrimary
-          ? 1.02 + focus.intensity * 0.54
+          ? 1.14 + focus.intensity * 0.62
           : candidate.isRelated
-            ? 0.26 + focus.intensity * 0.18
+            ? 0.32 + focus.intensity * 0.22
             : candidate.insideAttention
               ? 0.1
-              : -0.06
+              : -0.1
         : candidate.insideAttention
-          ? 0.36 + focus.intensity * 0.34
-          : focus.active ? -0.16 - focus.intensity * 0.18 : 0;
+          ? 0.46 + focus.intensity * 0.4
+          : focus.active ? -0.2 - focus.intensity * 0.22 : 0;
       const entityLevel = this.mapVolume(settings.audio.entityVolume);
       const gain = clamp(0.016 + candidate.score * 0.026 + detailLift * 0.011, 0.014, 0.11) * (0.78 + zoomNorm * 0.34 + focusLift) * entityLevel;
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);

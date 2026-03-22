@@ -2,7 +2,7 @@ import type { AudioDebugState } from '../audio/audioEngine';
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
 import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
-import type { PerformanceStats, SimulationSnapshot } from '../types/world';
+import type { Entity, PerformanceStats, SimulationSnapshot, TerrainCell, Vec2 } from '../types/world';
 
 const timeLabels: Record<string, string> = {
   '0.5': 'Slow 0.5×',
@@ -11,6 +11,50 @@ const timeLabels: Record<string, string> = {
 };
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const wrapDelta = (from: number, to: number, size: number) => {
+  let delta = to - from;
+  if (delta > size * 0.5) delta -= size;
+  else if (delta < -size * 0.5) delta += size;
+  return delta;
+};
+const wrappedDistance = (a: Vec2, b: Vec2, width: number, height: number) => Math.hypot(
+  wrapDelta(a.x, b.x, width),
+  wrapDelta(a.y, b.y, height),
+);
+const entityLabels: Record<Entity['type'], string> = {
+  flocker: 'Pollinator drifter',
+  cluster: 'Decomposer cluster',
+  plant: 'Rooted bloom',
+  grazer: 'Grazer',
+  predator: 'Predator',
+};
+
+const describeEntityState = (entity: Entity): string => {
+  if (entity.visualState === 'dying') return entity.type === 'cluster' ? 'decomposing' : 'decaying';
+  if (entity.visualState === 'reproducing') return entity.type === 'plant' ? 'blooming' : 'reproducing';
+  if (entity.visualState === 'feeding') {
+    if (entity.type === 'plant') return 'blooming';
+    if (entity.type === 'cluster') return 'decomposing';
+    return 'feeding';
+  }
+  if (entity.type === 'grazer') {
+    if (entity.targetKind === 'fruit' || entity.targetKind === 'feed') return 'seeking fruit';
+    if (entity.targetKind === 'bloom') return 'grazing bloom patch';
+    return entity.activity > 0.3 ? 'foraging' : 'drifting';
+  }
+  if (entity.type === 'flocker') {
+    if (entity.targetKind === 'bloom') return 'seeking bloom';
+    if (entity.targetKind === 'fruit' || entity.targetKind === 'feed') return 'seeking fruit';
+    return entity.activity > 0.28 ? 'drifting' : 'hovering';
+  }
+  if (entity.type === 'cluster') {
+    if (entity.targetKind === 'residue') return 'seeking residue';
+    return entity.activity > 0.24 ? 'working the soil' : 'resting';
+  }
+  if (entity.type === 'plant') return entity.stage === 'decay' ? 'decaying' : entity.stage === 'mature' ? 'blooming' : 'maturing';
+  return entity.activity > 0.35 ? 'hunting' : 'circling';
+};
 
 type PanelKey = 'left' | 'right' | 'debug';
 type PanelState = Record<PanelKey, boolean>;
@@ -29,6 +73,10 @@ export class Hud {
   private readonly settingsDialog: HTMLDivElement;
   private readonly settingsCloseButton: HTMLButtonElement;
   private readonly minimalHintValue: HTMLSpanElement;
+  private readonly inspectModule: HTMLElement;
+  private readonly inspectEyebrow: HTMLParagraphElement;
+  private readonly inspectTitle: HTMLHeadingElement;
+  private readonly inspectBody: HTMLDivElement;
   private readonly harmonyValue: HTMLSpanElement;
   private readonly growthValue: HTMLSpanElement;
   private readonly threatValue: HTMLSpanElement;
@@ -142,6 +190,17 @@ export class Hud {
           </div>
         </section>
       </aside>
+      <aside class="hud__module hud__module--inspect" data-inspect-card hidden>
+        <section class="hud__panel hud__panel--inspect">
+          <header class="hud__panel-head hud__panel-head--compact">
+            <div>
+              <p class="hud__eyebrow" data-inspect-eyebrow>Inspection</p>
+              <h2 data-inspect-title>Nothing selected</h2>
+            </div>
+          </header>
+          <div class="hud__panel-body hud__panel-body--inspect" data-inspect-body></div>
+        </section>
+      </aside>
       <div class="hud__settings" data-settings-panel hidden>
         <div class="hud__panel hud__panel--settings" data-settings-dialog role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
           <div class="hud__settings-head">
@@ -175,6 +234,10 @@ export class Hud {
     this.settingsDialog = this.element.querySelector('[data-settings-dialog]') as HTMLDivElement;
     this.settingsCloseButton = this.element.querySelector('[data-settings-close]') as HTMLButtonElement;
     this.minimalHintValue = this.element.querySelector('[data-minimal-hint]') as HTMLSpanElement;
+    this.inspectModule = this.element.querySelector('[data-inspect-card]') as HTMLElement;
+    this.inspectEyebrow = this.element.querySelector('[data-inspect-eyebrow]') as HTMLParagraphElement;
+    this.inspectTitle = this.element.querySelector('[data-inspect-title]') as HTMLHeadingElement;
+    this.inspectBody = this.element.querySelector('[data-inspect-body]') as HTMLDivElement;
     this.energyValue = this.element.querySelector('[data-energy]') as HTMLSpanElement;
     this.harmonyValue = this.element.querySelector('[data-harmony]') as HTMLSpanElement;
     this.stabilityValue = this.element.querySelector('[data-stability]') as HTMLSpanElement;
@@ -286,6 +349,13 @@ export class Hud {
 
     if (latestNotification) {
       this.hintValue.textContent = latestNotification;
+    } else if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
+      const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);
+      this.hintValue.textContent = entity
+        ? `Following ${entityLabels[entity.type].toLowerCase()} · ${describeEntityState(entity)} · click empty space to clear.`
+        : 'Attention lost; click an entity to follow it again or drag a region to listen broadly.';
+    } else if (snapshot.attention.mode === 'region') {
+      this.hintValue.textContent = 'Listening region active: drag to redraw the patch, or click empty space to return to a wider field listen.';
     } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
     } else if (snapshot.tool.active === 'observe') {
@@ -305,9 +375,14 @@ export class Hud {
     }
 
     this.minimalHintValue.textContent = this.settings.visuals.minimalHud
-      ? `Minimal HUD · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores full HUD · O opens settings`
+      ? snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null
+        ? 'Minimal HUD · following selection · H restores full HUD · O opens settings'
+        : snapshot.attention.mode === 'region'
+          ? 'Minimal HUD · listening region active · H restores full HUD · O opens settings'
+          : `Minimal HUD · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores full HUD · O opens settings`
       : 'Minimal HUD · H restores the full interface · O opens settings';
 
+    this.renderInspectionCard(snapshot);
     this.renderDebugOverlay(snapshot, audioDebug, performanceStats);
   }
 
@@ -536,6 +611,134 @@ export class Hud {
       minimalButton.setAttribute('aria-pressed', String(this.settings.visuals.minimalHud));
       minimalButton.classList.toggle('is-active', this.settings.visuals.minimalHud);
     }
+  }
+
+  private renderInspectionCard(snapshot: SimulationSnapshot): void {
+    const hidden = this.settings.visuals.minimalHud || snapshot.attention.mode === 'none';
+    this.inspectModule.hidden = hidden;
+    if (hidden) return;
+
+    if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
+      const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);
+      if (!entity) {
+        this.inspectModule.hidden = true;
+        return;
+      }
+
+      this.inspectEyebrow.textContent = 'Following entity';
+      this.inspectTitle.textContent = entityLabels[entity.type];
+      const secondaryMetricLabel = entity.type === 'plant'
+        ? 'Pollination'
+        : entity.type === 'grazer'
+          ? 'Food'
+          : entity.type === 'cluster'
+            ? 'Memory'
+            : 'Activity';
+      const secondaryMetricValue = entity.type === 'plant'
+        ? entity.pollination
+        : entity.type === 'grazer'
+          ? entity.food
+          : entity.type === 'cluster'
+            ? entity.memory
+            : entity.activity;
+
+      this.inspectBody.innerHTML = `
+        <div class="hud__inspect-grid">
+          <div class="hud__inspect-copy">
+            <div class="hud__inspect-line"><span>State</span><strong>${describeEntityState(entity)}</strong></div>
+            <div class="hud__inspect-line"><span>Life stage</span><strong>${entity.stage}</strong></div>
+            <div class="hud__inspect-line"><span>Audio focus</span><strong>Primary voice, nearby ecology softened</strong></div>
+          </div>
+          <div class="hud__inspect-metrics">
+            <div class="hud__inspect-metric"><span>Energy</span><strong>${percent(clamp(entity.energy, 0, 1))}</strong></div>
+            <div class="hud__inspect-metric"><span>${secondaryMetricLabel}</span><strong>${percent(clamp(secondaryMetricValue, 0, 1))}</strong></div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    if (snapshot.attention.mode === 'region') {
+      const summary = this.summarizeAttentionRegion(snapshot);
+      this.inspectEyebrow.textContent = 'Listening region';
+      this.inspectTitle.textContent = summary.title;
+      this.inspectBody.innerHTML = `
+        <div class="hud__inspect-grid">
+          <div class="hud__inspect-copy">
+            <div class="hud__inspect-line"><span>Dominant life</span><strong>${summary.dominant}</strong></div>
+            <div class="hud__inspect-line"><span>Patch read</span><strong>${summary.patch}</strong></div>
+            <div class="hud__inspect-line"><span>Audio focus</span><strong>${summary.audio}</strong></div>
+          </div>
+          <div class="hud__inspect-metrics">
+            <div class="hud__inspect-metric"><span>Activity</span><strong>${summary.activity}</strong></div>
+            <div class="hud__inspect-metric"><span>Fertility</span><strong>${summary.fertility}</strong></div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  private summarizeAttentionRegion(snapshot: SimulationSnapshot): {
+    title: string;
+    dominant: string;
+    activity: string;
+    fertility: string;
+    patch: string;
+    audio: string;
+  } {
+    const { attention, dimensions } = snapshot;
+    const entities = snapshot.entities.filter((entity) => wrappedDistance(entity.position, attention.position, dimensions.width, dimensions.height) <= attention.radius);
+    const terrain = snapshot.terrain.filter((cell) => wrappedDistance(cell.center, attention.position, dimensions.width, dimensions.height) <= attention.radius + cell.radius * 0.35);
+    const counts = new Map<Entity['type'], number>();
+    let activitySum = 0;
+
+    for (const entity of entities) {
+      counts.set(entity.type, (counts.get(entity.type) ?? 0) + 1);
+      activitySum += entity.activity;
+    }
+
+    const dominantType = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const dominant = dominantType ? entityLabels[dominantType] : 'Sparse mixed life';
+    const activity = percent(entities.length > 0 ? activitySum / entities.length : 0);
+    const fertilityMean = terrain.length > 0
+      ? terrain.reduce((sum, cell) => sum + this.cellFertility(cell), 0) / terrain.length
+      : 0;
+    const densityMean = terrain.length > 0
+      ? terrain.reduce((sum, cell) => sum + cell.density, 0) / terrain.length
+      : 0;
+    const wetness = terrain.length > 0
+      ? terrain.reduce((sum, cell) => sum + cell.habitatWeights.wetland, 0) / terrain.length
+      : 0;
+    const fertility = percent(fertilityMean);
+    const patch = densityMean > 0.58
+      ? wetness > 0.5 ? 'Dense wet patch with layered motion' : 'Dense patch with overlapping ecological traffic'
+      : fertilityMean > 0.56
+        ? 'Fertile patch supporting fruiting and return'
+        : wetness > 0.48
+          ? 'Open wet patch with softer movement'
+          : 'Open patch with intermittent motion';
+    const audio = dominantType === 'plant'
+      ? 'Rooted bloom tones gather into the main field.'
+      : dominantType === 'cluster'
+        ? 'Low decomposer texture becomes the dominant bed.'
+        : dominantType === 'grazer'
+          ? 'Foraging movement leads while distant ambience falls back.'
+          : dominantType === 'flocker'
+            ? 'Lighter drifting tones group together in the foreground.'
+            : 'The selected patch becomes the clearest ecological layer.';
+
+    return {
+      title: `Region · ${Math.round(attention.radius)} radius`,
+      dominant,
+      activity,
+      fertility,
+      patch,
+      audio,
+    };
+  }
+
+  private cellFertility(cell: TerrainCell): number {
+    return clamp(cell.fertility * 0.58 + cell.nutrient * 0.26 + cell.moisture * 0.16, 0, 1);
   }
 
   private renderDebugOverlay(

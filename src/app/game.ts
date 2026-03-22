@@ -28,6 +28,9 @@ export class App {
     center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
     zoom: 1,
   };
+  private readonly followAnchor = {
+    center: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+  };
   private settings: GameSettings = DEFAULT_SETTINGS;
   private accumulator = 0;
   private lastTime = 0;
@@ -46,6 +49,7 @@ export class App {
   };
   private fpsAccumulator = 0;
   private fpsFrameCount = 0;
+  private followingSelection = false;
 
   constructor(mount: HTMLElement) {
     this.settings = normalizeSettings(loadSettings());
@@ -111,6 +115,9 @@ export class App {
     this.cameraTarget.center.x = WORLD_WIDTH / 2;
     this.cameraTarget.center.y = WORLD_HEIGHT / 2;
     this.cameraTarget.zoom = 1;
+    this.followAnchor.center.x = WORLD_WIDTH / 2;
+    this.followAnchor.center.y = WORLD_HEIGHT / 2;
+    this.followingSelection = false;
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
   }
 
@@ -152,19 +159,47 @@ export class App {
     this.cameraTarget.center.y = wrap(worldY - (clientY - rect.top - rect.height * 0.5) / afterScale, WORLD_HEIGHT);
   }
 
-  private updateAttentionCameraTarget(): void {
-    const followTarget = this.simulation.getCameraFollowTarget();
-    if (!followTarget) return;
+  private wrappedDelta(from: number, to: number, size: number): number {
+    return ((((to - from) % size) + size * 1.5) % size) - size * 0.5;
+  }
 
-    const deltaX = ((((followTarget.x - this.cameraTarget.center.x) % WORLD_WIDTH) + WORLD_WIDTH * 1.5) % WORLD_WIDTH) - WORLD_WIDTH * 0.5;
-    const deltaY = ((((followTarget.y - this.cameraTarget.center.y) % WORLD_HEIGHT) + WORLD_HEIGHT * 1.5) % WORLD_HEIGHT) - WORLD_HEIGHT * 0.5;
-    this.cameraTarget.center.x = wrap(this.cameraTarget.center.x + deltaX * 0.08, WORLD_WIDTH);
-    this.cameraTarget.center.y = wrap(this.cameraTarget.center.y + deltaY * 0.08, WORLD_HEIGHT);
+  private updateAttentionCameraTarget(dt: number): void {
+    const followTarget = this.simulation.getCameraFollowTarget();
+    if (!followTarget) {
+      this.followingSelection = false;
+      this.followAnchor.center.x = this.cameraTarget.center.x;
+      this.followAnchor.center.y = this.cameraTarget.center.y;
+      return;
+    }
+
+    if (!this.followingSelection) {
+      this.followAnchor.center.x = this.cameraTarget.center.x;
+      this.followAnchor.center.y = this.cameraTarget.center.y;
+      this.followingSelection = true;
+    }
+
+    const anchorDeltaX = this.wrappedDelta(this.followAnchor.center.x, followTarget.x, WORLD_WIDTH);
+    const anchorDeltaY = this.wrappedDelta(this.followAnchor.center.y, followTarget.y, WORLD_HEIGHT);
+    const anchorDistance = Math.hypot(anchorDeltaX, anchorDeltaY);
+    const deadZone = clamp(34 / Math.max(this.cameraTarget.zoom, 0.45), 18, 54);
+    const anchorCatchup = clamp(dt * (anchorDistance > deadZone ? 4.6 : 2.2), 0.06, 0.18);
+    const deadZoneFactor = anchorDistance > deadZone ? 1 : clamp(anchorDistance / Math.max(deadZone, 1), 0.18, 0.8);
+
+    this.followAnchor.center.x = wrap(this.followAnchor.center.x + anchorDeltaX * anchorCatchup * deadZoneFactor, WORLD_WIDTH);
+    this.followAnchor.center.y = wrap(this.followAnchor.center.y + anchorDeltaY * anchorCatchup * deadZoneFactor, WORLD_HEIGHT);
+
+    const targetDeltaX = this.wrappedDelta(this.cameraTarget.center.x, this.followAnchor.center.x, WORLD_WIDTH);
+    const targetDeltaY = this.wrappedDelta(this.cameraTarget.center.y, this.followAnchor.center.y, WORLD_HEIGHT);
+    const targetDistance = Math.hypot(targetDeltaX, targetDeltaY);
+    const targetCatchup = clamp(dt * (3 + targetDistance * 0.012), 0.05, 0.16);
+
+    this.cameraTarget.center.x = wrap(this.cameraTarget.center.x + targetDeltaX * targetCatchup, WORLD_WIDTH);
+    this.cameraTarget.center.y = wrap(this.cameraTarget.center.y + targetDeltaY * targetCatchup, WORLD_HEIGHT);
   }
 
   private syncCamera(): void {
-    const deltaX = ((((this.cameraTarget.center.x - this.camera.center.x) % WORLD_WIDTH) + WORLD_WIDTH * 1.5) % WORLD_WIDTH) - WORLD_WIDTH * 0.5;
-    const deltaY = ((((this.cameraTarget.center.y - this.camera.center.y) % WORLD_HEIGHT) + WORLD_HEIGHT * 1.5) % WORLD_HEIGHT) - WORLD_HEIGHT * 0.5;
+    const deltaX = this.wrappedDelta(this.camera.center.x, this.cameraTarget.center.x, WORLD_WIDTH);
+    const deltaY = this.wrappedDelta(this.camera.center.y, this.cameraTarget.center.y, WORLD_HEIGHT);
     this.camera.center.x = wrap(this.camera.center.x + deltaX * CAMERA_SMOOTHING, WORLD_WIDTH);
     this.camera.center.y = wrap(this.camera.center.y + deltaY * CAMERA_SMOOTHING, WORLD_HEIGHT);
     this.camera.zoom = lerp(this.camera.zoom, this.cameraTarget.zoom, CAMERA_SMOOTHING);
@@ -208,7 +243,7 @@ export class App {
     this.perfStats.simStepCapped = simStepCapped;
     this.perfStats.simAccumulatorMs = this.accumulator * 1000;
 
-    this.updateAttentionCameraTarget();
+    this.updateAttentionCameraTarget(rawDelta);
     this.syncCamera();
 
     const snapshot = this.simulation.getSnapshot();
