@@ -10,6 +10,9 @@ import { Hud } from '../ui/hud';
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const wrap = (value: number, size: number) => ((value % size) + size) % size;
+const MAX_SIM_STEPS_PER_FRAME = 3;
+const MAX_ACCUMULATED_SIM_TIME = FIXED_TIMESTEP * MAX_SIM_STEPS_PER_FRAME;
+const MAX_RETAINED_SIM_LAG = FIXED_TIMESTEP;
 
 export class App {
   private readonly simulation = new Simulation();
@@ -36,6 +39,10 @@ export class App {
     renderTimeMs: 0,
     drawCallEstimate: 0,
     simSteps: 0,
+    audioUpdateTimeMs: 0,
+    simStepCapped: false,
+    droppedSimTimeMs: 0,
+    simAccumulatorMs: 0,
   };
   private fpsAccumulator = 0;
   private fpsFrameCount = 0;
@@ -175,22 +182,39 @@ export class App {
     const timeScale = this.input.getTimeScale();
     this.simulation.setTimeScale(timeScale);
     this.accumulator += rawDelta * timeScale;
+    if (this.accumulator > MAX_ACCUMULATED_SIM_TIME) {
+      const dropped = this.accumulator - MAX_ACCUMULATED_SIM_TIME;
+      this.perfStats.droppedSimTimeMs += dropped * 1000;
+      this.accumulator = MAX_ACCUMULATED_SIM_TIME;
+    }
 
     const updateStart = performance.now();
     let simSteps = 0;
-    while (this.accumulator >= FIXED_TIMESTEP) {
+    while (this.accumulator >= FIXED_TIMESTEP && simSteps < MAX_SIM_STEPS_PER_FRAME) {
       this.simulation.update(FIXED_TIMESTEP);
       this.accumulator -= FIXED_TIMESTEP;
       simSteps += 1;
     }
+    const simStepCapped = this.accumulator >= FIXED_TIMESTEP;
+    if (simStepCapped) {
+      const dropped = Math.max(0, this.accumulator - MAX_RETAINED_SIM_LAG);
+      if (dropped > 0) {
+        this.perfStats.droppedSimTimeMs += dropped * 1000;
+      }
+      this.accumulator = Math.min(this.accumulator, MAX_RETAINED_SIM_LAG);
+    }
     this.perfStats.updateTimeMs = performance.now() - updateStart;
     this.perfStats.simSteps = simSteps;
+    this.perfStats.simStepCapped = simStepCapped;
+    this.perfStats.simAccumulatorMs = this.accumulator * 1000;
 
     this.updateAttentionCameraTarget();
     this.syncCamera();
 
     const snapshot = this.simulation.getSnapshot();
+    const audioStart = performance.now();
     this.audio.update(snapshot, this.settings);
+    this.perfStats.audioUpdateTimeMs = performance.now() - audioStart;
     this.hud.update(snapshot, this.audio.getDebugState(), this.perfStats);
     const renderStart = performance.now();
     this.renderer.render(snapshot, this.settings, this.audio.getDebugState(), this.perfStats);
@@ -203,6 +227,7 @@ export class App {
   private updateFrameStats(rawDelta: number): void {
     this.fpsAccumulator += rawDelta;
     this.fpsFrameCount += 1;
+    this.perfStats.droppedSimTimeMs = Math.max(0, this.perfStats.droppedSimTimeMs - rawDelta * 1000 * 0.35);
     if (this.fpsAccumulator < 0.25) return;
     this.perfStats.fps = this.fpsFrameCount / this.fpsAccumulator;
     this.fpsAccumulator = 0;

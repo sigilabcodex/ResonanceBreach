@@ -88,6 +88,7 @@ export interface Entity {
   memory: number;
   targetId?: number;
   targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'signal';
+  retargetTimer?: number;
   trail: Vec2[];
 }
 
@@ -195,6 +196,42 @@ export interface PerformanceStats {
   renderTimeMs: number;
   drawCallEstimate: number;
   simSteps: number;
+  audioUpdateTimeMs: number;
+  simStepCapped: boolean;
+  droppedSimTimeMs: number;
+  simAccumulatorMs: number;
+}
+
+export interface SimulationDiagnostics {
+  speciesUpdateTimeMs: Record<EntityType, number>;
+  queryCounts: {
+    neighbors: number;
+    foodSearches: number;
+    bloomSearches: number;
+    grazerBloomSearches: number;
+    residueSearches: number;
+    terrainSamples: number;
+    residueInfluenceSamples: number;
+    terrainModifierChecks: number;
+    attentionRefreshes: number;
+    focusSelections: number;
+    targetReuses: number;
+    targetRetargets: number;
+  };
+  counts: {
+    entities: number;
+    fruit: number;
+    feed: number;
+    residues: number;
+    particles: number;
+    terrainModifiers: number;
+    focusedEntities: number;
+  };
+  timingsMs: {
+    attention: number;
+    spawning: number;
+  };
+  topHotspots: string[];
 }
 
 export interface WorldNotifications {
@@ -220,6 +257,7 @@ export interface WorldState {
   energy: number;
   events: WorldEvent[];
   notifications: WorldNotifications;
+  diagnostics: SimulationDiagnostics;
 }
 
 export type SimulationSnapshot = WorldState;

@@ -554,13 +554,22 @@ export class Hud {
     }
 
     const lines = [
-      `fps ${performanceStats?.fps.toFixed(1) ?? '0.0'} · frame ${performanceStats?.frameTimeMs.toFixed(2) ?? '0.00'} ms · steps ${performanceStats?.simSteps ?? 0}`,
-      `update ${performanceStats?.updateTimeMs.toFixed(2) ?? '0.00'} ms · render ${performanceStats?.renderTimeMs.toFixed(2) ?? '0.00'} ms · draws ${performanceStats?.drawCallEstimate ?? 0}`,
+      `fps ${performanceStats?.fps.toFixed(1) ?? '0.0'} · frame ${performanceStats?.frameTimeMs.toFixed(2) ?? '0.00'} ms · steps ${performanceStats?.simSteps ?? 0}${performanceStats?.simStepCapped ? ' · capped' : ''}`,
+      `update ${performanceStats?.updateTimeMs.toFixed(2) ?? '0.00'} ms · render ${performanceStats?.renderTimeMs.toFixed(2) ?? '0.00'} ms · audio ${performanceStats?.audioUpdateTimeMs.toFixed(2) ?? '0.00'} ms`,
+      `lag ${performanceStats?.simAccumulatorMs.toFixed(2) ?? '0.00'} ms · dropped ${performanceStats?.droppedSimTimeMs.toFixed(2) ?? '0.00'} ms · draws ${performanceStats?.drawCallEstimate ?? 0}`,
       `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
       `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
-      `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length}`,
+      `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length} · focused ${snapshot.diagnostics.counts.focusedEntities}`,
+      `fruit ${snapshot.diagnostics.counts.fruit} · feed ${snapshot.diagnostics.counts.feed} · residue ${snapshot.diagnostics.counts.residues} · modifiers ${snapshot.diagnostics.counts.terrainModifiers}`,
+      `queries field ${snapshot.diagnostics.queryCounts.terrainSamples} · neighbor ${snapshot.diagnostics.queryCounts.neighbors} · food ${snapshot.diagnostics.queryCounts.foodSearches} · residue ${snapshot.diagnostics.queryCounts.residueSearches}`,
+      `targets reuse ${snapshot.diagnostics.queryCounts.targetReuses} · retarget ${snapshot.diagnostics.queryCounts.targetRetargets} · attention ${snapshot.diagnostics.queryCounts.attentionRefreshes}`,
+      `species plant ${snapshot.diagnostics.speciesUpdateTimeMs.plant.toFixed(2)} · flocker ${snapshot.diagnostics.speciesUpdateTimeMs.flocker.toFixed(2)} · grazer ${snapshot.diagnostics.speciesUpdateTimeMs.grazer.toFixed(2)} · cluster ${snapshot.diagnostics.speciesUpdateTimeMs.cluster.toFixed(2)} ms`,
       `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
     ];
+
+    if (snapshot.diagnostics.topHotspots.length > 0) {
+      lines.push(`hotspots ${snapshot.diagnostics.topHotspots.join(' · ')}`);
+    }
 
     if (snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null) {
       const entity = snapshot.entities.find((candidate) => candidate.id === snapshot.attention.entityId);

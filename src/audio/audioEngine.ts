@@ -1,4 +1,5 @@
 import type { WorldEvent } from '../sim/events';
+import { createDefaultDiagnostics } from '../sim/world';
 import type { GameSettings } from '../settings';
 import type { SimulationSnapshot, ToolState, Vec2 } from '../types/world';
 import { buildZoneSummaries, createAudioFocusContext, scoreEntities, selectForegroundVoices, type AudioFocusContext, type ScoredEntity, type ZoneSummary } from './salience';
@@ -403,6 +404,7 @@ export class AudioEngine {
       energy: 0,
       events: [],
       notifications: { recent: [] },
+      diagnostics: createDefaultDiagnostics(),
     });
 
     this.triggerToolTone({
@@ -452,6 +454,7 @@ export class AudioEngine {
       energy: 0,
       events: [],
       notifications: { recent: [] },
+      diagnostics: createDefaultDiagnostics(),
     });
 
     const osc = this.context.createOscillator();
