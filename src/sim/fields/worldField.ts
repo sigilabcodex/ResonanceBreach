@@ -189,6 +189,7 @@ export class WorldFieldModel {
 
     const traversability = clamp(1 - slope * 0.66 - highland * 0.44 - wetland * 0.16 - (terrain === 'dense' ? 0.15 : 0), 0, 1);
     const nutrient = clamp(influence.residueInfluence * 0.84 + fertility * 0.42 + moisture * 0.12 + fertileBasin * 0.24 + wetland * 0.06 - highland * 0.18, 0, 1);
+    const temperature = clamp(0.22 + elevation * 0.3 + highland * 0.16 + fertility * 0.06 + layers.flowBias * 0.04 - moisture * 0.22 - wetland * 0.16 + Math.sin((x + y) * 0.0007 + time * 0.04) * 0.04, 0, 1);
     const density = clamp(0.18 + fertility * 0.18 + moisture * 0.12 + denseWeight * 0.28 + highland * 0.08 + fertileBasin * 0.1, 0, 1);
     const resonance = clamp(0.2 + moisture * 0.22 + fertility * 0.22 + nutrient * 0.14 + wetland * 0.08 + fertileBasin * 0.1 - highland * 0.1, 0, 1);
     const stability = clamp(0.28 + fertileBasin * 0.22 + traversability * 0.24 + nutrient * 0.16 + highland * 0.08 - wetland * 0.05, 0, 1);
@@ -222,6 +223,7 @@ export class WorldFieldModel {
       resonance,
       roughness: layers.roughness,
       nutrient,
+      temperature,
       flow,
       flowTendency: directional,
       gradient: downhill,

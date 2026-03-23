@@ -26,16 +26,19 @@ const entityLabels: Record<Entity['type'], string> = {
   flocker: 'Pollinator drifter',
   cluster: 'Decomposer cluster',
   plant: 'Rooted bloom',
+  ephemeral: 'Ephemeral bloom',
+  canopy: 'Canopy bloom',
   grazer: 'Grazer',
+  parasite: 'Parasitic tendril',
   predator: 'Predator',
 };
 
 const describeEntityState = (entity: Entity): string => {
-  if (entity.visualState === 'dying') return entity.type === 'cluster' ? 'decomposing' : 'decaying';
-  if (entity.visualState === 'reproducing') return entity.type === 'plant' ? 'blooming' : 'reproducing';
+  if (entity.visualState === 'dying') return entity.type === 'cluster' || entity.type === 'parasite' ? 'decomposing' : 'decaying';
+  if (entity.visualState === 'reproducing') return entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy' ? 'blooming' : 'reproducing';
   if (entity.visualState === 'feeding') {
-    if (entity.type === 'plant') return 'blooming';
-    if (entity.type === 'cluster') return 'decomposing';
+    if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') return 'blooming';
+    if (entity.type === 'cluster' || entity.type === 'parasite') return 'decomposing';
     return 'feeding';
   }
   if (entity.type === 'grazer') {
@@ -48,11 +51,11 @@ const describeEntityState = (entity: Entity): string => {
     if (entity.targetKind === 'fruit' || entity.targetKind === 'feed') return 'seeking fruit';
     return entity.activity > 0.28 ? 'drifting' : 'hovering';
   }
-  if (entity.type === 'cluster') {
+  if (entity.type === 'cluster' || entity.type === 'parasite') {
     if (entity.targetKind === 'residue') return 'seeking residue';
     return entity.activity > 0.24 ? 'working the soil' : 'resting';
   }
-  if (entity.type === 'plant') return entity.stage === 'decay' ? 'decaying' : entity.stage === 'mature' ? 'blooming' : 'maturing';
+  if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') return entity.stage === 'decay' ? 'decaying' : entity.stage === 'mature' ? 'blooming' : 'maturing';
   return entity.activity > 0.35 ? 'hunting' : 'circling';
 };
 
@@ -85,6 +88,7 @@ export class Hud {
   private readonly biodiversityValue: HTMLSpanElement;
   private readonly nutrientsValue: HTMLSpanElement;
   private readonly fruitValue: HTMLSpanElement;
+  private readonly temperatureValue: HTMLSpanElement;
   private readonly unlockValue: HTMLSpanElement;
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
@@ -162,6 +166,7 @@ export class Hud {
               <div class="hud__row"><span>Growth</span><span data-growth>0%</span></div>
               <div class="hud__row"><span>Nutrients</span><span data-nutrients>0%</span></div>
               <div class="hud__row"><span>Fruit</span><span data-fruit>0%</span></div>
+              <div class="hud__row"><span>Temperature</span><span data-temperature>0%</span></div>
               <div class="hud__row"><span>Diversity</span><span data-biodiversity>0%</span></div>
               <div class="hud__row"><span>Threat</span><span data-threat>0%</span></div>
             </div>
@@ -246,6 +251,7 @@ export class Hud {
     this.biodiversityValue = this.element.querySelector('[data-biodiversity]') as HTMLSpanElement;
     this.nutrientsValue = this.element.querySelector('[data-nutrients]') as HTMLSpanElement;
     this.fruitValue = this.element.querySelector('[data-fruit]') as HTMLSpanElement;
+    this.temperatureValue = this.element.querySelector('[data-temperature]') as HTMLSpanElement;
     this.unlockValue = this.element.querySelector('[data-unlocked]') as HTMLSpanElement;
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
@@ -326,6 +332,7 @@ export class Hud {
     this.biodiversityValue.textContent = `${Math.round(snapshot.stats.biodiversity * 100)}%`;
     this.nutrientsValue.textContent = `${Math.round(snapshot.stats.nutrients * 100)}%`;
     this.fruitValue.textContent = `${Math.round(snapshot.stats.fruit * 100)}%`;
+    this.temperatureValue.textContent = `${Math.round(snapshot.stats.temperature * 100)}%`;
     this.unlockValue.textContent = `${Math.round(snapshot.unlockedProgress * 100)}%`;
     this.flowValue.textContent = timeLabels[String(snapshot.timeScale)] ?? `Flow ${snapshot.timeScale.toFixed(1)}×`;
 
@@ -625,33 +632,21 @@ export class Hud {
         return;
       }
 
-      this.inspectEyebrow.textContent = 'Following entity';
+      this.inspectEyebrow.textContent = `Following ${entity.role}`;
       this.inspectTitle.textContent = entityLabels[entity.type];
-      const secondaryMetricLabel = entity.type === 'plant'
-        ? 'Pollination'
-        : entity.type === 'grazer'
-          ? 'Food'
-          : entity.type === 'cluster'
-            ? 'Memory'
-            : 'Activity';
-      const secondaryMetricValue = entity.type === 'plant'
-        ? entity.pollination
-        : entity.type === 'grazer'
-          ? entity.food
-          : entity.type === 'cluster'
-            ? entity.memory
-            : entity.activity;
 
       this.inspectBody.innerHTML = `
         <div class="hud__inspect-grid">
           <div class="hud__inspect-copy">
             <div class="hud__inspect-line"><span>State</span><strong>${describeEntityState(entity)}</strong></div>
-            <div class="hud__inspect-line"><span>Life stage</span><strong>${entity.stage}</strong></div>
-            <div class="hud__inspect-line"><span>Audio focus</span><strong>Primary voice, nearby ecology softened</strong></div>
+            <div class="hud__inspect-line"><span>Life stage</span><strong>${entity.lifecycleState.stage} · ${percent(clamp(entity.lifecycleState.progress, 0, 1))}</strong></div>
+            <div class="hud__inspect-line"><span>Habitat pull</span><strong>${entity.habitatPreference.primary}${entity.habitatPreference.secondary ? ` → ${entity.habitatPreference.secondary}` : ''}</strong></div>
           </div>
           <div class="hud__inspect-metrics">
-            <div class="hud__inspect-metric"><span>Energy</span><strong>${percent(clamp(entity.energy, 0, 1))}</strong></div>
-            <div class="hud__inspect-metric"><span>${secondaryMetricLabel}</span><strong>${percent(clamp(secondaryMetricValue, 0, 1))}</strong></div>
+            <div class="hud__inspect-metric"><span>Energy</span><strong>${percent(clamp(entity.resourceState.energy, 0, 1))}</strong></div>
+            <div class="hud__inspect-metric"><span>Hunger</span><strong>${percent(clamp(entity.resourceState.hunger, 0, 1))}</strong></div>
+            <div class="hud__inspect-metric"><span>Vitality</span><strong>${percent(clamp(entity.resourceState.vitality, 0, 1))}</strong></div>
+            <div class="hud__inspect-metric"><span>Propagule charge</span><strong>${percent(clamp(entity.lifecycleState.propaguleCharge, 0, 1))}</strong></div>
           </div>
         </div>
       `;
@@ -763,10 +758,11 @@ export class Hud {
       `camera ${Math.round(snapshot.camera.center.x)}, ${Math.round(snapshot.camera.center.y)} @ ${snapshot.camera.zoom.toFixed(2)}×`,
       `attention ${snapshot.attention.mode}${snapshot.attention.dragging ? ' · dragging' : ''}`,
       `terrain ${snapshot.terrain.length} samples · entities ${snapshot.entities.length} · focused ${snapshot.diagnostics.counts.focusedEntities}`,
-      `fruit ${snapshot.diagnostics.counts.fruit} · feed ${snapshot.diagnostics.counts.feed} · residue ${snapshot.diagnostics.counts.residues} · modifiers ${snapshot.diagnostics.counts.terrainModifiers}`,
+      `fruit ${snapshot.diagnostics.counts.fruit} · feed ${snapshot.diagnostics.counts.feed} · residue ${snapshot.diagnostics.counts.residues} · propagules ${snapshot.diagnostics.counts.propagules} · modifiers ${snapshot.diagnostics.counts.terrainModifiers}`,
       `queries field ${snapshot.diagnostics.queryCounts.terrainSamples} · neighbor ${snapshot.diagnostics.queryCounts.neighbors} · food ${snapshot.diagnostics.queryCounts.foodSearches} · residue ${snapshot.diagnostics.queryCounts.residueSearches}`,
       `targets reuse ${snapshot.diagnostics.queryCounts.targetReuses} · retarget ${snapshot.diagnostics.queryCounts.targetRetargets} · attention ${snapshot.diagnostics.queryCounts.attentionRefreshes}`,
-      `species plant ${snapshot.diagnostics.speciesUpdateTimeMs.plant.toFixed(2)} · flocker ${snapshot.diagnostics.speciesUpdateTimeMs.flocker.toFixed(2)} · grazer ${snapshot.diagnostics.speciesUpdateTimeMs.grazer.toFixed(2)} · cluster ${snapshot.diagnostics.speciesUpdateTimeMs.cluster.toFixed(2)} ms`,
+      `species plant ${snapshot.diagnostics.speciesUpdateTimeMs.plant.toFixed(2)} · ephemeral ${snapshot.diagnostics.speciesUpdateTimeMs.ephemeral.toFixed(2)} · canopy ${snapshot.diagnostics.speciesUpdateTimeMs.canopy.toFixed(2)} · grazer ${snapshot.diagnostics.speciesUpdateTimeMs.grazer.toFixed(2)} · parasite ${snapshot.diagnostics.speciesUpdateTimeMs.parasite.toFixed(2)} · cluster ${snapshot.diagnostics.speciesUpdateTimeMs.cluster.toFixed(2)} ms`,
+      `lifecycle propagules ${snapshot.diagnostics.lifecycleTransitions.propagulesCreated} · germinations ${snapshot.diagnostics.lifecycleTransitions.germinations} · deaths ${snapshot.diagnostics.lifecycleTransitions.deaths} · fruiting ${snapshot.diagnostics.lifecycleTransitions.fruitingBursts}`,
       `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
       `music state ${audioDebug?.mode ?? 'calm'} · tonic ${audioDebug ? audioDebug.tonalCenterHz.toFixed(0) : '0'} Hz · fg balance ${audioDebug ? Math.round(audioDebug.foregroundBalance * 100) : 0}%`,
       `roles bloom ${audioDebug ? Math.round(audioDebug.roleLevels.bloom * 100) : 0}% · pollinator ${audioDebug ? Math.round(audioDebug.roleLevels.pollinator * 100) : 0}% · grazer ${audioDebug ? Math.round(audioDebug.roleLevels.grazer * 100) : 0}% · decay ${audioDebug ? Math.round(audioDebug.roleLevels.decay * 100) : 0}%`,

@@ -6,15 +6,21 @@ export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_DELTA = 0.1;
 
 export const INITIAL_FLOCKER_COUNT = 12;
-export const INITIAL_CLUSTER_COUNT = 9;
-export const INITIAL_PLANT_COUNT = 18;
-export const INITIAL_GRAZER_COUNT = 7;
+export const INITIAL_CLUSTER_COUNT = 8;
+export const INITIAL_PLANT_COUNT = 14;
+export const INITIAL_EPHEMERAL_COUNT = 10;
+export const INITIAL_CANOPY_COUNT = 5;
+export const INITIAL_GRAZER_COUNT = 8;
+export const INITIAL_PARASITE_COUNT = 4;
 export const INITIAL_PREDATOR_COUNT = 0;
 
 export const MAX_FLOCKERS = 28;
-export const MAX_CLUSTERS = 22;
-export const MAX_PLANTS = 54;
-export const MAX_GRAZERS = 16;
+export const MAX_CLUSTERS = 20;
+export const MAX_PLANTS = 42;
+export const MAX_EPHEMERALS = 28;
+export const MAX_CANOPIES = 14;
+export const MAX_GRAZERS = 18;
+export const MAX_PARASITES = 12;
 export const MAX_PREDATORS = 0;
 
 export const NEIGHBOR_RADIUS = 164;
@@ -63,7 +69,7 @@ export const TOOL_RADIUS: Record<ToolType, number> = {
   disrupt: 188,
 };
 
-export const ENTITY_TYPES = ['flocker', 'cluster', 'plant', 'grazer', 'predator'] as const;
+export const ENTITY_TYPES = ['flocker', 'cluster', 'plant', 'ephemeral', 'canopy', 'grazer', 'parasite', 'predator'] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export const TERRAIN_TYPES = ['water', 'fertile', 'dense', 'solid'] as const;

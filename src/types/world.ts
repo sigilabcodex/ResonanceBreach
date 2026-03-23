@@ -6,6 +6,35 @@ export interface Vec2 {
   y: number;
 }
 
+export type SpeciesRole = 'producer' | 'pollinator' | 'grazer' | 'decomposer' | 'parasite' | 'predator';
+
+export interface HabitatPreferenceState {
+  primary: HabitatType;
+  secondary?: HabitatType;
+  preferredTemperature: number;
+  preferredMoisture: number;
+  preferredNutrients: number;
+}
+
+export interface EntityResourceState {
+  energy: number;
+  biomass: number;
+  vitality: number;
+  hunger: number;
+  nutrientStress: number;
+  temperatureStress: number;
+}
+
+export interface EntityLifecycleState {
+  stage: LifecycleStage;
+  progress: number;
+  ageRatio: number;
+  propaguleCharge: number;
+  residueYield: number;
+}
+
+export type PropaguleStatus = 'dormant' | 'ready' | 'germinating' | 'spent';
+
 export interface WorldDimensions {
   width: number;
   height: number;
@@ -39,6 +68,7 @@ export interface TerrainCell {
   roughness: number;
   hue: number;
   nutrient: number;
+  temperature: number;
 }
 
 export interface Attractor {
@@ -53,6 +83,7 @@ export interface Attractor {
 export interface Entity {
   id: number;
   type: EntityType;
+  role: SpeciesRole;
   stage: LifecycleStage;
   position: Vec2;
   velocity: Vec2;
@@ -85,9 +116,12 @@ export interface Entity {
   fruitCooldown: number;
   vitality: number;
   pollination: number;
+  habitatPreference: HabitatPreferenceState;
+  resourceState: EntityResourceState;
+  lifecycleState: EntityLifecycleState;
   memory: number;
   targetId?: number;
-  targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'signal';
+  targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'seed' | 'signal';
   retargetTimer?: number;
   trail: Vec2[];
 }
@@ -133,6 +167,22 @@ export interface Residue {
   radius: number;
   sourceType?: EntityType;
   richness: number;
+}
+
+export interface Propagule {
+  id: number;
+  kind: 'seed' | 'spore';
+  species: EntityType;
+  role: SpeciesRole;
+  position: Vec2;
+  velocity: Vec2;
+  age: number;
+  dormancy: number;
+  viability: number;
+  nutrient: number;
+  status: PropaguleStatus;
+  habitatPreference: HabitatPreferenceState;
+  sourceEntityId?: number;
 }
 
 export interface EventBurst {
@@ -187,6 +237,7 @@ export interface GardenStats {
   focus: number;
   nutrients: number;
   fruit: number;
+  temperature: number;
 }
 
 export interface PerformanceStats {
@@ -204,6 +255,12 @@ export interface PerformanceStats {
 
 export interface SimulationDiagnostics {
   speciesUpdateTimeMs: Record<EntityType, number>;
+  lifecycleTransitions: {
+    propagulesCreated: number;
+    germinations: number;
+    deaths: number;
+    fruitingBursts: number;
+  };
   queryCounts: {
     neighbors: number;
     foodSearches: number;
@@ -223,6 +280,7 @@ export interface SimulationDiagnostics {
     fruit: number;
     feed: number;
     residues: number;
+    propagules: number;
     particles: number;
     terrainModifiers: number;
     focusedEntities: number;
@@ -246,6 +304,7 @@ export interface WorldState {
   fields: ToolField[];
   particles: FeedParticle[];
   residues: Residue[];
+  propagules: Propagule[];
   bursts: EventBurst[];
   stats: GardenStats;
   tool: ToolState;
