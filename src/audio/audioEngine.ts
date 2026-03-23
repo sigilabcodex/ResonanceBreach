@@ -20,6 +20,10 @@ export interface AudioDebugState {
   foregroundVoiceCount: number;
   focusedVoiceCount: number;
   groupedVoiceCount: number;
+  mode: string;
+  tonalCenterHz: number;
+  roleLevels: Record<EcologicalVoiceRole, number>;
+  foregroundBalance: number;
 }
 
 const FOREGROUND_VOICE_COUNT = 3;
@@ -44,9 +48,9 @@ const ENTITY_WAVEFORM: Record<ScoredEntity['entity']['type'], OscillatorType> = 
 
 const ECOLOGICAL_WAVEFORM: Record<EcologicalVoiceRole, OscillatorType> = {
   bloom: 'triangle',
-  grazer: 'square',
+  grazer: 'triangle',
   pollinator: 'sine',
-  decay: 'sawtooth',
+  decay: 'triangle',
 };
 
 export class AudioEngine {
@@ -72,6 +76,15 @@ export class AudioEngine {
     foregroundVoiceCount: 0,
     focusedVoiceCount: 0,
     groupedVoiceCount: 0,
+    mode: 'calm',
+    tonalCenterHz: 0,
+    roleLevels: {
+      bloom: 0,
+      grazer: 0,
+      pollinator: 0,
+      decay: 0,
+    },
+    foregroundBalance: 0,
   };
 
   async ensureStarted(): Promise<void> {
@@ -178,14 +191,14 @@ export class AudioEngine {
     this.updateEcologicalVoices(snapshot, harmony, music, focus, zoomNorm, now, settings);
     this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now, settings);
 
-    const entityPresence = 0.18 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1;
+    const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
-    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.015 : 1;
-    const masterTarget = (0.42 + snapshot.stats.energy * 0.18 + music.interpretation.intensity * 0.1)
+    const focusMasterDip = focus.active ? 1 - focus.intensity * 0.01 : 1;
+    const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1)
       * focusMasterDip
       * this.mapVolume(settings.audio.masterVolume);
     this.master.gain.setTargetAtTime(masterTarget, now, 0.22);
-    this.updateDebugState(snapshot, foreground, music, focus, masterTarget);
+    this.updateDebugState(snapshot, foreground, harmony, music, focus, masterTarget);
 
     if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
       this.lastFeedbackId = snapshot.tool.feedback.id;
@@ -270,15 +283,23 @@ export class AudioEngine {
       0,
     );
     const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
+    const modeLift = music.composition.mode === 'fertile'
+      ? 0.014
+      : music.composition.mode === 'degraded'
+        ? -0.006
+        : music.composition.mode === 'active'
+          ? 0.008
+          : 0;
     const bedLevel = (
-      0.068
-      + music.interpretation.stability * 0.032
-      + music.interpretation.abundance * 0.018
+      0.09
+      + music.interpretation.stability * 0.034
+      + music.interpretation.abundance * 0.02
       + habitat.basin * 0.012
       + habitat.wetland * 0.01
       + (1 - zoomNorm) * 0.018
+      + modeLift
     ) * ambienceLevel;
-    const focusDuck = focus.mode === 'entity' ? 1 - focus.intensity * 0.14 : focus.active ? 1 - focus.intensity * 0.18 : 1;
+    const focusDuck = focus.mode === 'entity' ? 1 - focus.intensity * 0.09 : focus.active ? 1 - focus.intensity * 0.11 : 1;
 
     this.bedLowOsc.frequency.setTargetAtTime(lowFreq * (1 - habitat.highland * 0.08), now, 1.8);
     this.bedMidOsc.frequency.setTargetAtTime(midFreq * (1 + habitat.wetland * 0.04 - habitat.highland * 0.03 + drift * 0.06), now, 1.6);
@@ -318,56 +339,107 @@ export class AudioEngine {
       const layer = music.composition.voices[role];
       const pan = this.panFromPosition(layer.center.x, snapshot);
       const roleShape = role === 'bloom'
-        ? 0.84
+        ? 0.64
         : role === 'grazer'
-          ? 1.06
+          ? 0.98
           : role === 'pollinator'
-            ? 1.24
-            : 0.72;
-      const pulseRate = 0.05 + music.composition.rhythmDensity * 0.3 + layer.motion * 0.18;
-      const shimmerRate = 0.03 + music.composition.evolutionSpeed * 0.22 + layer.brightness * 0.04;
-      const pulse = 0.6
-        + Math.sin(snapshot.time * pulseRate * Math.PI * 2 + index * 1.7) * 0.2
-        + Math.sin(snapshot.time * pulseRate * Math.PI * (1.618 + music.composition.pulseJitter) + index * 0.9) * 0.12;
-      const shimmer = 0.5 + Math.sin(snapshot.time * shimmerRate * Math.PI * 2 + index * 2.1) * 0.24;
+            ? 1.52
+            : 0.76;
+      const pulseRate = role === 'bloom'
+        ? 0.018 + music.composition.evolutionSpeed * 0.06 + layer.motion * 0.05
+        : role === 'grazer'
+          ? 0.09 + music.composition.rhythmDensity * 0.32 + layer.motion * 0.18
+          : role === 'pollinator'
+            ? 0.16 + music.composition.rhythmDensity * 0.38 + layer.motion * 0.22
+            : 0.04 + music.composition.evolutionSpeed * 0.08 + layer.motion * 0.06;
+      const shimmerRate = role === 'bloom'
+        ? 0.02 + music.composition.evolutionSpeed * 0.08
+        : role === 'pollinator'
+          ? 0.1 + music.composition.evolutionSpeed * 0.22 + layer.brightness * 0.08
+          : 0.04 + music.composition.evolutionSpeed * 0.14 + layer.brightness * 0.05;
+      const slowSwell = 0.5 + Math.sin(snapshot.time * (0.012 + music.composition.evolutionSpeed * 0.05) * Math.PI * 2 + index * 0.8) * 0.5;
+      const pulse = role === 'bloom'
+        ? 0.76 + slowSwell * 0.16 + Math.sin(snapshot.time * pulseRate * Math.PI * 2 + index * 1.3) * 0.05
+        : role === 'grazer'
+          ? 0.5 + Math.max(0, Math.sin(snapshot.time * pulseRate * Math.PI * 2 + index * 1.6)) * 0.34 + Math.sin(snapshot.time * pulseRate * Math.PI * 1.5 + index) * 0.08
+          : role === 'pollinator'
+            ? 0.38 + Math.max(0, Math.sin(snapshot.time * pulseRate * Math.PI * 2 + index * 2.2)) * 0.26 + Math.sin(snapshot.time * pulseRate * Math.PI * (2.8 + music.composition.pulseJitter) + index * 0.5) * 0.14
+            : 0.34 + slowSwell * 0.14 + Math.sin(snapshot.time * pulseRate * Math.PI * (1.4 + music.composition.pulseJitter * 0.6) + index * 1.9) * 0.1;
+      const shimmer = role === 'decay'
+        ? 0.42 + Math.sin(snapshot.time * shimmerRate * Math.PI * 2 + index * 2.4) * 0.1
+        : 0.5 + Math.sin(snapshot.time * shimmerRate * Math.PI * 2 + index * 2.1) * 0.24;
       const focusBoost = focus.active
-        ? 0.74 + layer.focus * 0.54 + music.composition.foregroundLift * 0.16
-        : 0.92;
+        ? 0.82 + layer.focus * 0.5 + music.composition.foregroundLift * 0.18
+        : 0.98;
+      const modeRoleLift = music.composition.mode === 'fertile'
+        ? role === 'bloom'
+          ? 0.018
+          : role === 'pollinator'
+            ? 0.012
+            : role === 'decay'
+              ? -0.004
+              : 0.006
+        : music.composition.mode === 'active'
+          ? role === 'grazer'
+            ? 0.014
+            : role === 'pollinator'
+              ? 0.016
+              : role === 'bloom'
+                ? 0.004
+                : 0.008
+          : music.composition.mode === 'degraded'
+            ? role === 'decay'
+              ? 0.012
+              : role === 'bloom'
+                ? -0.006
+                : 0
+            : 0;
       const gain = clamp(
         (
-          0.018
-          + layer.presence * 0.038
-          + layer.density * 0.012
-          + Math.max(0, pulse) * 0.01
-        ) * focusBoost * (0.78 + (1 - zoomNorm) * 0.18) * this.mapVolume(settings.audio.ambienceVolume),
+          0.02
+          + layer.presence * (role === 'bloom' ? 0.046 : role === 'grazer' ? 0.04 : role === 'pollinator' ? 0.032 : 0.024)
+          + layer.density * (role === 'bloom' ? 0.016 : role === 'grazer' ? 0.014 : 0.01)
+          + Math.max(0, pulse) * (role === 'bloom' ? 0.008 : role === 'grazer' ? 0.014 : role === 'pollinator' ? 0.012 : 0.01)
+          + modeRoleLift
+        ) * focusBoost * (0.84 + (1 - zoomNorm) * 0.16) * this.mapVolume(settings.audio.ambienceVolume),
         0.0001,
-        0.13,
+        role === 'bloom' ? 0.16 : role === 'grazer' ? 0.14 : role === 'pollinator' ? 0.11 : 0.09,
       );
       const contour = clamp(layer.contour * 0.76 + shimmer * 0.16 + music.composition.harmonicDrift * 0.08, 0, 1);
       const harmonyLayer = role === 'bloom' ? 'plant' : role === 'grazer' || role === 'pollinator' ? 'mobile' : 'cluster';
       const filterBase = role === 'bloom'
-        ? 420
+        ? 280
         : role === 'grazer'
-          ? 760
+          ? 620
           : role === 'pollinator'
-            ? 1320
-            : 300;
+            ? 1800
+            : 420;
       const filterFrequency = filterBase
-        + layer.brightness * 1180
-        + layer.focus * 720
-        + music.interpretation.harmonicRichness * 180;
+        + layer.brightness * (role === 'pollinator' ? 1520 : role === 'bloom' ? 540 : 980)
+        + layer.focus * (role === 'bloom' ? 320 : 720)
+        + music.interpretation.harmonicRichness * (role === 'bloom' ? 120 : 180);
 
       voice.oscillator.type = ECOLOGICAL_WAVEFORM[role];
       voice.oscillator.frequency.setTargetAtTime(
         getHarmonyFrequency(harmony, harmonyLayer, contour, layer.register) * roleShape,
         now,
-        0.4 + (1 - music.composition.evolutionSpeed) * 0.4,
+        role === 'bloom' ? 0.9 : role === 'decay' ? 0.42 : 0.26 + (1 - music.composition.evolutionSpeed) * 0.28,
       );
-      voice.filter.type = role === 'bloom' ? 'lowpass' : role === 'decay' ? 'bandpass' : 'highpass';
+      voice.filter.type = role === 'bloom' ? 'lowpass' : role === 'grazer' ? 'bandpass' : role === 'pollinator' ? 'highpass' : 'bandpass';
       voice.filter.frequency.setTargetAtTime(filterFrequency, now, 0.28);
-      voice.filter.Q.setTargetAtTime(role === 'decay' ? 1.6 + layer.motion : role === 'grazer' ? 0.9 + layer.motion * 1.2 : 0.6 + layer.brightness * 1.1, now, 0.24);
+      voice.filter.Q.setTargetAtTime(
+        role === 'bloom'
+          ? 0.55 + layer.brightness * 0.42
+          : role === 'decay'
+            ? 2.2 + layer.motion * 1.8
+            : role === 'grazer'
+              ? 1.1 + layer.motion * 1.1
+              : 1.4 + layer.brightness * 1.4,
+        now,
+        0.24,
+      );
       voice.panner.pan.setTargetAtTime(pan, now, 0.24);
-      voice.gain.gain.setTargetAtTime(gain, now, role === 'grazer' ? 0.12 : 0.2);
+      voice.gain.gain.setTargetAtTime(gain, now, role === 'grazer' ? 0.1 : role === 'pollinator' ? 0.08 : 0.18);
     });
   }
 
@@ -390,32 +462,32 @@ export class AudioEngine {
       const detailLift = clamp(candidate.detail, 0, 1.4);
       const focusLift = focus.mode === 'entity'
         ? candidate.isPrimary
-          ? 1.14 + focus.intensity * 0.62
+          ? 1.18 + focus.intensity * 0.68
           : candidate.isRelated
-            ? 0.32 + focus.intensity * 0.22
+            ? 0.42 + focus.intensity * 0.24
             : candidate.insideAttention
-              ? 0.1
-              : -0.1
+              ? 0.18
+              : -0.04
         : candidate.insideAttention
-          ? 0.46 + focus.intensity * 0.4
-          : focus.active ? -0.2 - focus.intensity * 0.22 : 0;
+          ? 0.54 + focus.intensity * 0.42
+          : focus.active ? -0.12 - focus.intensity * 0.14 : 0;
       const entityLevel = this.mapVolume(settings.audio.entityVolume);
-      const gain = clamp(0.016 + candidate.score * 0.026 + detailLift * 0.011, 0.014, 0.11) * (0.78 + zoomNorm * 0.34 + focusLift) * entityLevel;
+      const gain = clamp(0.018 + candidate.score * 0.028 + detailLift * 0.012, 0.016, 0.124) * (0.8 + zoomNorm * 0.32 + focusLift) * entityLevel;
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);
       const filterFrequency = candidate.isPrimary
-        ? 1560 + detailLift * 1520 + focus.intensity * 620
+        ? 1720 + detailLift * 1680 + focus.intensity * 720
         : candidate.insideAttention
-          ? 1120 + detailLift * 1180 + focus.intensity * 520
+          ? 1260 + detailLift * 1320 + focus.intensity * 560
           : focus.active
-            ? 340 + detailLift * 360
-            : 760 + detailLift * 920;
+            ? 420 + detailLift * 420
+            : 820 + detailLift * 980;
       const layer = candidate.entity.type === 'plant' ? 'plant' : candidate.entity.type === 'cluster' ? 'cluster' : 'mobile';
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
       voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
       voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
-      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.2 + detailLift * 0.8 : 1.6 + detailLift * 1.15, now, 0.16);
+      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.1 + detailLift * 0.72 : 1.6 + detailLift * 1.15, now, 0.16);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(candidate.entity.position.x, snapshot), now, 0.12);
       voice.gain.gain.setTargetAtTime(gain, now, 0.12);
     });
@@ -610,6 +682,7 @@ export class AudioEngine {
   private updateDebugState(
     snapshot: SimulationSnapshot,
     foreground: ScoredEntity[],
+    harmony: HarmonyState,
     music: EcologicalMusicState,
     focus: AudioFocusContext,
     masterGain: number,
@@ -623,6 +696,15 @@ export class AudioEngine {
     this.debugState.foregroundVoiceCount = foreground.length;
     this.debugState.focusedVoiceCount = focusedVoiceCount;
     this.debugState.groupedVoiceCount = ECOLOGICAL_ROLE_ORDER.filter((role) => music.composition.voices[role].presence > 0.06).length;
+    this.debugState.mode = music.composition.mode;
+    this.debugState.tonalCenterHz = harmony.rootHz;
+    this.debugState.roleLevels = {
+      bloom: music.composition.voices.bloom.presence,
+      grazer: music.composition.voices.grazer.presence,
+      pollinator: music.composition.voices.pollinator.presence,
+      decay: music.composition.voices.decay.presence,
+    };
+    this.debugState.foregroundBalance = clamp(foreground.length / FOREGROUND_VOICE_COUNT * 0.45 + music.composition.foregroundLift * 0.55, 0, 1);
   }
 
   private mapVolume(value: number): number {

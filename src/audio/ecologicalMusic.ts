@@ -4,7 +4,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const smooth = (previous: number, next: number, amount: number) => lerp(previous, next, clamp(amount, 0, 1));
 
-export type EcologicalMusicMode = 'calm' | 'fertile' | 'tense' | 'degraded' | 'anomalous';
+export type EcologicalMusicMode = 'calm' | 'fertile' | 'active' | 'degraded' | 'tense' | 'anomalous';
 export type EcologicalVoiceRole = 'bloom' | 'grazer' | 'pollinator' | 'decay';
 
 export interface EcologicalInterpretation {
@@ -161,10 +161,11 @@ const countFocusedEntities = (snapshot: SimulationSnapshot): { active: number; t
 };
 
 const getMode = (intensity: number, tension: number, stability: number, fertility: number, decay: number): EcologicalMusicMode => {
+  if (intensity > 0.86 && tension > 0.84) return 'anomalous';
   if (tension > 0.72 && decay > 0.42) return 'degraded';
+  if (intensity > 0.56 && stability > 0.42 && decay < 0.52) return 'active';
   if (tension > 0.66 || stability < 0.34) return 'tense';
   if (fertility > 0.62 && stability > 0.54) return 'fertile';
-  if (intensity > 0.82 && tension > 0.82) return 'anomalous';
   return 'calm';
 };
 
@@ -224,6 +225,10 @@ export const createEcologicalMusicState = (
 
   const fertility = clamp(snapshot.stats.nutrients * 0.44 + snapshot.stats.growth * 0.32 + snapshot.stats.harmony * 0.14 + snapshot.stats.fruit * 0.1, 0, 1);
   const mode = getMode(nextInterpretation.intensity, nextInterpretation.tension, nextInterpretation.stability, fertility, nextInterpretation.decayPresence);
+  const modeBloomLift = mode === 'fertile' ? 0.18 : mode === 'calm' ? 0.08 : mode === 'degraded' ? -0.12 : 0;
+  const modeGrazerLift = mode === 'active' ? 0.16 : mode === 'fertile' ? 0.08 : mode === 'degraded' ? -0.06 : 0;
+  const modePollinatorLift = mode === 'active' ? 0.14 : mode === 'fertile' ? 0.1 : mode === 'degraded' ? -0.1 : 0;
+  const modeDecayLift = mode === 'degraded' ? 0.2 : mode === 'active' ? 0.04 : mode === 'fertile' ? -0.06 : 0;
 
   const totalRoleWeight: Record<EcologicalVoiceRole, number> = {
     bloom: 0.0001,
@@ -286,22 +291,43 @@ export const createEcologicalMusicState = (
       y: weightedCenter[role].y / totalRoleWeight[role] || snapshot.camera.center.y,
     };
     const presenceBase = role === 'bloom'
-      ? abundance * 0.44 + growthRate * 0.34 + roleDensity * 0.22
+      ? abundance * 0.42 + growthRate * 0.32 + roleDensity * 0.18 + nextInterpretation.stability * 0.08 + modeBloomLift
       : role === 'grazer'
-        ? rhythmicActivity * 0.44 + feedingActivity * 0.22 + roleDensity * 0.24 + averageEnergy * 0.1
+        ? rhythmicActivity * 0.36 + feedingActivity * 0.24 + roleDensity * 0.22 + averageEnergy * 0.12 + modeGrazerLift
         : role === 'pollinator'
-          ? diversity * 0.26 + harmonicRichness * 0.34 + localActivity * 0.16 + averageMotion * 0.24
-          : decayPresence * 0.48 + tension * 0.18 + roleDensity * 0.2 + averageBrightness * 0.14;
+          ? diversity * 0.22 + harmonicRichness * 0.28 + localActivity * 0.14 + averageMotion * 0.26 + focusPresence * 0.08 + modePollinatorLift
+          : decayPresence * 0.44 + tension * 0.14 + roleDensity * 0.16 + averageBrightness * 0.08 + (1 - nextInterpretation.stability) * 0.08 + modeDecayLift;
+    const roleBrightness = role === 'bloom'
+      ? averageBrightness * 0.28 + harmonicRichness * 0.22 + fertility * 0.18 + nextInterpretation.stability * 0.12 + 0.08
+      : role === 'grazer'
+        ? averageBrightness * 0.2 + rhythmicActivity * 0.14 + averageEnergy * 0.12 + 0.12
+        : role === 'pollinator'
+          ? averageBrightness * 0.3 + harmonicRichness * 0.28 + localActivity * 0.1 + focusPresence * 0.08 + 0.2
+          : averageBrightness * 0.14 + nextInterpretation.decayPresence * 0.22 + tension * 0.14 + 0.06;
+    const roleMotion = role === 'bloom'
+      ? averageMotion * 0.18 + growthRate * 0.18 + nextInterpretation.localActivity * 0.08 + 0.06
+      : role === 'grazer'
+        ? averageMotion * 0.34 + rhythmicActivity * 0.28 + feedingActivity * 0.12 + 0.1
+        : role === 'pollinator'
+          ? averageMotion * 0.32 + rhythmicActivity * 0.18 + localActivity * 0.16 + focusPresence * 0.1 + 0.14
+          : averageMotion * 0.14 + nextInterpretation.decayPresence * 0.16 + tension * 0.08 + 0.04;
+    const roleContour = role === 'bloom'
+      ? averageBrightness * 0.18 + harmonicRichness * 0.18 + growthRate * 0.12 + focus * 0.08 + 0.16
+      : role === 'grazer'
+        ? averageMotion * 0.2 + averageBrightness * 0.14 + rhythmicActivity * 0.16 + focus * 0.12 + 0.22
+        : role === 'pollinator'
+          ? averageBrightness * 0.26 + averageMotion * 0.22 + harmonicRichness * 0.18 + focus * 0.14 + 0.3
+          : averageBrightness * 0.1 + averageMotion * 0.1 + nextInterpretation.decayPresence * 0.22 + tension * 0.08 + 0.04;
     profiles[role] = {
       role,
       presence: smooth(previous.composition.voices[role].presence, clamp(presenceBase, 0, 1), 0.1),
       focus: smooth(previous.composition.voices[role].focus, clamp(focus * 0.84 + focusPresence * 0.16, 0, 1), 0.16),
       center,
       density: smooth(previous.composition.voices[role].density, roleDensity, 0.08),
-      brightness: smooth(previous.composition.voices[role].brightness, clamp(averageBrightness * 0.54 + harmonicRichness * 0.28 + (role === 'decay' ? tension * 0.12 : 0.18), 0, 1), 0.12),
-      motion: smooth(previous.composition.voices[role].motion, clamp(averageMotion * 0.46 + rhythmicActivity * 0.34 + (role === 'pollinator' ? 0.16 : role === 'decay' ? decayPresence * 0.08 : 0), 0, 1), 0.12),
-      contour: smooth(previous.composition.voices[role].contour, clamp(averageBrightness * 0.24 + averageMotion * 0.26 + harmonicRichness * 0.32 + focus * 0.18, 0, 1), 0.08),
-      register: role === 'bloom' ? -1 : role === 'pollinator' ? 1 : role === 'decay' ? -1 : 0,
+      brightness: smooth(previous.composition.voices[role].brightness, clamp(roleBrightness, 0, 1), 0.12),
+      motion: smooth(previous.composition.voices[role].motion, clamp(roleMotion, 0, 1), 0.12),
+      contour: smooth(previous.composition.voices[role].contour, clamp(roleContour, 0, 1), 0.08),
+      register: role === 'bloom' ? -2 : role === 'pollinator' ? 1 : role === 'decay' ? -1 : -1,
     };
     return profiles;
   }, {
