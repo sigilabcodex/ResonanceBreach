@@ -1,3 +1,4 @@
+import type { EcologicalMusicState } from './ecologicalMusic';
 import type { SimulationSnapshot } from '../types/world';
 
 type HarmonyLayer = 'bed' | 'plant' | 'cluster' | 'mobile' | 'event' | 'water';
@@ -8,7 +9,9 @@ const midiToHz = (midi: number) => 440 * 2 ** ((midi - 69) / 12);
 const MODES = {
   ionianPentatonic: [0, 2, 4, 7, 9],
   suspendedPentatonic: [0, 2, 5, 7, 9],
-  dorianPentatonic: [0, 3, 5, 7, 10],
+  dorianPentatonic: [0, 2, 3, 7, 10],
+  aeolianPentatonic: [0, 3, 5, 7, 10],
+  lydianPentatonic: [0, 4, 6, 7, 11],
 } as const;
 
 const LAYER_DEGREES: Record<HarmonyLayer, number[]> = {
@@ -27,14 +30,22 @@ export interface HarmonyState {
   mode: number[];
 }
 
-export const createHarmonyState = (snapshot: SimulationSnapshot): HarmonyState => {
+export const createHarmonyState = (snapshot: SimulationSnapshot, ecological?: EcologicalMusicState): HarmonyState => {
   const { stability, threat, nutrients, harmony, growth } = snapshot.stats;
-  const modeName: keyof typeof MODES = threat > 0.3
-    ? 'dorianPentatonic'
-    : stability > 0.62 && harmony > 0.5
-      ? 'ionianPentatonic'
-      : 'suspendedPentatonic';
-  const rootMidi = Math.round(38 + nutrients * 4 + growth * 3 + harmony * 2 - threat * 3);
+  const modeName: keyof typeof MODES = ecological?.composition.mode === 'degraded'
+    ? 'aeolianPentatonic'
+    : ecological?.composition.mode === 'tense'
+      ? 'dorianPentatonic'
+      : ecological?.composition.mode === 'fertile'
+        ? 'lydianPentatonic'
+        : threat > 0.3
+          ? 'dorianPentatonic'
+          : stability > 0.62 && harmony > 0.5
+            ? 'ionianPentatonic'
+            : 'suspendedPentatonic';
+  const rootMidi = ecological
+    ? ecological.composition.tonalCenter
+    : Math.round(38 + nutrients * 4 + growth * 3 + harmony * 2 - threat * 3);
   return {
     modeName,
     rootMidi,

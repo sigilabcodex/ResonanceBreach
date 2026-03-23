@@ -109,6 +109,7 @@ export class App {
 
   private restart(): void {
     this.simulation.reset();
+    this.audio.reset();
     this.camera.center.x = WORLD_WIDTH / 2;
     this.camera.center.y = WORLD_HEIGHT / 2;
     this.camera.zoom = 1;
