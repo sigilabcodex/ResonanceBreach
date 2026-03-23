@@ -1,145 +1,96 @@
 # ResonanceBreach Species Notes
 
-## Purpose
+## Ecology depth layer v1
 
-This document reflects the current canonical ecology pass. The goal is clarity: readable species roles, a visible nutrient loop, and habitat specialization that makes terrain matter.
+This pass shifts the simulation from mostly direct birth/death interactions into a cyclical ecology built from **propagules, dynamic environmental fields, decay, and regeneration**.
 
-## Core ecological rule
+## Lifecycle model
 
-Death is not treated as hard deletion. Rooted Blooms and mobile life leave residue, Decomposers work that residue, and returned nutrients support future bloom growth.
+The core ecological loop is now:
 
-## Habitat specialization rules
+1. **Rooted species mature and release seeds or spores.**
+2. **Propagules drift or wait in dormancy** until local conditions become favorable.
+3. **Germination creates new life** only when habitat, nutrient availability, temperature, and crowding allow it.
+4. **Fruit and biomass are consumed** by mobile species.
+5. **Death and waste create residue.**
+6. **Residue and decomposers return nutrients** to the local field.
+7. **Recovered nutrients support future germination and growth.**
 
-The world now exposes three explicit habitat tendencies derived from the continuous field.
+This avoids instant respawn and pushes recovery through local ecological memory instead.
 
-- **Wetland / water zones** — moisture-rich, calmer, more fluid terrain.
-- **Highlands / ridges** — elevated, tighter, more difficult terrain.
-- **Fertile basins / lowlands** — low, favorable, nutrient-rich growth pockets.
+## Continuous environmental fields
 
-Species do not read habitat as a hard tile type. They read blended habitat weights, so transitions stay natural and future species can reuse the same hooks.
+Two continuous fields now shape ecological behavior:
 
-## Canonical species pass 01
+- **Nutrients** — a coarse dynamic field layered on top of terrain fertility. Growth drains it, residue and decomposers restore it, and it slowly diffuses / relaxes over time.
+- **Temperature** — a coarse dynamic energy field layered on top of terrain. Species have preferred ranges and can locally warm or cool patches through activity.
 
-### Rooted Bloom
+Together with the terrain-derived moisture, slope, fertility, and habitat weights, these fields make clusters emerge more naturally.
 
-**Role**
-- primary rooted producer
-- long-lived visual anchor for the scene
-- quiet harmonic bed contributor
+## Resource flows
 
-**Implemented behavior**
-- anchors to basin-friendly fertile terrain and drifts only slightly around its root point
-- grows through seedling, growth, mature, and decay/residue-facing stages
-- accumulates pollination from Pollinator Drifter visits
-- gains its best growth, fruiting, and local enrichment in fertile basins
-- tolerates some wet support but dislikes harsh highland pressure
-- emits gentle local fertility support when healthy
-- fruits when mature, pollinated, and energetically stable
-- decays into residue when conditions stay poor
+The live resource economy is intentionally concrete:
 
-**Implemented visual direction**
-- rooted base with split lower strokes
-- central stem / axis
-- crown nodes that become more complex with maturity
-- optional halo / fruit cue when pollinated or fruiting
+- **nutrients** flow from residue, decomposers, and the terrain into rooted growth
+- **fruit / biomass** flow from blooms into flockers and grazers
+- **energy / temperature** influence which species thrive, linger, or collapse locally
 
-**Implemented audio role**
-- low, quiet harmonic drone layer
-- stronger detail only when focused or foreground-salient
+A typical loop now looks like:
 
-### Pollinator Drifter
+**bloom / canopy / ephemeral bloom → fruit or edible biomass → grazer / pollinator / parasite pressure → residue → decomposer → nutrient field → new propagule germination**
 
-**Role**
-- agile mobile helper lifeform
-- links blooms and fruit patches
-- adds sparse bright gestures to the garden
+## Species roles
 
-**Implemented behavior**
-- can cross most habitats, preserving open exploration
-- preferentially clusters around bloom-rich basins
-- uses wetland flow more readily than heavier species
-- avoids dominant ridges and loses more efficiency crossing hard highland terrain
-- seeks blooms needing pollination, then fruit/feed when useful
-- increases bloom pollination, vitality, and growth during visits
-- can reproduce after sustained successful foraging / visitation
-- leaves residue when exhausted
+### Rooted Bloom (`plant`)
+- baseline producer
+- basin-favoring rooted species
+- balanced seed output, fruiting, and soil support
 
-**Implemented visual direction**
-- petal / wing-like glyph silhouette
-- soft dotted motion trace
-- juvenile-to-mature growth adds stronger wing structure
+### Ephemeral Bloom (`ephemeral`)
+- fast warm-loving producer
+- quick growth, quick decay, high spore output
+- rapidly converts nutrient spikes into short-lived biomass
 
-**Implemented audio role**
-- upper-register sparse voices and event chirps
-- grouped at distance, clearer when near camera or inside focus
+### Canopy Bloom (`canopy`)
+- slow rare high-yield producer
+- prefers cooler, richer pockets
+- fruits heavily but reproduces slowly through deeper-cycle seeds
 
-### Decomposer
+### Pollinator Drifter (`flocker`)
+- mobile pollination and scavenging species
+- links bloom patches and boosts fruiting success
+- helps spread productivity across clusters
 
-**Role**
-- low-profile recycler species
-- closes the residue-to-nutrient part of the loop
-- supplies subtle textural audio mass
+### Grazer (`grazer`)
+- group-foraging herbivore
+- consumes fruit and mature bloom surplus
+- converts biomass into pressure, waste, and residue
 
-**Implemented behavior**
-- seeks nearby residue rather than free-roaming broadly
-- prefers moist low ground and residue-rich fertile pockets
-- crawls with slow filament-like motion
-- consumes residue gradually instead of deleting it instantly
-- converts residue into local terrain enrichment
-- loses efficiency on high ridges and other hard terrain
-- can spread near productive residue patches
-- declines slowly when little residue is available
+### Decomposer (`cluster`)
+- residue recycler
+- strongest local nutrient returner
+- stabilizes collapse zones and helps recovery begin
 
-**Implemented visual direction**
-- branching filament glyph
-- low, substrate-adjacent silhouette
-- faint motion trace and branching complexity as it matures
+### Parasitic Tendril (`parasite`)
+- stationary / slow creeping feeder
+- siphons energy from rooted blooms in warm pockets
+- adds local imbalance and residue-rich pressure without acting like an enemy faction
 
-**Implemented audio role**
-- darker, quieter grouped/foreground texture
-- low-Q filtered tones that sit below drifter gestures
+## Stability goals in this pass
 
-## Canonical species pass 02
+The pass is tuned for **dynamic balance**, not equilibrium:
 
-### Grazer
+- local bloom crashes can happen
+- warm nutrient surges can trigger short-lived ephemeral booms
+- decomposers and residue can recover exhausted terrain
+- crowding and nutrient draw prevent infinite producer runaway
+- propagule dormancy helps the world recover after local depletion
 
-**Role**
-- grounded mobile forager
-- consumes bloom fruit and edible growth
-- converts producer surplus into visible mortality / residue
+## Debug support added
 
-**Implemented behavior**
-- seeks persistent fruit first, then browses mature productive blooms
-- prefers fertile basins and lowland corridors where blooms gather
-- avoids lingering in wet ground and pays a clearer cost crossing ridges
-- reproduces only after sustained successful grazing in favorable habitat
-- dies into residue rather than disappearing instantly
+The HUD diagnostics now expose lightweight ecological hints for:
 
-**Implemented visual direction**
-- heavier, ribbed glyph with low trail
-- warm, substrate-adjacent tone distinct from drifters
-
-**Implemented audio role**
-- midrange pulses and soft body movement tones
-- quiet feeding ticks and calmer starvation/death falloff
-
-## Ecological loop now implemented
-
-1. Rooted Blooms establish in fertile basins.
-2. Pollinator Drifters visit blooms and raise pollination / vitality.
-3. Healthy blooms produce fruit.
-4. Grazers and drifters convert surplus growth into movement, feeding, and mortality risk.
-5. Blooms and mobile species can die under poor conditions or bad terrain fit.
-6. Death creates residue instead of instant removal.
-7. Decomposers seek and consume residue.
-8. Residue consumption enriches wet and basin-adjacent terrain.
-9. Improved nutrients support later bloom growth and continued fruiting.
-
-## Current scope limits
-
-This pass intentionally does **not** yet introduce:
-- hostile fauna or breach entities
-- major UI redesign
-- a larger species roster
-- highly specialized predator-prey loops
-- hard biome borders or a visible world grid
+- propagule counts
+- lifecycle transition counts
+- richer per-species timing distribution
+- nutrient / temperature awareness through the main status readout

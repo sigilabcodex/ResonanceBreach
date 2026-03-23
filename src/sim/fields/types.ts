@@ -19,6 +19,7 @@ export interface FieldSample {
   flow: Vec2;
   hue: number;
   nutrient: number;
+  temperature: number;
   elevation: number;
   moisture: number;
   slope: number;

@@ -5,7 +5,10 @@ const speciesName = (entityType: EntityType) => ({
   plant: 'Rooted Bloom',
   flocker: 'Pollinator Drifter',
   cluster: 'Decomposer',
+  ephemeral: 'Ephemeral Bloom',
+  canopy: 'Canopy Bloom',
   grazer: 'Grazer',
+  parasite: 'Parasitic Tendril',
   predator: 'Predator',
 }[entityType]);
 

@@ -58,10 +58,10 @@ export interface EcologicalMusicState {
 // composition controls so the score evolves as texture instead of firing
 // one sound per entity/event.
 const ROLE_ORDER: EcologicalVoiceRole[] = ['bloom', 'grazer', 'pollinator', 'decay'];
-const SPECIES_ORDER = ['plant', 'grazer', 'flocker', 'cluster', 'predator'] as const;
+const SPECIES_ORDER = ['plant', 'ephemeral', 'canopy', 'grazer', 'flocker', 'cluster', 'parasite', 'predator'] as const;
 
 const entityRole = (entity: Entity): EcologicalVoiceRole => {
-  if (entity.type === 'plant') return 'bloom';
+  if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') return 'bloom';
   if (entity.type === 'grazer') return 'grazer';
   if (entity.type === 'flocker') return 'pollinator';
   return 'decay';
@@ -105,7 +105,10 @@ const createEmptyState = (): EcologicalMusicState => ({
 const speciesEntropy = (snapshot: SimulationSnapshot): number => {
   const counts = {
     plant: 0,
+    ephemeral: 0,
+    canopy: 0,
     grazer: 0,
+    parasite: 0,
     flocker: 0,
     cluster: 0,
     predator: 0,

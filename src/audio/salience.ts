@@ -11,17 +11,23 @@ const wrappedDistance = (a: Vec2, b: Vec2, width: number, height: number) => {
 
 const ENTITY_IMPORTANCE: Record<Entity['type'], number> = {
   plant: 0.58,
+  ephemeral: 0.62,
+  canopy: 0.66,
   flocker: 0.78,
   cluster: 0.48,
   grazer: 0.88,
+  parasite: 0.7,
   predator: 0.95,
 };
 
 const ECOLOGICAL_WEIGHT: Record<Entity['type'], number> = {
   plant: 0.84,
+  ephemeral: 0.9,
+  canopy: 0.86,
   flocker: 0.56,
   cluster: 0.72,
   grazer: 0.78,
+  parasite: 0.74,
   predator: 0.82,
 };
 
@@ -89,7 +95,7 @@ export const scoreEntities = (
     const isPrimary = focus.mode === 'entity' && focus.entityId === entity.id;
     const isRelated = focus.mode === 'entity' && focus.relatedEntityIds.has(entity.id);
     const activityScore = clamp(entity.activity, 0, 1);
-    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'grazer' ? 0.82 : entity.type === 'cluster' ? 0.52 : entity.type === 'plant' ? 0.58 : 0.64;
+    const rarityScore = entity.type === 'predator' ? 1 : entity.type === 'grazer' ? 0.82 : entity.type === 'parasite' ? 0.76 : entity.type === 'cluster' ? 0.52 : entity.type === 'canopy' ? 0.72 : entity.type === 'ephemeral' ? 0.66 : entity.type === 'plant' ? 0.58 : 0.64;
     const ecologicalScore = clamp(
       entity.growth * 0.22 + entity.resonance * ECOLOGICAL_WEIGHT[entity.type] * 0.34 + entity.harmony * 0.18 + entity.energy * 0.16,
       0,
@@ -150,8 +156,8 @@ export const selectForegroundVoices = (scored: ScoredEntity[], maxVoices: number
   .slice(0, maxVoices);
 
 const zoneKindForEntity = (entity: Entity): ZoneSummary['kind'] => {
-  if (entity.type === 'plant') return 'rooted';
-  if (entity.type === 'cluster') return 'cluster';
+  if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') return 'rooted';
+  if (entity.type === 'cluster' || entity.type === 'parasite') return 'cluster';
   if (entity.type === 'predator') return 'predator';
   return 'mobile';
 };

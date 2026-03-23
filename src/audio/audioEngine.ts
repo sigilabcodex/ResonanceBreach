@@ -32,17 +32,23 @@ const ECOLOGICAL_ROLE_ORDER: EcologicalVoiceRole[] = ['bloom', 'grazer', 'pollin
 
 const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
   plant: -1,
+  ephemeral: 0,
+  canopy: -1,
   cluster: -1,
   flocker: 1,
   grazer: 0,
+  parasite: 0,
   predator: 0,
 };
 
 const ENTITY_WAVEFORM: Record<ScoredEntity['entity']['type'], OscillatorType> = {
   plant: 'triangle',
+  ephemeral: 'triangle',
+  canopy: 'triangle',
   cluster: 'sine',
   flocker: 'sine',
   grazer: 'triangle',
+  parasite: 'square',
   predator: 'sawtooth',
 };
 
@@ -481,13 +487,13 @@ export class AudioEngine {
           : focus.active
             ? 420 + detailLift * 420
             : 820 + detailLift * 980;
-      const layer = candidate.entity.type === 'plant' ? 'plant' : candidate.entity.type === 'cluster' ? 'cluster' : 'mobile';
+      const layer = candidate.entity.type === 'plant' || candidate.entity.type === 'ephemeral' || candidate.entity.type === 'canopy' ? 'plant' : candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 'cluster' : 'mobile';
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
       voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
-      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.1 + detailLift * 0.72 : 1.6 + detailLift * 1.15, now, 0.16);
+      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
+      voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.1 + detailLift * 0.72 : 1.6 + detailLift * 1.15, now, 0.16);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(candidate.entity.position.x, snapshot), now, 0.12);
       voice.gain.gain.setTargetAtTime(gain, now, 0.12);
     });
@@ -532,6 +538,7 @@ export class AudioEngine {
       fields: [],
       particles: [],
       residues: [],
+      propagules: [],
       bursts: [],
       stats: {
         harmony: event.blocked ? 0.36 : 0.58,
@@ -544,6 +551,7 @@ export class AudioEngine {
         focus: event.tool === 'observe' ? 0.8 : 0,
         nutrients: event.tool === 'feed' ? 0.52 : 0.24,
         fruit: event.tool === 'feed' ? 0.44 : 0.14,
+        temperature: event.tool === 'grow' ? 0.56 : 0.48,
       },
       tool: { active: event.tool, unlocked: [event.tool], pulse: 0, worldPosition: event.position, radius: 0, strength: 0, visible: false, blocked: event.blocked },
       attention: { mode: 'none', entityId: null, position: event.position, radius: 0, strength: 0, relatedEntityIds: [], dragging: false, dragStart: null, dragCurrent: null },
@@ -582,6 +590,7 @@ export class AudioEngine {
       fields: [],
       particles: [],
       residues: [],
+      propagules: [],
       bursts: [],
       stats: {
         harmony: 0.55,
@@ -594,6 +603,7 @@ export class AudioEngine {
         focus: 0,
         nutrients: event.type === 'residueCreated' ? 0.52 : 0.26,
         fruit: event.type === 'entityFed' || event.type === 'fruitCreated' ? 0.46 : 0.18,
+        temperature: event.type === 'entityDied' ? 0.44 : 0.5,
       },
       tool: { active: 'observe', unlocked: ['observe'], pulse: 0, worldPosition: event.position, radius: 0, strength: 0, visible: false, blocked: false },
       attention: { mode: 'none', entityId: null, position: event.position, radius: 0, strength: 0, relatedEntityIds: [], dragging: false, dragStart: null, dragCurrent: null },

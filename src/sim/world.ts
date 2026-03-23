@@ -41,6 +41,7 @@ export const createDefaultStats = (): GardenStats => ({
   focus: 0,
   nutrients: 0.3,
   fruit: 0.18,
+  temperature: 0.5,
 });
 
 export const createDefaultDiagnostics = (): SimulationDiagnostics => ({
@@ -49,7 +50,16 @@ export const createDefaultDiagnostics = (): SimulationDiagnostics => ({
     cluster: 0,
     plant: 0,
     grazer: 0,
+    ephemeral: 0,
+    canopy: 0,
+    parasite: 0,
     predator: 0,
+  },
+  lifecycleTransitions: {
+    propagulesCreated: 0,
+    germinations: 0,
+    deaths: 0,
+    fruitingBursts: 0,
   },
   queryCounts: {
     neighbors: 0,
@@ -70,6 +80,7 @@ export const createDefaultDiagnostics = (): SimulationDiagnostics => ({
     fruit: 0,
     feed: 0,
     residues: 0,
+    propagules: 0,
     particles: 0,
     terrainModifiers: 0,
     focusedEntities: 0,
@@ -93,6 +104,7 @@ export const createWorldState = (): WorldState => ({
   fields: [],
   particles: [],
   residues: [],
+  propagules: [],
   bursts: [],
   stats: createDefaultStats(),
   tool: createDefaultToolState(),
