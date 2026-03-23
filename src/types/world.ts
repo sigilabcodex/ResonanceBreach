@@ -39,6 +39,7 @@ export interface TerrainCell {
   roughness: number;
   hue: number;
   nutrient: number;
+  temperature: number;
 }
 
 export interface Attractor {
@@ -87,7 +88,7 @@ export interface Entity {
   pollination: number;
   memory: number;
   targetId?: number;
-  targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'signal';
+  targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'seed' | 'signal';
   retargetTimer?: number;
   trail: Vec2[];
 }
@@ -133,6 +134,19 @@ export interface Residue {
   radius: number;
   sourceType?: EntityType;
   richness: number;
+}
+
+export interface Propagule {
+  id: number;
+  kind: 'seed' | 'spore';
+  species: EntityType;
+  position: Vec2;
+  velocity: Vec2;
+  age: number;
+  dormancy: number;
+  viability: number;
+  nutrient: number;
+  sourceEntityId?: number;
 }
 
 export interface EventBurst {
@@ -187,6 +201,7 @@ export interface GardenStats {
   focus: number;
   nutrients: number;
   fruit: number;
+  temperature: number;
 }
 
 export interface PerformanceStats {
@@ -204,6 +219,12 @@ export interface PerformanceStats {
 
 export interface SimulationDiagnostics {
   speciesUpdateTimeMs: Record<EntityType, number>;
+  lifecycleTransitions: {
+    propagulesCreated: number;
+    germinations: number;
+    deaths: number;
+    fruitingBursts: number;
+  };
   queryCounts: {
     neighbors: number;
     foodSearches: number;
@@ -223,6 +244,7 @@ export interface SimulationDiagnostics {
     fruit: number;
     feed: number;
     residues: number;
+    propagules: number;
     particles: number;
     terrainModifiers: number;
     focusedEntities: number;
@@ -246,6 +268,7 @@ export interface WorldState {
   fields: ToolField[];
   particles: FeedParticle[];
   residues: Residue[];
+  propagules: Propagule[];
   bursts: EventBurst[];
   stats: GardenStats;
   tool: ToolState;

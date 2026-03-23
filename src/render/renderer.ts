@@ -18,7 +18,10 @@ const entityPalette: Record<EntityType, readonly [number, number, number]> = {
   flocker: [220, 235, 244],
   cluster: [170, 206, 182],
   plant: [140, 212, 160],
+  ephemeral: [202, 232, 126],
+  canopy: [112, 184, 142],
   grazer: [214, 196, 164],
+  parasite: [196, 132, 170],
   predator: [244, 176, 202],
 };
 
@@ -287,7 +290,7 @@ export class Renderer {
       const position = this.wrappedPoint(residue.position, camera);
       if (!this.isVisible(position, residue.radius * this.view.scale + 24)) continue;
       const alpha = (1 - residue.age / residue.duration) * (0.12 + residue.richness * 0.16);
-      const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'grazer' ? 18 : residue.sourceType === 'cluster' ? 122 : 102;
+      const hue = residue.sourceType === 'flocker' ? 32 : residue.sourceType === 'grazer' ? 18 : residue.sourceType === 'cluster' ? 122 : residue.sourceType === 'parasite' ? 320 : residue.sourceType === 'canopy' ? 128 : residue.sourceType === 'ephemeral' ? 82 : 102;
       ctx.strokeStyle = hsla(hue, 22, 70, alpha * 0.62);
       ctx.lineWidth = 0.7;
       for (let i = 0; i < 3; i += 1) {
@@ -427,7 +430,7 @@ export class Renderer {
       const position = this.wrappedPoint(entity.position, camera);
       if (!this.isVisible(position, entity.size * this.view.scale * 4 + 24)) continue;
       const color = entityPalette[entity.type];
-      const radius = entity.size * (entity.type === 'plant' ? 2.8 : entity.type === 'cluster' ? 2.3 : entity.type === 'grazer' ? 2.7 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
+      const radius = entity.size * (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy' ? 2.8 : entity.type === 'cluster' || entity.type === 'parasite' ? 2.3 : entity.type === 'grazer' ? 2.7 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
       const gradient = ctx.createRadialGradient(position.x, position.y, entity.size * 0.1, position.x, position.y, radius);
       gradient.addColorStop(0, rgba(color, 0.04 + entity.activity * 0.06 + entity.pollination * 0.03));
       gradient.addColorStop(0.65, rgba(color, 0.02 + entity.visualPulse * 0.06));
@@ -446,9 +449,9 @@ export class Renderer {
       const position = this.wrappedPoint(entity.position, camera);
       if (!this.isVisible(position, entity.size * this.view.scale * 4 + 28)) continue;
       if (entity.type === 'flocker') this.drawFlocker(entity, position, time, camera, settings);
-      else if (entity.type === 'cluster') this.drawCluster(entity, position, time, camera, settings);
+      else if (entity.type === 'cluster' || entity.type === 'parasite') this.drawCluster(entity, position, time, camera, settings);
       else if (entity.type === 'grazer') this.drawGrazer(entity, position, time, camera, settings);
-      else if (entity.type === 'plant') this.drawPlant(entity, position, time);
+      else if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') this.drawPlant(entity, position, time);
       else this.drawPredator(entity, position, time);
     }
   }
