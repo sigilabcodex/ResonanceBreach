@@ -13,17 +13,21 @@ A very quiet always-on layer summarizes the whole garden state.
 - two low-cost oscillators provide the stable foundation
 - pitch follows the current harmony root and mode
 - filter motion follows stability, harmony, growth, and threat
-- the bed ducks slightly when ATTENTION is emphasizing an entity or region
+- the bed now stays reliably audible at normal listening levels so the world rarely drops toward near-silence
+- the bed ducks only slightly when ATTENTION is emphasizing an entity or region, preserving environmental continuity
 
 ### 2. Grouped zone / cluster voices
 
 Low-salience entities are collapsed into composite zone summaries instead of getting individual synths.
 
-- entities are bucketed into spatial cells
-- grouping separates rooted, mobile, cluster, predator, and water-like regions
-- only the strongest grouped zones are rendered at once
-- distant or low-detail zones become softer, darker, and more merged
-- water terrain also contributes a single grouped texture derived from terrain flow and resonance
+The pooled ecological roles are now tuned as a clearer ensemble rather than a generic grouped layer.
+
+- **Bloom / rooted life:** warm sustained low-register harmonic ground
+- **Pollinator / drifter:** light upper-register motion with delicate fragment-like emphasis
+- **Grazer:** bodily midrange pulse with soft rhythmic weight
+- **Decay / decomposer:** subtle textural bed that implies transformation without dominating
+- only the strongest grouped roles are rendered at once using the existing pooled voices
+- distance and zoom still soften or merge detail, but grouped voices remain musically legible at normal listening levels
 
 ### 3. Foreground salient voices
 
@@ -32,6 +36,7 @@ Only a small number of entities are allowed to speak individually.
 - the foreground voice pool is capped at **3**
 - candidates are scored every update
 - only scores above the foreground threshold are eligible
+- ATTENTION now gives more detail, brightness, and level to focused entities or regions without hard-muting the rest of the garden
 - all remaining activity is grouped, attenuated, or omitted
 
 ### 4. Event sounds
@@ -72,11 +77,22 @@ The garden now uses a small explicit tonal vocabulary.
 
 ### Mode selection
 
-The harmony module chooses one of a few constrained pentatonic-style modes based on garden state:
+The harmony module chooses one of a few constrained pentatonic-style modes based on garden state. The current ecological pass aims to make these states easier to hear:
 
 - `ionianPentatonic`
 - `suspendedPentatonic`
 - `dorianPentatonic`
+- `aeolianPentatonic`
+- `lydianPentatonic`
+
+### Current ecological state mapping
+
+- **calm / stable:** restrained motion, warmer bloom bed, softer rhythmic emphasis
+- **fertile / abundant:** brighter bloom and pollinator presence, slightly more open filters, fuller harmonic lift
+- **active / busy:** clearer grazer pulse, more pollinator motion, stronger foreground lift
+- **degraded / sparse:** thinner bloom support, more exposed decay texture, darker harmonic color
+
+This keeps the current sound world expressive while leaving room for future corruption, anomaly, or enemy-tension layers to contrast against it.
 
 ### Root selection
 
@@ -123,13 +139,29 @@ Entity selection:
 
 - the chosen organism becomes dominant
 - nearby related organisms remain softly present
-- filters open for clarity without muting the ecology around it
+- filters open and gain rises for better intelligibility without muting the ecology around it
 
 Region selection:
 
 - entities inside the region are clearer
 - internal balance is preserved instead of collapsing to one source
 - the outside world remains present as softer ambience
+- grouped voices inside the region gain modest foreground lift so inspection feels rewarding instead of merely louder
+
+## Mix hierarchy and dynamic range
+
+The current mix pass is explicitly organized into three layers:
+
+- **Global bed:** always audible harmonic floor
+- **Midground grouped ecology:** perceptible role-based ensemble voices at ordinary listening levels
+- **Foreground salient voices:** selected, nearby, or event-promoted activity that rises above the bed without clipping it
+
+Dynamic range is shaped through:
+
+- slow swells in the bed and bloom layers
+- role-dependent pulsing for grazer and pollinator activity
+- mode-dependent prominence changes across calm, fertile, active, and degraded states
+- restrained focus ducking rather than abrupt silencing
 
 ## Event integration
 
@@ -149,7 +181,7 @@ The system avoids uncontrolled WebAudio growth.
 ### Voice limits
 
 - **global bed:** 2 always-on oscillators
-- **grouped zones:** 3 pooled voices max
+- **grouped ecological roles:** 4 pooled voices max
 - **foreground salient voices:** 3 pooled voices max
 - **events:** short-lived transient nodes only when events fire
 
@@ -159,7 +191,7 @@ The system avoids uncontrolled WebAudio growth.
 - pooled oscillator voices are retuned instead of recreated every frame
 - low-salience entities are summarized into groups
 - recent event salience is stored in a tiny decaying map keyed by entity id
-- spatial grouping uses simple fixed-size buckets
+- tuning focuses on gain staging, filter shaping, and lightweight modulation rather than node-count growth
 
 ## Current files
 

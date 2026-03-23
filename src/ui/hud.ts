@@ -768,6 +768,8 @@ export class Hud {
       `targets reuse ${snapshot.diagnostics.queryCounts.targetReuses} · retarget ${snapshot.diagnostics.queryCounts.targetRetargets} · attention ${snapshot.diagnostics.queryCounts.attentionRefreshes}`,
       `species plant ${snapshot.diagnostics.speciesUpdateTimeMs.plant.toFixed(2)} · flocker ${snapshot.diagnostics.speciesUpdateTimeMs.flocker.toFixed(2)} · grazer ${snapshot.diagnostics.speciesUpdateTimeMs.grazer.toFixed(2)} · cluster ${snapshot.diagnostics.speciesUpdateTimeMs.cluster.toFixed(2)} ms`,
       `audio master ${audioDebug ? (audioDebug.masterGain * 100).toFixed(0) : '0'}% · foreground ${audioDebug?.foregroundVoiceCount ?? 0} · focused ${audioDebug?.focusedVoiceCount ?? 0} · grouped ${audioDebug?.groupedVoiceCount ?? 0}`,
+      `music state ${audioDebug?.mode ?? 'calm'} · tonic ${audioDebug ? audioDebug.tonalCenterHz.toFixed(0) : '0'} Hz · fg balance ${audioDebug ? Math.round(audioDebug.foregroundBalance * 100) : 0}%`,
+      `roles bloom ${audioDebug ? Math.round(audioDebug.roleLevels.bloom * 100) : 0}% · pollinator ${audioDebug ? Math.round(audioDebug.roleLevels.pollinator * 100) : 0}% · grazer ${audioDebug ? Math.round(audioDebug.roleLevels.grazer * 100) : 0}% · decay ${audioDebug ? Math.round(audioDebug.roleLevels.decay * 100) : 0}%`,
     ];
 
     if (snapshot.diagnostics.topHotspots.length > 0) {

@@ -34,6 +34,8 @@ export const createHarmonyState = (snapshot: SimulationSnapshot, ecological?: Ec
   const { stability, threat, nutrients, harmony, growth } = snapshot.stats;
   const modeName: keyof typeof MODES = ecological?.composition.mode === 'degraded'
     ? 'aeolianPentatonic'
+    : ecological?.composition.mode === 'active'
+      ? 'ionianPentatonic'
     : ecological?.composition.mode === 'tense'
       ? 'dorianPentatonic'
       : ecological?.composition.mode === 'fertile'
