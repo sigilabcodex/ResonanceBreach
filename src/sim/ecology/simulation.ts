@@ -372,6 +372,7 @@ export class Simulation {
       entity.visualPulse = Math.max(0, entity.visualPulse - dt * 0.44);
       entity.reproductionCooldown = Math.max(0, entity.reproductionCooldown - dt);
       entity.fruitCooldown = Math.max(0, entity.fruitCooldown - dt);
+      entity.soundCooldown = Math.max(0, entity.soundCooldown - dt);
       entity.stageProgress = this.getLifecycleProgress(entity);
       entity.stage = this.getStage(entity.stageProgress);
       if (entity.visualPulse <= 0.03 && entity.visualState !== 'dying') entity.visualState = 'idle';
@@ -994,6 +995,10 @@ export class Simulation {
       vitality,
       pollination: ROOTED_BLOOM_TYPES.includes(type) ? this.rng.range(type === 'canopy' ? 0.08 : 0.12, type === 'ephemeral' ? 0.42 : 0.34) : 0,
       memory: this.rng.range(type === 'grazer' ? 0.24 : type === 'parasite' ? 0.16 : 0.18, type === 'grazer' ? 0.52 : type === 'parasite' ? 0.42 : 0.44),
+      soundCooldown: this.rng.range(0, 0.8),
+      acousticPressure: this.rng.range(0.1, 0.4),
+      acousticPattern: this.rng.range(0.1, 0.5),
+      predatorState: 'resting',
       targetId: undefined,
       targetKind: undefined,
       retargetTimer: this.rng.range(0, TARGET_REUSE_INTERVAL),
@@ -1221,6 +1226,11 @@ export class Simulation {
     entity.stage = this.getStage(entity.stageProgress);
     entity.size = clamp(entity.baseSize * (0.68 + entity.growth * 0.42 + entity.stageProgress * 0.24 + (rooted ? entity.pollination * 0.04 : entity.type === 'grazer' ? entity.food * 0.05 : 0)), entity.baseSize * 0.54, entity.baseSize * 2.1);
     entity.heading = Math.atan2(entity.velocity.y || 0.001, entity.velocity.x || 0.001);
+    entity.acousticPattern = lerp(
+      entity.acousticPattern,
+      clamp(entity.pulse * 0.56 + entity.activity * 0.28 + (entity.visualState === 'feeding' ? 0.12 : 0), 0, 1.4),
+      dt * 0.42,
+    );
     this.updateTrail(entity);
     localStats.activity += entity.activity;
     localStats.harmony += entity.harmony;
@@ -1327,8 +1337,7 @@ export class Simulation {
       return;
     }
     if (entity.type === 'predator') {
-      entity.activity = lerp(entity.activity, 0, dt * 2);
-      entity.energy = clamp(entity.energy - dt * 0.1, 0, 1.2);
+      this.updatePredator(entity, sample, neighbors, dt, localStats);
       return;
     }
     if (entity.type === 'grazer') {
@@ -1341,6 +1350,93 @@ export class Simulation {
     }
 
     this.updatePollinator(entity, sample, neighbors, dt, localStats);
+  }
+
+  private shouldEmitSound(
+    entity: Entity,
+    dt: number,
+    baseRate: number,
+    contextWeight: number,
+  ): boolean {
+    if (entity.soundCooldown > 0) return false;
+    const lifecycleWeight = entity.stage === 'mature' ? 1.15 : entity.stage === 'decay' ? 0.72 : 0.92;
+    const stateWeight = entity.visualState === 'feeding'
+      ? 1.2
+      : entity.visualState === 'reproducing'
+        ? 1.08
+        : entity.visualState === 'dying'
+          ? 0.42
+          : 0.64;
+    const silenceBias = clamp(0.72 - entity.activity * 0.38 - entity.energy * 0.16, 0.16, 0.82);
+    const probability = clamp(
+      dt * baseRate * contextWeight * lifecycleWeight * stateWeight * (1 - silenceBias * 0.55),
+      0,
+      0.92,
+    );
+    if (this.rng.next() >= probability) return false;
+    entity.soundCooldown = this.rng.range(0.2, 1.1) * (entity.visualState === 'idle' ? 1.2 : 0.85);
+    return true;
+  }
+
+  private updatePredator(
+    entity: Entity,
+    sample: FieldSample,
+    neighbors: Entity[],
+    dt: number,
+    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+  ): void {
+    const hunting = entity.energy < 0.42 || entity.food < 0.36;
+    entity.predatorState = hunting ? 'hunting' : 'resting';
+
+    let loudestSignal: Entity | undefined;
+    let loudestScore = 0;
+    for (const other of neighbors) {
+      if (other.id === entity.id) continue;
+      const offset = this.delta(entity.position, other.position);
+      const distance = Math.max(1, Math.hypot(offset.x, offset.y));
+      const amplitude = clamp(other.visualPulse * 0.55 + other.activity * 0.32 + other.energy * 0.13, 0, 1.4);
+      const repetitiveness = clamp(other.acousticPattern * 0.7 + other.pulse * 0.3, 0, 1.2);
+      const score = (amplitude * 0.68 + repetitiveness * 0.52) * clamp(1 - distance / 320, 0, 1);
+      if (score > loudestScore) {
+        loudestScore = score;
+        loudestSignal = other;
+      }
+    }
+
+    entity.acousticPressure = lerp(entity.acousticPressure, loudestScore, dt * 0.6);
+    entity.acousticPattern = lerp(entity.acousticPattern, loudestSignal ? loudestSignal.acousticPattern : 0.2, dt * 0.35);
+
+    const basinBias = habitatMatch(sample, 'basin');
+    entity.velocity.x += sample.flow.x * dt * 0.022 + sample.fertilityGradient.x * dt * (1.2 + basinBias * 1.4) - sample.gradient.x * dt * 1.8;
+    entity.velocity.y += sample.flow.y * dt * 0.022 + sample.fertilityGradient.y * dt * (1.2 + basinBias * 1.4) - sample.gradient.y * dt * 1.8;
+
+    if (hunting && loudestSignal && loudestScore > 0.24) {
+      const offset = this.delta(entity.position, loudestSignal.position);
+      const distance = Math.max(1, Math.hypot(offset.x, offset.y));
+      const pull = smoothstep(320, 0, distance) * (6 + loudestScore * 8);
+      entity.velocity.x += (offset.x / distance) * pull * dt;
+      entity.velocity.y += (offset.y / distance) * pull * dt;
+      entity.targetId = loudestSignal.id;
+      entity.targetKind = 'signal';
+      entity.activity = lerp(entity.activity, 0.5 + loudestScore * 0.4, dt * 1.8);
+      localStats.threat += dt * (0.05 + loudestScore * 0.22);
+    } else {
+      entity.targetId = undefined;
+      entity.targetKind = undefined;
+      const driftTheta = this.time * 0.01 + entity.id * 0.36;
+      entity.velocity.x += Math.cos(driftTheta) * dt * 0.34;
+      entity.velocity.y += Math.sin(driftTheta * 0.8) * dt * 0.3;
+      entity.activity = lerp(entity.activity, hunting ? 0.18 : 0.08, dt * 1.6);
+    }
+
+    entity.velocity.x *= Math.pow(0.964, dt * 60);
+    entity.velocity.y *= Math.pow(0.964, dt * 60);
+    entity.position = this.wrapPosition({
+      x: entity.position.x + entity.velocity.x * dt * (0.26 + entity.activity * 0.34),
+      y: entity.position.y + entity.velocity.y * dt * (0.26 + entity.activity * 0.34),
+    });
+    entity.energy = clamp(entity.energy - dt * (hunting ? 0.012 : 0.006), 0, 1.2);
+    entity.harmony = clamp(lerp(entity.harmony, 0.14 + sample.resonance * 0.2, dt * 0.04), 0, 1.1);
   }
 
   private updatePollinator(
@@ -1534,7 +1630,8 @@ export class Simulation {
         entity.visualState = 'feeding';
         entity.visualPulse = Math.max(entity.visualPulse, 0.38);
         entity.pulse = Math.max(entity.pulse, 0.22);
-        if (this.rng.next() < dt * 1.8) {
+        entity.acousticPressure = clamp(entity.acousticPressure + browseAmount * 0.26, 0, 1.4);
+        if (this.shouldEmitSound(entity, dt, 1.6, 1 + browseAmount * 4)) {
           this.emitBurst('feed', entity.position, 9 + entity.size * 0.8, 0.12 + entity.hueShift * 0.03);
           this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: 'fruit' });
         }
@@ -2218,8 +2315,11 @@ export class Simulation {
       entity.visualState = 'feeding';
       entity.visualPulse = entity.type === 'grazer' ? 0.5 : 0.62;
       entity.pulse = 0.24;
-      this.emitBurst('feed', entity.position, (entity.type === 'grazer' ? 12 : 10) + entity.size, 0.18 + entity.hueShift * 0.03);
-      this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: particle.kind });
+      entity.acousticPressure = clamp(entity.acousticPressure + particle.energy * 0.9, 0, 1.4);
+      if (this.shouldEmitSound(entity, dt, 2.2, gain * 2.4 + 0.6)) {
+        this.emitBurst('feed', entity.position, (entity.type === 'grazer' ? 12 : 10) + entity.size, 0.18 + entity.hueShift * 0.03);
+        this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: particle.kind });
+      }
       particle.age = particle.duration;
       entity.targetId = undefined;
       entity.targetKind = undefined;

@@ -7,12 +7,28 @@ import { createAudioFocusContext, scoreEntities, selectForegroundVoices, type Au
 import { createHarmonyState, getHarmonyFrequency, type HarmonyState } from './harmony';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const smoothstep = (edge0: number, edge1: number, value: number) => {
+  const t = clamp((value - edge0) / (edge1 - edge0 || 1), 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 type PooledVoice = {
   gain: GainNode;
   filter: BiquadFilterNode;
   panner: StereoPannerNode;
   oscillator: OscillatorNode;
+};
+
+type PhraseAgent = {
+  id: number;
+  entityId: number | null;
+  motif: number[];
+  rhythm: number[];
+  variation: number;
+  noteIndex: number;
+  notesRemaining: number;
+  phase: 'idle' | 'playing' | 'listening';
+  nextActionTime: number;
 };
 
 export interface AudioDebugState {
@@ -28,6 +44,8 @@ export interface AudioDebugState {
 
 const FOREGROUND_VOICE_COUNT = 3;
 const ECOLOGICAL_VOICE_COUNT = 4;
+const PHRASE_AGENT_COUNT = 3;
+const MAX_ACTIVE_VOICES = 8;
 const ECOLOGICAL_ROLE_ORDER: EcologicalVoiceRole[] = ['bloom', 'grazer', 'pollinator', 'decay'];
 
 const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
@@ -67,10 +85,16 @@ export class AudioEngine {
   private bedLowFilter?: BiquadFilterNode;
   private bedMidFilter?: BiquadFilterNode;
   private bedLowOsc?: OscillatorNode;
-  private bedMidOsc?: OscillatorNode;
+  private bedPulseOsc?: OscillatorNode;
+  private bedNoiseGain?: GainNode;
+  private bedNoiseFilter?: BiquadFilterNode;
   private ecologicalVoices: PooledVoice[] = [];
   private foregroundVoices: PooledVoice[] = [];
   private eventBus?: GainNode;
+  private phraseBus?: GainNode;
+  private phraseAgents: PhraseAgent[] = [];
+  private activeTransientVoices = 0;
+  private lastSelectedEntityId: number | null = null;
   private lastFeedbackId = 0;
   private lastEventId = 0;
   private started = false;
@@ -123,9 +147,9 @@ export class AudioEngine {
     bedLowFilter.connect(bedGain);
 
     const bedMidFilter = context.createBiquadFilter();
-    bedMidFilter.type = 'bandpass';
-    bedMidFilter.frequency.value = 320;
-    bedMidFilter.Q.value = 0.8;
+    bedMidFilter.type = 'lowpass';
+    bedMidFilter.frequency.value = 260;
+    bedMidFilter.Q.value = 0.7;
     bedMidFilter.connect(bedGain);
 
     const bedLowOsc = context.createOscillator();
@@ -134,11 +158,25 @@ export class AudioEngine {
     bedLowOsc.connect(bedLowFilter);
     bedLowOsc.start();
 
-    const bedMidOsc = context.createOscillator();
-    bedMidOsc.type = 'triangle';
-    bedMidOsc.frequency.value = 164;
-    bedMidOsc.connect(bedMidFilter);
-    bedMidOsc.start();
+    const bedPulseOsc = context.createOscillator();
+    bedPulseOsc.type = 'triangle';
+    bedPulseOsc.frequency.value = 0.12;
+    bedPulseOsc.connect(bedMidFilter);
+    bedPulseOsc.start();
+
+    const bedNoiseGain = context.createGain();
+    bedNoiseGain.gain.value = 0.0001;
+    bedNoiseGain.connect(bedGain);
+
+    const bedNoiseFilter = context.createBiquadFilter();
+    bedNoiseFilter.type = 'bandpass';
+    bedNoiseFilter.frequency.value = 210;
+    bedNoiseFilter.Q.value = 0.52;
+    bedNoiseFilter.connect(bedNoiseGain);
+
+    const bedNoiseSource = this.createLoopingNoise(context);
+    bedNoiseSource.connect(bedNoiseFilter);
+    bedNoiseSource.start();
 
     const ecologicalVoices = Array.from(
       { length: ECOLOGICAL_VOICE_COUNT },
@@ -149,6 +187,9 @@ export class AudioEngine {
     const eventBus = context.createGain();
     eventBus.gain.value = 0.22;
     eventBus.connect(master);
+    const phraseBus = context.createGain();
+    phraseBus.gain.value = 0.2;
+    phraseBus.connect(master);
 
     this.context = context;
     this.master = master;
@@ -157,10 +198,24 @@ export class AudioEngine {
     this.bedLowFilter = bedLowFilter;
     this.bedMidFilter = bedMidFilter;
     this.bedLowOsc = bedLowOsc;
-    this.bedMidOsc = bedMidOsc;
+    this.bedPulseOsc = bedPulseOsc;
+    this.bedNoiseGain = bedNoiseGain;
+    this.bedNoiseFilter = bedNoiseFilter;
     this.ecologicalVoices = ecologicalVoices;
     this.foregroundVoices = foregroundVoices;
     this.eventBus = eventBus;
+    this.phraseBus = phraseBus;
+    this.phraseAgents = Array.from({ length: PHRASE_AGENT_COUNT }, (_, id) => ({
+      id,
+      entityId: null,
+      motif: [0, 2, -1],
+      rhythm: [0.18, 0.24, 0.16],
+      variation: 0.1 + id * 0.05,
+      noteIndex: 0,
+      notesRemaining: 0,
+      phase: 'idle',
+      nextActionTime: context.currentTime + id * 0.4,
+    }));
     this.started = true;
   }
 
@@ -172,8 +227,11 @@ export class AudioEngine {
       || !this.bedLowFilter
       || !this.bedMidFilter
       || !this.bedLowOsc
-      || !this.bedMidOsc
+      || !this.bedPulseOsc
+      || !this.bedNoiseGain
+      || !this.bedNoiseFilter
       || !this.eventBus
+      || !this.phraseBus
       || !this.limiter
     ) {
       return;
@@ -192,10 +250,13 @@ export class AudioEngine {
     const scored = scoreEntities(snapshot, focus, this.entityPriority);
     const foreground = selectForegroundVoices(scored, FOREGROUND_VOICE_COUNT);
     const zoomNorm = clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1);
+    this.activeTransientVoices = foreground.length + ECOLOGICAL_VOICE_COUNT + 2;
+    this.triggerSelectionResponse(snapshot, harmony, now);
 
     this.updateGlobalBed(snapshot, harmony, music, focus, zoomNorm, now, settings);
     this.updateEcologicalVoices(snapshot, harmony, music, focus, zoomNorm, now, settings);
     this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now, settings);
+    this.updatePhraseAgents(snapshot, harmony, foreground, zoomNorm, now, settings);
 
     const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
@@ -220,6 +281,7 @@ export class AudioEngine {
     this.lastSnapshotTime = 0;
     this.entityPriority.clear();
     this.musicState = undefined;
+    this.lastSelectedEntityId = null;
   }
 
   private createVoice(context: AudioContext, waveform: OscillatorType, destination: GainNode): PooledVoice {
@@ -272,7 +334,7 @@ export class AudioEngine {
     now: number,
     settings: GameSettings,
   ): void {
-    if (!this.bedGain || !this.bedLowFilter || !this.bedMidFilter || !this.bedLowOsc || !this.bedMidOsc) return;
+    if (!this.bedGain || !this.bedLowFilter || !this.bedMidFilter || !this.bedLowOsc || !this.bedPulseOsc || !this.bedNoiseGain || !this.bedNoiseFilter) return;
 
     const habitat = this.summarizeHabitats(snapshot);
     const drift = Math.sin(snapshot.time * (0.018 + music.composition.evolutionSpeed * 0.02)) * music.composition.harmonicDrift;
@@ -282,12 +344,10 @@ export class AudioEngine {
       clamp(music.interpretation.stability * 0.64 + habitat.basin * 0.22 + drift * 0.14 + 0.12, 0, 1),
       -1,
     );
-    const midFreq = getHarmonyFrequency(
-      harmony,
-      habitat.wetland > habitat.highland ? 'water' : 'bed',
-      clamp(music.interpretation.harmonicRichness * 0.58 + habitat.wetland * 0.18 + music.interpretation.abundance * 0.16 + drift * 0.12, 0, 1),
-      0,
-    );
+    const pulsePhase = snapshot.time * (0.04 + music.composition.evolutionSpeed * 0.05);
+    const breathe = 0.5 + Math.sin(pulsePhase * Math.PI * 2) * 0.5;
+    const inhaleWindow = smoothstep(0.2, 0.86, breathe);
+    const silenceGate = clamp(inhaleWindow * 1.18 - 0.12, 0, 1);
     const ambienceLevel = this.mapVolume(settings.audio.ambienceVolume);
     const modeLift = music.composition.mode === 'fertile'
       ? 0.014
@@ -304,11 +364,11 @@ export class AudioEngine {
       + habitat.wetland * 0.01
       + (1 - zoomNorm) * 0.018
       + modeLift
-    ) * ambienceLevel;
+    ) * ambienceLevel * silenceGate;
     const focusDuck = focus.mode === 'entity' ? 1 - focus.intensity * 0.09 : focus.active ? 1 - focus.intensity * 0.11 : 1;
 
     this.bedLowOsc.frequency.setTargetAtTime(lowFreq * (1 - habitat.highland * 0.08), now, 1.8);
-    this.bedMidOsc.frequency.setTargetAtTime(midFreq * (1 + habitat.wetland * 0.04 - habitat.highland * 0.03 + drift * 0.06), now, 1.6);
+    this.bedPulseOsc.frequency.setTargetAtTime(0.08 + music.composition.rhythmDensity * 0.14 + habitat.basin * 0.04, now, 1.4);
     this.bedLowFilter.frequency.setTargetAtTime(
       220
         + music.interpretation.stability * 150
@@ -320,14 +380,20 @@ export class AudioEngine {
       1.1,
     );
     this.bedMidFilter.frequency.setTargetAtTime(
-      360
-        + music.interpretation.harmonicRichness * 260
-        + music.interpretation.growthRate * 120
-        + habitat.wetland * 90
-        - habitat.highland * 70,
+      120
+        + music.interpretation.harmonicRichness * 100
+        + habitat.basin * 80
+        + (1 - zoomNorm) * 120,
       now,
-      0.9,
+      1.1,
     );
+    this.bedNoiseFilter.frequency.setTargetAtTime(
+      160 + habitat.wetland * 180 + (1 - zoomNorm) * 220 + music.interpretation.tension * 80,
+      now,
+      0.8,
+    );
+    this.bedNoiseFilter.Q.setTargetAtTime(0.4 + habitat.highland * 0.6 + music.interpretation.rhythmicActivity * 0.4, now, 0.7);
+    this.bedNoiseGain.gain.setTargetAtTime((0.012 + music.interpretation.abundance * 0.016 + habitat.wetland * 0.012) * ambienceLevel * silenceGate, now, 0.5);
     this.bedGain.gain.setTargetAtTime(bedLevel * focusDuck, now, 0.45);
   }
 
@@ -344,6 +410,7 @@ export class AudioEngine {
       const role = ECOLOGICAL_ROLE_ORDER[index];
       const layer = music.composition.voices[role];
       const pan = this.panFromPosition(layer.center.x, snapshot);
+      const perception = this.computePerceptualAttenuation(layer.center, snapshot, zoomNorm);
       const roleShape = role === 'bloom'
         ? 0.64
         : role === 'grazer'
@@ -407,7 +474,7 @@ export class AudioEngine {
           + layer.density * (role === 'bloom' ? 0.016 : role === 'grazer' ? 0.014 : 0.01)
           + Math.max(0, pulse) * (role === 'bloom' ? 0.008 : role === 'grazer' ? 0.014 : role === 'pollinator' ? 0.012 : 0.01)
           + modeRoleLift
-        ) * focusBoost * (0.84 + (1 - zoomNorm) * 0.16) * this.mapVolume(settings.audio.ambienceVolume),
+        ) * focusBoost * (0.84 + (1 - zoomNorm) * 0.16) * this.mapVolume(settings.audio.ambienceVolume) * perception.gain,
         0.0001,
         role === 'bloom' ? 0.16 : role === 'grazer' ? 0.14 : role === 'pollinator' ? 0.11 : 0.09,
       );
@@ -432,7 +499,7 @@ export class AudioEngine {
         role === 'bloom' ? 0.9 : role === 'decay' ? 0.42 : 0.26 + (1 - music.composition.evolutionSpeed) * 0.28,
       );
       voice.filter.type = role === 'bloom' ? 'lowpass' : role === 'grazer' ? 'bandpass' : role === 'pollinator' ? 'highpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency, now, 0.28);
+      voice.filter.frequency.setTargetAtTime(filterFrequency * perception.highFreq, now, 0.28);
       voice.filter.Q.setTargetAtTime(
         role === 'bloom'
           ? 0.55 + layer.brightness * 0.42
@@ -466,6 +533,7 @@ export class AudioEngine {
       }
 
       const detailLift = clamp(candidate.detail, 0, 1.4);
+      const perception = this.computePerceptualAttenuation(candidate.entity.position, snapshot, zoomNorm);
       const focusLift = focus.mode === 'entity'
         ? candidate.isPrimary
           ? 1.18 + focus.intensity * 0.68
@@ -478,7 +546,7 @@ export class AudioEngine {
           ? 0.54 + focus.intensity * 0.42
           : focus.active ? -0.12 - focus.intensity * 0.14 : 0;
       const entityLevel = this.mapVolume(settings.audio.entityVolume);
-      const gain = clamp(0.018 + candidate.score * 0.028 + detailLift * 0.012, 0.016, 0.124) * (0.8 + zoomNorm * 0.32 + focusLift) * entityLevel;
+      const gain = clamp(0.018 + candidate.score * 0.028 + detailLift * 0.012, 0.016, 0.124) * (0.8 + zoomNorm * 0.32 + focusLift) * entityLevel * perception.gain;
       const contour = clamp(candidate.entity.activity * 0.45 + candidate.entity.tone * 0.35 + candidate.entity.harmony * 0.2, 0, 1);
       const filterFrequency = candidate.isPrimary
         ? 1720 + detailLift * 1680 + focus.intensity * 720
@@ -492,7 +560,7 @@ export class AudioEngine {
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
       voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
-      voice.filter.frequency.setTargetAtTime(filterFrequency * (candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
+      voice.filter.frequency.setTargetAtTime(filterFrequency * perception.highFreq * (candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
       voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.1 + detailLift * 0.72 : 1.6 + detailLift * 1.15, now, 0.16);
       voice.panner.pan.setTargetAtTime(this.panFromPosition(candidate.entity.position.x, snapshot), now, 0.12);
       voice.gain.gain.setTargetAtTime(gain, now, 0.12);
@@ -580,6 +648,7 @@ export class AudioEngine {
   private triggerEventTone(event: WorldEvent): void {
     if (!this.context || !this.eventBus) return;
     if (event.type === 'toolUsed') return;
+    if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
     const now = this.context.currentTime;
     const harmony = createHarmonyState({
@@ -647,10 +716,12 @@ export class AudioEngine {
     gain.connect(this.eventBus);
     osc.start(now);
     osc.stop(now + settings.dur + 0.08);
+    this.activeTransientVoices += 1;
   }
 
   private triggerToolTone(tool: ToolState, harmony: HarmonyState, intensity: number): void {
     if (!this.context || !this.eventBus) return;
+    if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
     const now = this.context.currentTime;
     const gain = this.context.createGain();
@@ -683,6 +754,167 @@ export class AudioEngine {
     gain.connect(this.eventBus);
     osc.start(now);
     osc.stop(now + settings.dur + 0.08);
+    this.activeTransientVoices += 1;
+  }
+
+  private createLoopingNoise(context: AudioContext): AudioBufferSourceNode {
+    const length = context.sampleRate * 2;
+    const buffer = context.createBuffer(1, length, context.sampleRate);
+    const channel = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < length; i += 1) {
+      const white = Math.random() * 2 - 1;
+      last = last * 0.95 + white * 0.05;
+      channel[i] = last;
+    }
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    return source;
+  }
+
+  private computePerceptualAttenuation(position: Vec2, snapshot: SimulationSnapshot, zoomNorm: number): { gain: number; highFreq: number } {
+    const distance = this.distance(position, snapshot.camera.center, snapshot);
+    const hearingRadius = 220 + 560 / Math.max(snapshot.camera.zoom, 0.22);
+    const normDistance = clamp(distance / hearingRadius, 0, 1.3);
+    const mediumDensity = 0.9 + (1 - zoomNorm) * 0.8;
+    const lowBand = Math.exp(-normDistance * 1.25 * mediumDensity);
+    const highBand = Math.exp(-normDistance * 2.8 * mediumDensity);
+    const gain = clamp(lowBand * 0.82 + highBand * 0.18, 0.08, 1);
+    return { gain, highFreq: clamp(0.26 + highBand * 0.9 + zoomNorm * 0.26, 0.2, 1.2) };
+  }
+
+  private triggerSelectionResponse(snapshot: SimulationSnapshot, harmony: HarmonyState, now: number): void {
+    if (!this.context || !this.eventBus) return;
+    const selectedId = snapshot.attention.mode === 'entity' ? snapshot.attention.entityId : null;
+    if (!selectedId || selectedId === this.lastSelectedEntityId) {
+      this.lastSelectedEntityId = selectedId;
+      return;
+    }
+    this.lastSelectedEntityId = selectedId;
+    const entity = snapshot.entities.find((candidate) => candidate.id === selectedId);
+    if (!entity || this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
+
+    const roleLayer = entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy'
+      ? 'plant'
+      : entity.type === 'grazer' || entity.type === 'flocker'
+        ? 'mobile'
+        : 'cluster';
+    const stateContour = clamp(entity.energy * 0.32 + entity.activity * 0.24 + entity.harmony * 0.22 + entity.tone * 0.22, 0, 1);
+    const activityLift = entity.visualState === 'feeding' ? 0.1 : entity.visualState === 'reproducing' ? 0.14 : entity.visualState === 'dying' ? -0.08 : 0;
+    const jitter = (Math.random() * 2 - 1) * (0.06 + entity.activity * 0.06);
+    const frequency = getHarmonyFrequency(harmony, roleLayer, clamp(stateContour + activityLift + jitter, 0, 1), entity.stage === 'decay' ? -1 : 0);
+
+    const osc = this.context.createOscillator();
+    const gain = this.context.createGain();
+    const filter = this.context.createBiquadFilter();
+    const pan = this.context.createStereoPanner();
+    osc.type = entity.type === 'predator' || entity.type === 'parasite' ? 'sawtooth' : entity.type === 'flocker' ? 'sine' : 'triangle';
+    osc.frequency.value = frequency;
+    filter.type = entity.stage === 'decay' ? 'lowpass' : 'bandpass';
+    filter.frequency.value = frequency * (entity.visualState === 'idle' ? 1.7 : 2.1);
+    filter.Q.value = 1.4 + entity.activity * 1.1;
+    pan.pan.value = this.panFromPosition(entity.position.x, snapshot);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.022 + entity.energy * 0.028, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22 + entity.activity * 0.14);
+    osc.connect(filter);
+    filter.connect(pan);
+    pan.connect(gain);
+    gain.connect(this.eventBus);
+    osc.start(now);
+    osc.stop(now + 0.48);
+
+    this.entityPriority.set(entity.id, Math.max(this.entityPriority.get(entity.id) ?? 0, 1.2));
+    this.activeTransientVoices += 1;
+  }
+
+  private updatePhraseAgents(
+    snapshot: SimulationSnapshot,
+    harmony: HarmonyState,
+    foreground: ScoredEntity[],
+    zoomNorm: number,
+    now: number,
+    settings: GameSettings,
+  ): void {
+    if (!this.context || !this.phraseBus) return;
+    const candidates = foreground
+      .filter((entry) => entry.entity.type !== 'predator' && entry.entity.type !== 'parasite')
+      .slice(0, 5);
+    for (const agent of this.phraseAgents) {
+      if (now < agent.nextActionTime) continue;
+      if (agent.phase === 'idle') {
+        const candidate = candidates[agent.id % Math.max(1, candidates.length)];
+        if (!candidate) continue;
+        agent.entityId = candidate.entity.id;
+        agent.motif = [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3].slice(0, 2 + Math.floor(Math.random() * 4));
+        agent.rhythm = agent.motif.map(() => 0.14 + Math.random() * 0.22);
+        agent.variation = 0.06 + Math.random() * 0.12;
+        agent.notesRemaining = agent.motif.length;
+        agent.noteIndex = 0;
+        agent.phase = 'playing';
+      }
+      if (agent.phase === 'playing' && agent.notesRemaining > 0 && this.activeTransientVoices < MAX_ACTIVE_VOICES) {
+        const target = snapshot.entities.find((entity) => entity.id === agent.entityId);
+        if (!target) {
+          agent.phase = 'idle';
+          agent.nextActionTime = now + 0.6;
+          continue;
+        }
+        const interval = agent.motif[agent.noteIndex] ?? 0;
+        const contour = clamp(target.tone * 0.5 + target.harmony * 0.34 + 0.16 + interval * 0.06 + (Math.random() * 2 - 1) * agent.variation, 0, 1);
+        this.playPhraseNote(snapshot, harmony, target, contour, 0.05 + target.activity * 0.05 + (1 - zoomNorm) * 0.01, agent.rhythm[agent.noteIndex] ?? 0.2, settings);
+        const nextDuration = agent.rhythm[agent.noteIndex] ?? 0.2;
+        agent.noteIndex += 1;
+        agent.notesRemaining -= 1;
+        this.activeTransientVoices += 1;
+        if (agent.notesRemaining <= 0) {
+          agent.phase = 'listening';
+          agent.nextActionTime = now + 0.8 + Math.random() * 1.2;
+        } else {
+          agent.nextActionTime = now + nextDuration * 0.92;
+        }
+      } else if (agent.phase === 'listening') {
+        agent.phase = 'idle';
+        agent.nextActionTime = now + 0.4 + Math.random() * 1.4;
+      }
+    }
+  }
+
+  private playPhraseNote(
+    snapshot: SimulationSnapshot,
+    harmony: HarmonyState,
+    entity: ScoredEntity['entity'],
+    contour: number,
+    amount: number,
+    duration: number,
+    settings: GameSettings,
+  ): void {
+    if (!this.context || !this.phraseBus) return;
+    const voice = this.context.createOscillator();
+    const filter = this.context.createBiquadFilter();
+    const gain = this.context.createGain();
+    const pan = this.context.createStereoPanner();
+    const now = this.context.currentTime;
+    const layer = entity.type === 'plant' || entity.type === 'canopy' ? 'plant' : 'mobile';
+    const perception = this.computePerceptualAttenuation(entity.position, snapshot, clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1));
+
+    voice.type = entity.type === 'flocker' ? 'sine' : 'triangle';
+    voice.frequency.value = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1);
+    filter.type = 'bandpass';
+    filter.frequency.value = voice.frequency.value * (1.6 + entity.tone * 0.8) * perception.highFreq;
+    filter.Q.value = 1.8 + entity.activity;
+    pan.pan.value = this.panFromPosition(entity.position.x, snapshot);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(amount * perception.gain * this.mapVolume(settings.audio.entityVolume), now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    voice.connect(filter);
+    filter.connect(pan);
+    pan.connect(gain);
+    gain.connect(this.phraseBus);
+    voice.start(now);
+    voice.stop(now + duration + 0.08);
   }
 
   getDebugState(): AudioDebugState {

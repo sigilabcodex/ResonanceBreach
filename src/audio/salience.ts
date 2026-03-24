@@ -153,7 +153,15 @@ export const scoreEntities = (
 export const selectForegroundVoices = (scored: ScoredEntity[], maxVoices: number): ScoredEntity[] => scored
   .filter((entry) => entry.score > 0.4 || entry.isPrimary)
   .sort((a, b) => b.score - a.score)
-  .slice(0, maxVoices);
+  .reduce<ScoredEntity[]>((selected, entry) => {
+    if (selected.length >= maxVoices) return selected;
+    if (entry.isPrimary) return [entry, ...selected.filter((candidate) => !candidate.isPrimary)].slice(0, maxVoices);
+    if (selected.some((candidate) => candidate.entity.id === entry.entity.id)) return selected;
+    // Bias the limited foreground pool toward nearby entities when there is no primary focus.
+    if (!entry.isPrimary && !entry.isRelated && entry.cameraCloseness < 0.2 && selected.length >= Math.max(1, maxVoices - 1)) return selected;
+    selected.push(entry);
+    return selected;
+  }, []);
 
 const zoneKindForEntity = (entity: Entity): ZoneSummary['kind'] => {
   if (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy') return 'rooted';

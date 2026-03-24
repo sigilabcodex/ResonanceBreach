@@ -87,6 +87,10 @@ export interface Entity {
   vitality: number;
   pollination: number;
   memory: number;
+  soundCooldown: number;
+  acousticPressure: number;
+  acousticPattern: number;
+  predatorState: 'resting' | 'hunting';
   targetId?: number;
   targetKind?: 'bloom' | 'fruit' | 'feed' | 'residue' | 'seed' | 'signal';
   retargetTimer?: number;
