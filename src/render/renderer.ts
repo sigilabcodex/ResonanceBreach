@@ -174,6 +174,9 @@ export class Renderer {
   private drawTerrain(samples: TerrainCell[], camera: CameraState, time: number, settings: GameSettings): void {
     const { ctx } = this;
     const motion = settings.visuals.reduceMotion ? 0.2 : 1;
+    const zoomDetail = clamp((camera.zoom - 0.24) / (2.4 - 0.24), 0, 1);
+    const microVisibility = 0.22 + zoomDetail * 0.98;
+    const macroVisibility = 1.08 - zoomDetail * 0.18;
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -186,14 +189,15 @@ export class Renderer {
       const dryWeight = clamp(1 - moistureWeight * 0.7, 0, 1);
       const contourAngle = Math.atan2(sample.gradient.y || sample.flow.y || 0.001, sample.gradient.x || sample.flow.x || 0.001) + Math.PI * 0.5;
       const asymmetry = Math.sin(sample.index * 0.43 + sample.resonance * Math.PI * 0.7) * 0.08;
-      const macroField = clamp(sample.height * 0.44 + sample.slope * 0.34 + sample.habitatWeights.highland * 0.22, 0, 1);
-      const detailField = clamp(sample.roughness * 0.5 + sample.density * 0.3 + sample.resonance * 0.2, 0, 1);
-      const majorCount = Math.max(1, Math.min(4, Math.round(1 + macroField * 2.6 + sample.habitatWeights.highland * 0.8)));
-      const minorCount = Math.max(1, Math.min(6, Math.round(1 + detailField * 3.2 + moistureWeight * 1.1)));
-      const majorSpacing = sample.radius * clamp(0.12 + dryWeight * 0.1 + sample.habitatWeights.highland * 0.04, 0.1, 0.22);
-      const minorSpacing = sample.radius * clamp(0.048 + dryWeight * 0.04 + (1 - sample.slope) * 0.02, 0.04, 0.11);
-      const majorHalfLength = sample.radius * (0.24 + macroField * 0.18 + sample.habitatWeights.basin * 0.08);
-      const minorHalfLength = sample.radius * (0.15 + detailField * 0.12 + sample.habitatWeights.wetland * 0.05);
+      const macroField = clamp(sample.macro * 0.74 + sample.height * 0.18 + sample.habitatWeights.highland * 0.08, 0, 1);
+      const mesoField = clamp(sample.meso * 0.62 + sample.slope * 0.22 + sample.habitatWeights.basin * 0.16, 0, 1);
+      const detailField = clamp(sample.micro * 0.62 + sample.roughness * 0.22 + sample.density * 0.1 + sample.resonance * 0.06, 0, 1);
+      const majorCount = Math.max(1, Math.min(4, Math.round((1 + macroField * 2.8 + mesoField * 0.8 + sample.habitatWeights.highland * 0.5) * macroVisibility)));
+      const minorCount = Math.max(1, Math.min(6, Math.round((1 + mesoField * 2.4 + detailField * 2 + moistureWeight * 0.8) * (0.72 + zoomDetail * 0.48))));
+      const majorSpacing = sample.radius * clamp(0.12 + dryWeight * 0.1 + macroField * 0.05 + sample.habitatWeights.highland * 0.03, 0.1, 0.24);
+      const minorSpacing = sample.radius * clamp(0.045 + dryWeight * 0.032 + (1 - sample.slope) * 0.02 + detailField * 0.012, 0.04, 0.11);
+      const majorHalfLength = sample.radius * (0.24 + macroField * 0.2 + mesoField * 0.08);
+      const minorHalfLength = sample.radius * (0.12 + mesoField * 0.11 + detailField * 0.15 + sample.habitatWeights.wetland * 0.03);
 
       const ecologicalColor = this.getEcologicalTerrainColor(sample, density);
       ctx.strokeStyle = ecologicalColor.majorStroke;
@@ -207,7 +211,7 @@ export class Renderer {
       }
 
       ctx.strokeStyle = ecologicalColor.minorStroke;
-      ctx.lineWidth = 0.34 + sample.slope * 0.1 + moistureWeight * 0.14;
+      ctx.lineWidth = (0.26 + sample.slope * 0.08 + moistureWeight * 0.11 + detailField * 0.08) * microVisibility;
       for (let band = 0; band < minorCount; band += 1) {
         const spacingVariation = Math.cos(sample.index * 0.23 + band * 1.1) * sample.radius * 0.01;
         const offsetAmount = (band - (minorCount - 1) * 0.5) * minorSpacing + spacingVariation + asymmetry * sample.radius * 0.02;
@@ -216,8 +220,8 @@ export class Renderer {
         this.drawCallEstimate += 1;
       }
 
-      const regions = this.classifyTerrainRegions(sample, macroField, detailField, dryWeight, moistureWeight);
-      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue, regions);
+      const regions = this.classifyTerrainRegions(sample, macroField, mesoField, detailField, dryWeight, moistureWeight);
+      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue, regions, microVisibility);
     }
 
     ctx.restore();
@@ -263,6 +267,7 @@ export class Renderer {
   private classifyTerrainRegions(
     sample: TerrainCell,
     macroField: number,
+    mesoField: number,
     detailField: number,
     dryWeight: number,
     moistureWeight: number,
@@ -287,9 +292,9 @@ export class Renderer {
     );
     const memoryField = clamp(sample.nutrient * 0.46 + sample.fertility * 0.34 + (1 - sample.traversability) * 0.2, 0, 1.2);
     const rawNoisy = clamp(noiseField * 0.65 + memoryField * 0.35, 0, 1);
-    const rawContour = clamp(macroField * 0.74 + sample.height * 0.26, 0, 1);
+    const rawContour = clamp(macroField * 0.64 + mesoField * 0.22 + sample.height * 0.14, 0, 1);
     const flowMagnitude = Math.hypot(sample.flowTendency.x, sample.flowTendency.y);
-    const rawFlow = clamp(sample.moisture * 0.42 + sample.habitatWeights.wetland * 0.28 + detailField * 0.22 + flowMagnitude * 0.08, 0, 1);
+    const rawFlow = clamp(sample.moisture * 0.34 + sample.habitatWeights.wetland * 0.24 + mesoField * 0.28 + detailField * 0.08 + flowMagnitude * 0.06, 0, 1);
     const source = clamp(sample.resonance * 0.62 + sample.habitatWeights.basin * 0.22 + sample.habitatWeights.wetland * 0.16, 0, 1);
 
     const sum = Math.max(0.0001, rawDry + rawWet + rawRocky + rawNoisy);
@@ -382,9 +387,9 @@ export class Renderer {
     };
   }
 
-  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number, regions: TerrainRegionWeights): void {
+  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number, regions: TerrainRegionWeights, microVisibility: number): void {
     const { ctx } = this;
-    const textureStrength = clamp(sample.roughness * 0.36 + sample.density * 0.24 + regions.dry * 0.28 + regions.rocky * 0.2, 0, 1.1);
+    const textureStrength = clamp((sample.micro * 0.44 + sample.roughness * 0.24 + sample.density * 0.16 + regions.dry * 0.22 + regions.rocky * 0.16) * microVisibility, 0, 1.1);
     if (textureStrength < 0.2) return;
 
     const hatchWeight = clamp(regions.dry * (1 - regions.wet * 0.45), 0, 1);
