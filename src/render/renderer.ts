@@ -14,6 +14,15 @@ const wrapDelta = (from: number, to: number, size: number) => {
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const wrap = (value: number, size: number) => ((value % size) + size) % size;
 
+interface TerrainRegionWeights {
+  dry: number;
+  wet: number;
+  rocky: number;
+  noisy: number;
+  contour: number;
+  flow: number;
+}
+
 const entityPalette: Record<EntityType, readonly [number, number, number]> = {
   flocker: [220, 235, 244],
   cluster: [170, 206, 182],
@@ -203,7 +212,8 @@ export class Renderer {
         this.drawCallEstimate += 1;
       }
 
-      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue, dryWeight);
+      const regions = this.classifyTerrainRegions(sample, macroField, detailField, dryWeight, moistureWeight);
+      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue, regions);
     }
 
     ctx.restore();
@@ -244,6 +254,53 @@ export class Renderer {
 
   private getTerrainDensity(sample: TerrainCell): number {
     return clamp(sample.density * 0.36 + sample.height * 0.24 + sample.roughness * 0.14 + sample.slope * 0.26, 0, 1);
+  }
+
+  private classifyTerrainRegions(
+    sample: TerrainCell,
+    macroField: number,
+    detailField: number,
+    dryWeight: number,
+    moistureWeight: number,
+  ): TerrainRegionWeights {
+    const rawDry = clamp(dryWeight * 0.62 + sample.habitatWeights.highland * 0.22 + (1 - sample.fertility) * 0.16, 0, 1);
+    const rawWet = clamp(
+      moistureWeight * 0.62
+      + sample.habitatWeights.wetland * 0.26
+      + sample.habitatWeights.basin * 0.12
+      + (sample.terrain === 'water' ? 0.2 : 0),
+      0,
+      1,
+    );
+    const rawRocky = clamp(sample.roughness * 0.45 + sample.slope * 0.31 + sample.habitatWeights.highland * 0.24, 0, 1);
+    const noiseField = clamp(
+      sample.resonance * 0.42
+      + sample.roughness * 0.24
+      + Math.hypot(sample.flowTendency.x, sample.flowTendency.y) * 0.22
+      + (1 - sample.stability) * 0.12,
+      0,
+      1.3,
+    );
+    const memoryField = clamp(sample.nutrient * 0.46 + sample.fertility * 0.34 + (1 - sample.traversability) * 0.2, 0, 1.2);
+    const rawNoisy = clamp(noiseField * 0.65 + memoryField * 0.35, 0, 1);
+    const rawContour = clamp(macroField * 0.74 + sample.height * 0.26, 0, 1);
+    const rawFlow = clamp(sample.moisture * 0.42 + sample.habitatWeights.wetland * 0.28 + detailField * 0.3, 0, 1);
+
+    const sum = Math.max(0.0001, rawDry + rawWet + rawRocky + rawNoisy);
+    const dryNorm = rawDry / sum;
+    const wetNorm = rawWet / sum;
+    const rockyNorm = rawRocky / sum;
+    const noisyNorm = rawNoisy / sum;
+    const dominant = Math.max(dryNorm, wetNorm, rockyNorm, noisyNorm);
+
+    return {
+      dry: clamp(dryNorm * (1.05 + (dryNorm === dominant ? 0.22 : 0)), 0, 1),
+      wet: clamp(wetNorm * (1.05 + (wetNorm === dominant ? 0.22 : 0)), 0, 1),
+      rocky: clamp(rockyNorm * (1.05 + (rockyNorm === dominant ? 0.22 : 0)), 0, 1),
+      noisy: clamp(noisyNorm * (1.05 + (noisyNorm === dominant ? 0.22 : 0)), 0, 1),
+      contour: rawContour,
+      flow: rawFlow,
+    };
   }
 
   private traceContourStroke(center: Vec2, sample: TerrainCell, contourAngle: number, time: number, offsetAmount: number, halfLength: number, band: number, tier: 'major' | 'minor'): void {
@@ -318,31 +375,115 @@ export class Renderer {
     };
   }
 
-  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number, dryWeight: number): void {
+  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number, regions: TerrainRegionWeights): void {
     const { ctx } = this;
-    const textureStrength = clamp(sample.roughness * 0.46 + sample.density * 0.28 + dryWeight * 0.34, 0, 1.1);
-    if (textureStrength < 0.28 || dryWeight < 0.3) return;
+    const textureStrength = clamp(sample.roughness * 0.36 + sample.density * 0.24 + regions.dry * 0.28 + regions.rocky * 0.2, 0, 1.1);
+    if (textureStrength < 0.2) return;
 
-    const hatchCount = Math.max(1, Math.round(1 + textureStrength * 2 + sample.habitatWeights.highland * 1.4));
-    const hatchSpan = sample.radius * (0.09 + textureStrength * 0.08);
-    const hatchAngle = Math.atan2(sample.gradient.y || 0.001, sample.gradient.x || 0.001) + Math.PI * (0.18 + sample.habitatWeights.highland * 0.2);
-    const normalAngle = hatchAngle + Math.PI * 0.5;
-    ctx.strokeStyle = hsla(hue + 6, 10, 58, 0.012 + textureStrength * 0.02);
-    ctx.lineWidth = 0.34;
-    for (let hatch = 0; hatch < hatchCount; hatch += 1) {
-      const offset = (hatch - (hatchCount - 1) * 0.5) * sample.radius * 0.08;
-      ctx.beginPath();
-      for (let step = 0; step <= 6; step += 1) {
-        const t = step / 6;
-        const along = (t - 0.5) * hatchSpan * 2;
-        const jitter = Math.sin(time * 0.35 + sample.index * 0.2 + hatch + t * Math.PI * 2) * sample.radius * (0.005 + textureStrength * 0.005);
-        const x = center.x + Math.cos(hatchAngle) * along + Math.cos(normalAngle) * (offset + jitter);
-        const y = center.y + Math.sin(hatchAngle) * along + Math.sin(normalAngle) * (offset + jitter);
-        if (step === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+    const hatchWeight = clamp(regions.dry * (1 - regions.wet * 0.45), 0, 1);
+    if (hatchWeight > 0.22) {
+      const hatchCount = Math.max(1, Math.round(1 + hatchWeight * 3 + sample.habitatWeights.highland * 1.1));
+      const hatchSpan = sample.radius * (0.09 + hatchWeight * 0.09);
+      const hatchAngle = Math.atan2(sample.gradient.y || 0.001, sample.gradient.x || 0.001) + Math.PI * (0.18 + sample.habitatWeights.highland * 0.2);
+      const normalAngle = hatchAngle + Math.PI * 0.5;
+      ctx.strokeStyle = hsla(hue + 6, 10, 58, 0.008 + hatchWeight * 0.022);
+      ctx.lineWidth = 0.3 + hatchWeight * 0.08;
+      for (let hatch = 0; hatch < hatchCount; hatch += 1) {
+        const offset = (hatch - (hatchCount - 1) * 0.5) * sample.radius * 0.08;
+        ctx.beginPath();
+        for (let step = 0; step <= 6; step += 1) {
+          const t = step / 6;
+          const along = (t - 0.5) * hatchSpan * 2;
+          const jitter = Math.sin(time * 0.35 + sample.index * 0.2 + hatch + t * Math.PI * 2) * sample.radius * (0.005 + textureStrength * 0.004);
+          const x = center.x + Math.cos(hatchAngle) * along + Math.cos(normalAngle) * (offset + jitter);
+          const y = center.y + Math.sin(hatchAngle) * along + Math.sin(normalAngle) * (offset + jitter);
+          if (step === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        this.drawCallEstimate += 1;
       }
-      ctx.stroke();
-      this.drawCallEstimate += 1;
+    }
+
+    const wetWeight = clamp(regions.wet * (0.78 + regions.flow * 0.22), 0, 1);
+    if (wetWeight > 0.24) {
+      const waveCount = Math.max(1, Math.round(1 + wetWeight * 3));
+      const waveSpan = sample.radius * (0.11 + wetWeight * 0.12);
+      const waveAngle = Math.atan2(sample.flow.y || sample.gradient.y || 0.001, sample.flow.x || sample.gradient.x || 0.001);
+      const waveNormal = waveAngle + Math.PI * 0.5;
+      ctx.strokeStyle = hsla(hue - 8, 16, 61, 0.01 + wetWeight * 0.022);
+      ctx.lineWidth = 0.26 + wetWeight * 0.06;
+      for (let wave = 0; wave < waveCount; wave += 1) {
+        const offset = (wave - (waveCount - 1) * 0.5) * sample.radius * 0.1;
+        ctx.beginPath();
+        for (let step = 0; step <= 8; step += 1) {
+          const t = step / 8;
+          const along = (t - 0.5) * waveSpan * 2;
+          const wobble = Math.sin(sample.index * 0.17 + time * 0.42 + wave + t * Math.PI * 3) * sample.radius * (0.008 + wetWeight * 0.012);
+          const x = center.x + Math.cos(waveAngle) * along + Math.cos(waveNormal) * (offset + wobble);
+          const y = center.y + Math.sin(waveAngle) * along + Math.sin(waveNormal) * (offset + wobble);
+          if (step === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        this.drawCallEstimate += 1;
+      }
+    }
+
+    const rockWeight = clamp(regions.rocky * (1 - regions.wet * 0.35), 0, 1);
+    if (rockWeight > 0.28) {
+      const pebbleCount = Math.max(2, Math.round(2 + rockWeight * 4));
+      ctx.fillStyle = hsla(hue + 14, 6, 60, 0.03 + rockWeight * 0.05);
+      for (let pebble = 0; pebble < pebbleCount; pebble += 1) {
+        const angle = sample.index * 0.74 + pebble * 2.399;
+        const radius = sample.radius * (0.08 + ((sample.index + pebble) % 5) * 0.03);
+        const pebbleX = center.x + Math.cos(angle) * radius;
+        const pebbleY = center.y + Math.sin(angle) * radius;
+        const pebbleR = sample.radius * (0.018 + ((sample.index * 13 + pebble * 7) % 5) * 0.004 + rockWeight * 0.006);
+        ctx.beginPath();
+        ctx.arc(pebbleX, pebbleY, pebbleR, 0, Math.PI * 2);
+        ctx.fill();
+        this.drawCallEstimate += 1;
+      }
+    }
+
+    const noiseWeight = clamp(regions.noisy * (1 - regions.wet * 0.28), 0, 1);
+    if (noiseWeight > 0.24) {
+      const dotCount = Math.max(1, Math.round(1 + noiseWeight * 4));
+      ctx.fillStyle = hsla(hue + 22, 14, 63, 0.016 + noiseWeight * 0.03);
+      for (let dot = 0; dot < dotCount; dot += 1) {
+        const angle = sample.index * 0.53 + dot * 1.73 + time * 0.02;
+        const dist = sample.radius * (0.05 + ((sample.index + dot * 3) % 7) * 0.04);
+        const dotX = center.x + Math.cos(angle) * dist;
+        const dotY = center.y + Math.sin(angle) * dist;
+        const dotRadius = sample.radius * (0.006 + noiseWeight * 0.004);
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+        this.drawCallEstimate += 1;
+      }
+    }
+
+    if (regions.contour > 0.65 && regions.wet < 0.45) {
+      const ridgeCount = Math.max(1, Math.round(1 + regions.contour * 2));
+      const ridgeAngle = Math.atan2(sample.gradient.y || 0.001, sample.gradient.x || 0.001) + Math.PI * 0.5;
+      const ridgeNormal = ridgeAngle + Math.PI * 0.5;
+      ctx.strokeStyle = hsla(hue + 2, 8, 57, 0.01 + regions.contour * 0.015);
+      ctx.lineWidth = 0.22;
+      for (let ridge = 0; ridge < ridgeCount; ridge += 1) {
+        const offset = (ridge - (ridgeCount - 1) * 0.5) * sample.radius * 0.06;
+        ctx.beginPath();
+        for (let step = 0; step <= 4; step += 1) {
+          const t = step / 4;
+          const along = (t - 0.5) * sample.radius * 0.32;
+          const x = center.x + Math.cos(ridgeAngle) * along + Math.cos(ridgeNormal) * offset;
+          const y = center.y + Math.sin(ridgeAngle) * along + Math.sin(ridgeNormal) * offset;
+          if (step === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        this.drawCallEstimate += 1;
+      }
     }
   }
 
