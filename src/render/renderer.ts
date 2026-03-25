@@ -173,23 +173,37 @@ export class Renderer {
       if (!this.isVisible(center, sample.radius * this.view.scale + 48)) continue;
       const density = this.getTerrainDensity(sample);
       const moistureWeight = clamp(sample.moisture * 0.8 + sample.habitatWeights.wetland * 0.7 + sample.habitatWeights.basin * 0.35, 0, 1.45);
+      const dryWeight = clamp(1 - moistureWeight * 0.7, 0, 1);
       const contourAngle = Math.atan2(sample.gradient.y || sample.flow.y || 0.001, sample.gradient.x || sample.flow.x || 0.001) + Math.PI * 0.5;
-      const lineCount = Math.max(2, Math.min(11, Math.round(2 + sample.slope * 3 + density * 1.8 + moistureWeight * 2.2 + sample.habitatWeights.highland * 2.4)));
-      const spacing = sample.radius * clamp(0.07 + (1 - moistureWeight) * 0.13 + sample.habitatWeights.highland * 0.03 + (1 - sample.slope) * 0.03, 0.05, 0.19);
-      const halfLength = sample.radius * (0.2 + sample.traversability * 0.17 + density * 0.1 + sample.habitatWeights.wetland * 0.12 + sample.habitatWeights.basin * 0.08);
+      const macroField = clamp(sample.height * 0.44 + sample.slope * 0.34 + sample.habitatWeights.highland * 0.22, 0, 1);
+      const detailField = clamp(sample.roughness * 0.5 + sample.density * 0.3 + sample.resonance * 0.2, 0, 1);
+      const majorCount = Math.max(1, Math.min(5, Math.round(1 + macroField * 3 + sample.habitatWeights.highland * 0.8)));
+      const minorCount = Math.max(1, Math.min(8, Math.round(1 + detailField * 4 + moistureWeight * 1.4)));
+      const majorSpacing = sample.radius * clamp(0.12 + dryWeight * 0.1 + sample.habitatWeights.highland * 0.04, 0.1, 0.22);
+      const minorSpacing = sample.radius * clamp(0.048 + dryWeight * 0.04 + (1 - sample.slope) * 0.02, 0.04, 0.11);
+      const majorHalfLength = sample.radius * (0.26 + macroField * 0.2 + sample.habitatWeights.basin * 0.08);
+      const minorHalfLength = sample.radius * (0.17 + detailField * 0.14 + sample.habitatWeights.wetland * 0.05);
 
       const ecologicalColor = this.getEcologicalTerrainColor(sample, density);
-      ctx.strokeStyle = ecologicalColor.stroke;
-      ctx.lineWidth = 0.42 + sample.slope * 0.18 + moistureWeight * 0.16 + sample.habitatWeights.highland * 0.2;
-
-      for (let band = 0; band < lineCount; band += 1) {
-        const offsetAmount = (band - (lineCount - 1) * 0.5) * spacing;
-        this.traceContourStroke(center, sample, contourAngle, time * motion, offsetAmount, halfLength, band);
+      ctx.strokeStyle = ecologicalColor.majorStroke;
+      ctx.lineWidth = 0.74 + sample.slope * 0.22 + sample.habitatWeights.highland * 0.24 + dryWeight * 0.1;
+      for (let band = 0; band < majorCount; band += 1) {
+        const offsetAmount = (band - (majorCount - 1) * 0.5) * majorSpacing;
+        this.traceContourStroke(center, sample, contourAngle, time * motion, offsetAmount, majorHalfLength, band, 'major');
         ctx.stroke();
         this.drawCallEstimate += 1;
       }
 
-      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue);
+      ctx.strokeStyle = ecologicalColor.minorStroke;
+      ctx.lineWidth = 0.34 + sample.slope * 0.1 + moistureWeight * 0.14;
+      for (let band = 0; band < minorCount; band += 1) {
+        const offsetAmount = (band - (minorCount - 1) * 0.5) * minorSpacing;
+        this.traceContourStroke(center, sample, contourAngle, time * motion, offsetAmount, minorHalfLength, band, 'minor');
+        ctx.stroke();
+        this.drawCallEstimate += 1;
+      }
+
+      this.drawTerrainMicroPatterns(center, sample, time * motion, ecologicalColor.hue, dryWeight);
     }
 
     ctx.restore();
@@ -206,16 +220,18 @@ export class Renderer {
       const center = this.wrappedPoint(sample.center, camera);
       if (!this.isVisible(center, sample.radius * this.view.scale + 48)) continue;
       const accent = terrainColors[sample.terrain].accent;
+      const windStrength = clamp(Math.hypot(sample.flowTendency.x, sample.flowTendency.y), 0, 1.4);
       const basinWater = clamp(sample.habitatWeights.wetland * 0.7 + sample.habitatWeights.basin * 0.45 + (sample.terrain === 'water' ? 0.35 : 0), 0, 1.5);
+      const moistureSoftness = clamp(0.6 + sample.moisture * 0.72 + sample.habitatWeights.wetland * 0.3, 0.6, 1.5);
       const alpha = sample.terrain === 'water'
         ? 0.05 + sample.resonance * 0.02 + basinWater * 0.022
         : sample.terrain === 'fertile'
           ? 0.024 + sample.nutrient * 0.02 + sample.habitatWeights.basin * 0.012
           : 0.012 + sample.density * 0.012;
-      ctx.strokeStyle = rgba(accent, alpha);
-      ctx.lineWidth = 0.34 + basinWater * 0.16 + sample.moisture * 0.08;
+      ctx.strokeStyle = rgba(accent, alpha / moistureSoftness);
+      ctx.lineWidth = (0.28 + basinWater * 0.16 + sample.moisture * 0.08) * (1 + windStrength * 0.05);
 
-      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 1.2 + sample.habitatWeights.wetland * 1.6 + sample.habitatWeights.basin * 1.2));
+      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 1.2 + sample.habitatWeights.wetland * 1.4 + sample.habitatWeights.basin * 1 + windStrength * 0.7));
       for (let stream = 0; stream < streamCount; stream += 1) {
         this.traceFlowLine(center, sample, time * motion, stream);
         ctx.stroke();
@@ -230,15 +246,16 @@ export class Renderer {
     return clamp(sample.density * 0.36 + sample.height * 0.24 + sample.roughness * 0.14 + sample.slope * 0.26, 0, 1);
   }
 
-  private traceContourStroke(center: Vec2, sample: TerrainCell, contourAngle: number, time: number, offsetAmount: number, halfLength: number, band: number): void {
+  private traceContourStroke(center: Vec2, sample: TerrainCell, contourAngle: number, time: number, offsetAmount: number, halfLength: number, band: number, tier: 'major' | 'minor'): void {
     const { ctx } = this;
     const alongAngle = contourAngle + sample.habitatWeights.wetland * 0.14 - sample.habitatWeights.highland * 0.08;
     const normalAngle = contourAngle + Math.PI * 0.5;
     const basinWater = clamp(sample.habitatWeights.wetland * 0.75 + sample.habitatWeights.basin * 0.5, 0, 1.3);
     const windDirection = Math.atan2(sample.flow.y || sample.flowTendency.y || 0.001, sample.flow.x || sample.flowTendency.x || 0.001);
-    const windInfluence = (Math.cos(windDirection - contourAngle) * 0.5 + 0.5) * (0.6 + sample.habitatWeights.wetland * 0.36);
-    const curvature = (sample.flowTendency.x * Math.cos(normalAngle) + sample.flowTendency.y * Math.sin(normalAngle)) * sample.radius * (0.045 + sample.habitatWeights.basin * 0.06 + sample.habitatWeights.wetland * 0.1);
-    const wobbleStrength = sample.habitatWeights.highland * 0.008 + sample.habitatWeights.basin * 0.006 + sample.habitatWeights.wetland * 0.004;
+    const windInfluence = (Math.cos(windDirection - contourAngle) * 0.5 + 0.5) * (0.4 + sample.habitatWeights.wetland * 0.22);
+    const tierScale = tier === 'major' ? 1 : 0.7;
+    const curvature = (sample.flowTendency.x * Math.cos(normalAngle) + sample.flowTendency.y * Math.sin(normalAngle)) * sample.radius * (0.042 + sample.habitatWeights.basin * 0.05 + sample.habitatWeights.wetland * 0.08) * tierScale;
+    const wobbleStrength = (sample.habitatWeights.highland * 0.008 + sample.habitatWeights.basin * 0.006 + sample.habitatWeights.wetland * 0.004) * (tier === 'major' ? 0.8 : 0.55);
     const basinPulse = sample.radius * (0.006 + basinWater * 0.02);
     ctx.beginPath();
     for (let step = 0; step <= 12; step += 1) {
@@ -246,7 +263,7 @@ export class Renderer {
       const along = (t - 0.5) * halfLength * 2;
       const wobble = Math.sin(time * (0.5 + sample.habitatWeights.wetland * 0.16) + sample.index * 0.23 + band * 0.6 + t * Math.PI * 2) * sample.radius * wobbleStrength;
       const bend = Math.sin(t * Math.PI + sample.roughness * (4 + sample.habitatWeights.highland * 1.6) + band) * curvature;
-      const windDrift = Math.sin(time * 0.24 + sample.index * 0.17 + band * 0.4 + t * Math.PI * (1.4 + sample.moisture * 0.4)) * sample.radius * (0.01 + windInfluence * 0.022);
+      const windDrift = Math.sin(time * 0.24 + sample.index * 0.17 + band * 0.4 + t * Math.PI * (1.4 + sample.moisture * 0.4)) * sample.radius * (0.008 + windInfluence * 0.018) * tierScale;
       const basinOscillation = Math.sin(time * (0.28 + basinWater * 0.12) + t * Math.PI * 2 + sample.index * 0.3) * basinPulse;
       const x = center.x + Math.cos(alongAngle) * along + Math.cos(normalAngle) * (offsetAmount + bend + wobble + windDrift + basinOscillation);
       const y = center.y + Math.sin(alongAngle) * along + Math.sin(normalAngle) * (offsetAmount + bend + wobble + windDrift + basinOscillation);
@@ -257,24 +274,27 @@ export class Renderer {
 
   private traceFlowLine(center: Vec2, sample: TerrainCell, time: number, stream: number): void {
     const { ctx } = this;
+    const windAngle = Math.atan2(sample.flowTendency.y || 0.001, sample.flowTendency.x || 0.001);
     const flowAngle = Math.atan2(sample.flow.y || sample.flowTendency.y || 0.001, sample.flow.x || sample.flowTendency.x || 0.001) + sample.habitatWeights.wetland * 0.08;
     const normalAngle = flowAngle + Math.PI * 0.5;
-    const span = sample.radius * (0.28 + sample.moisture * 0.18 + sample.habitatWeights.wetland * 0.26 + sample.habitatWeights.basin * 0.08);
+    const span = sample.radius * (0.24 + sample.moisture * 0.22 + sample.habitatWeights.wetland * 0.26 + sample.habitatWeights.basin * 0.08);
     const offset = sample.radius * ((stream - 1) * 0.12 + (sample.density - 0.5) * 0.04);
+    const windBend = Math.cos(windAngle - flowAngle) * sample.radius * 0.06;
     ctx.beginPath();
     for (let step = 0; step <= 16; step += 1) {
       const t = step / 16;
       const along = (t - 0.5) * span * 2;
-      const drift = Math.sin(time * (0.72 + sample.habitatWeights.wetland * 0.28) + sample.index * 0.13 + stream * 0.8 + t * Math.PI * 2) * sample.radius * (0.012 + sample.habitatWeights.wetland * 0.022);
-      const turbulence = (sample.gradient.x * Math.cos(normalAngle) + sample.gradient.y * Math.sin(normalAngle)) * sample.radius * (0.03 + sample.habitatWeights.highland * 0.07) * Math.sin(t * Math.PI);
-      const x = center.x + Math.cos(flowAngle) * along + Math.cos(normalAngle) * (offset + drift + turbulence);
-      const y = center.y + Math.sin(flowAngle) * along + Math.sin(normalAngle) * (offset + drift + turbulence);
+      const drift = Math.sin(time * (0.72 + sample.habitatWeights.wetland * 0.28) + sample.index * 0.13 + stream * 0.8 + t * Math.PI * 2) * sample.radius * (0.009 + sample.habitatWeights.wetland * 0.018);
+      const turbulence = (sample.gradient.x * Math.cos(normalAngle) + sample.gradient.y * Math.sin(normalAngle)) * sample.radius * (0.02 + sample.habitatWeights.highland * 0.05) * Math.sin(t * Math.PI);
+      const windCurve = Math.sin(t * Math.PI * 1.5 + sample.index * 0.17 + time * 0.18) * windBend;
+      const x = center.x + Math.cos(flowAngle) * along + Math.cos(normalAngle) * (offset + drift + turbulence + windCurve);
+      const y = center.y + Math.sin(flowAngle) * along + Math.sin(normalAngle) * (offset + drift + turbulence + windCurve);
       if (step === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
   }
 
-  private getEcologicalTerrainColor(sample: TerrainCell, density: number): { stroke: string; hue: number } {
+  private getEcologicalTerrainColor(sample: TerrainCell, density: number): { majorStroke: string; minorStroke: string; hue: number } {
     const waterWeight = clamp((sample.terrain === 'water' ? 0.55 : 0) + sample.habitatWeights.wetland * 0.6 + sample.moisture * 0.24, 0, 1);
     const fertilityWeight = clamp(sample.fertility * 0.64 + sample.nutrient * 0.24 + sample.habitatWeights.basin * 0.3, 0, 1);
     const decayWeight = clamp(sample.roughness * 0.48 + (1 - sample.stability) * 0.54 + sample.habitatWeights.highland * 0.16, 0, 1);
@@ -286,26 +306,29 @@ export class Renderer {
     const hue = normalizedWater * (198 + sample.moisture * 14)
       + normalizedFertility * (128 + sample.fertility * 20)
       + normalizedDecay * (298 + sample.roughness * 30);
-    const saturation = 10 + normalizedWater * 6 + normalizedFertility * 4 + normalizedDecay * 5;
-    const lightness = 56 + sample.nutrient * 6 - sample.habitatWeights.highland * 3 + normalizedWater * 3;
-    const alpha = 0.028 + density * 0.028 + sample.slope * 0.02 + sample.moisture * 0.01 + sample.habitatWeights.basin * 0.012;
+    const saturation = 8 + normalizedWater * 5 + normalizedFertility * 3 + normalizedDecay * 4;
+    const lightness = 52 + sample.nutrient * 4 - sample.habitatWeights.highland * 2 + normalizedWater * 2;
+    const moistureSoftness = clamp(0.5 + sample.moisture * 0.7 + sample.habitatWeights.wetland * 0.35, 0.5, 1.35);
+    const majorAlpha = (0.034 + density * 0.018 + sample.slope * 0.016 + sample.habitatWeights.basin * 0.01) / moistureSoftness;
+    const minorAlpha = (0.02 + density * 0.014 + sample.moisture * 0.012) / (moistureSoftness * 1.1);
     return {
-      stroke: hsla(hue, saturation, lightness, alpha),
+      majorStroke: hsla(hue, saturation, lightness, majorAlpha),
+      minorStroke: hsla(hue + 2, saturation - 1, lightness + 1, minorAlpha),
       hue,
     };
   }
 
-  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number): void {
+  private drawTerrainMicroPatterns(center: Vec2, sample: TerrainCell, time: number, hue: number, dryWeight: number): void {
     const { ctx } = this;
-    const textureStrength = clamp(sample.roughness * 0.46 + sample.resonance * 0.36 + sample.density * 0.22, 0, 1.1);
-    if (textureStrength < 0.22) return;
+    const textureStrength = clamp(sample.roughness * 0.46 + sample.density * 0.28 + dryWeight * 0.34, 0, 1.1);
+    if (textureStrength < 0.28 || dryWeight < 0.3) return;
 
     const hatchCount = Math.max(1, Math.round(1 + textureStrength * 2 + sample.habitatWeights.highland * 1.4));
     const hatchSpan = sample.radius * (0.09 + textureStrength * 0.08);
     const hatchAngle = Math.atan2(sample.gradient.y || 0.001, sample.gradient.x || 0.001) + Math.PI * (0.18 + sample.habitatWeights.highland * 0.2);
     const normalAngle = hatchAngle + Math.PI * 0.5;
-    ctx.strokeStyle = hsla(hue + 8, 12, 62, 0.018 + textureStrength * 0.028);
-    ctx.lineWidth = 0.38;
+    ctx.strokeStyle = hsla(hue + 6, 10, 58, 0.012 + textureStrength * 0.02);
+    ctx.lineWidth = 0.34;
     for (let hatch = 0; hatch < hatchCount; hatch += 1) {
       const offset = (hatch - (hatchCount - 1) * 0.5) * sample.radius * 0.08;
       ctx.beginPath();
@@ -319,25 +342,6 @@ export class Renderer {
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
-      this.drawCallEstimate += 1;
-    }
-
-    const dotCount = Math.max(0, Math.round((sample.resonance * 0.8 + sample.nutrient * 0.6) * 3));
-    if (dotCount <= 0) return;
-    ctx.fillStyle = hsla(hue - 10, 10, 60, 0.018 + sample.resonance * 0.02);
-    for (let dot = 0; dot < dotCount; dot += 1) {
-      const seed = sample.index * 0.11 + dot * 1.87;
-      const r = sample.radius * (0.08 + ((Math.sin(seed * 5.3 + time * 0.08) * 0.5 + 0.5) * 0.18));
-      const theta = seed * 2.4 + time * 0.04;
-      ctx.beginPath();
-      ctx.arc(
-        center.x + Math.cos(theta) * r,
-        center.y + Math.sin(theta) * r,
-        0.55 + sample.roughness * 0.35,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
       this.drawCallEstimate += 1;
     }
   }
