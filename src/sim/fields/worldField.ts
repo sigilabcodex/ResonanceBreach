@@ -11,6 +11,9 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
 };
 
 interface ScalarLayers {
+  macro: number;
+  meso: number;
+  micro: number;
   elevation: number;
   moisture: number;
   fertility: number;
@@ -66,36 +69,42 @@ export class WorldFieldModel {
   }
 
   private sampleLayers(x: number, y: number, time: number): ScalarLayers {
-    const driftX = Math.sin(time * 0.00045) * 0.24;
-    const driftY = Math.cos(time * 0.00038) * 0.18;
-    const nx = x * 0.00032 + driftX;
-    const ny = y * 0.00032 + driftY;
+    const driftX = Math.sin(time * 0.0002) * 0.12;
+    const driftY = Math.cos(time * 0.00018) * 0.1;
+    const nx = x * 0.00022 + driftX;
+    const ny = y * 0.00022 + driftY;
+    const nonPeriodicA = this.fbm(nx * 0.43 + 11.2, ny * 0.39 - 7.1, 1.7, 3, 2.07, 0.53) * 2 - 1;
+    const nonPeriodicB = this.fbm(nx * 0.91 - 13.4, ny * 0.86 + 9.8, 3.9, 3, 2.16, 0.5) * 2 - 1;
+    const nonPeriodicC = this.fbm(nx * 1.63 + 4.7, ny * 1.49 - 10.6, 6.2, 2, 2.24, 0.47) * 2 - 1;
+    const warpedX = nx + nonPeriodicA * 0.72 + nonPeriodicB * 0.33 + nonPeriodicC * 0.14;
+    const warpedY = ny - nonPeriodicA * 0.46 + nonPeriodicB * 0.38 - nonPeriodicC * 0.12;
 
-    const warpA = this.fbm(nx * 0.85 + 13.7, ny * 0.85 - 4.1, 1.7, 3, 2.1, 0.55) * 2 - 1;
-    const warpB = this.fbm(nx * 1.45 - 8.2, ny * 1.35 + 5.4, 3.9, 3, 2.2, 0.52) * 2 - 1;
-    const warpedX = nx + warpA * 0.68 + warpB * 0.24;
-    const warpedY = ny - warpA * 0.44 + warpB * 0.31;
+    const macroBase = this.fbm(warpedX * 0.21 - 8.4, warpedY * 0.2 + 3.6, 8.1, 5, 2.0, 0.57);
+    const macroRidge = this.ridgeNoise(warpedX * 0.32 + 5.2, warpedY * 0.34 - 9.7, 10.6);
+    const macro = clamp(macroBase * 0.68 + macroRidge * 0.32, 0, 1);
 
-    const elevationLow = this.fbm(warpedX * 0.42, warpedY * 0.42, 7.1, 4, 2.04, 0.54);
-    const elevationMid = this.ridgeNoise(warpedX * 0.88 + 6.1, warpedY * 0.82 - 2.7, 9.3);
-    const elevationHigh = this.fbm(warpedX * 1.92 - 3.4, warpedY * 1.96 + 8.8, 11.9, 2, 2.2, 0.5);
-    const elevation = clamp(elevationLow * 0.54 + elevationMid * 0.31 + elevationHigh * 0.15, 0, 1);
+    const mesoBands = this.fbm(warpedX * 0.58 + nonPeriodicB * 0.25, warpedY * 0.62 - nonPeriodicA * 0.18, 14.1, 4, 2.1, 0.53);
+    const mesoCorridor = this.ridgeNoise(warpedX * 0.74 - 6.7, warpedY * 0.7 + 2.4, 16.4);
+    const meso = clamp(mesoBands * 0.62 + mesoCorridor * 0.38, 0, 1);
 
-    const moistureLow = this.fbm(warpedX * 0.56 - 5.2, warpedY * 0.58 + 4.4, 5.6, 4, 2.05, 0.56);
-    const moistureBands = this.fbm(warpedX * 1.18 + warpB * 0.4, warpedY * 1.12 - warpA * 0.35, 12.4, 3, 2.1, 0.48);
-    const moisture = clamp(moistureLow * 0.76 + moistureBands * 0.24 - elevation * 0.16, 0, 1);
+    const microTexture = this.fbm(warpedX * 1.76 + 7.3, warpedY * 1.82 - 1.9, 19.2, 3, 2.2, 0.48);
+    const microFilament = this.fbm(warpedX * 2.32 - 2.8, warpedY * 2.26 + 4.1, 23.8, 2, 2.3, 0.44);
+    const micro = clamp(microTexture * 0.64 + microFilament * 0.36, 0, 1);
 
-    const fertilityLow = this.fbm(warpedX * 0.61 + 2.8, warpedY * 0.63 - 7.5, 14.2, 4, 2.08, 0.55);
-    const fertilityTexture = this.fbm(warpedX * 1.54 - 6.5, warpedY * 1.48 + 1.3, 16.8, 3, 2.15, 0.46);
-    const fertility = clamp(fertilityLow * 0.68 + fertilityTexture * 0.2 + moisture * 0.18 - elevation * 0.09, 0, 1);
+    const elevation = clamp(macro * 0.62 + meso * 0.3 + micro * 0.08, 0, 1);
+    const moistureMacro = this.fbm(warpedX * 0.28 - 12.2, warpedY * 0.26 + 8.4, 26.7, 4, 2.04, 0.55);
+    const moisture = clamp(moistureMacro * 0.62 + meso * 0.24 + (1 - macro) * 0.14 - elevation * 0.16, 0, 1);
 
-    const roughness = clamp(this.fbm(warpedX * 1.9 + 9.1, warpedY * 1.82 - 3.8, 19.4, 3, 2.2, 0.48), 0, 1);
-    const density = clamp(this.fbm(warpedX * 0.96, warpedY * 1.04, 22.1, 3, 2.1, 0.54), 0, 1);
-    const contour = clamp(this.fbm(warpedX * 1.32 - 1.8, warpedY * 1.28 + 2.9, 25.2, 3, 2.12, 0.5), 0, 1);
-    const flowAngle = this.fbm(warpedX * 0.76 - 4.2, warpedY * 0.74 + 6.1, 27.4 + time * 0.0002, 3, 2.03, 0.52) * TWO_PI * 2;
-    const flowBias = this.fbm(warpedX * 1.16 + 3.2, warpedY * 1.12 - 4.8, 31.7, 2, 2.14, 0.5) * 2 - 1;
+    const fertilityMacro = this.fbm(warpedX * 0.41 + 4.8, warpedY * 0.43 - 11.6, 29.4, 4, 2.1, 0.54);
+    const fertility = clamp(fertilityMacro * 0.54 + meso * 0.28 + moisture * 0.22 + micro * 0.08 - macro * 0.12, 0, 1);
 
-    return { elevation, moisture, fertility, roughness, density, contour, flowAngle, flowBias };
+    const roughness = clamp(micro * 0.58 + meso * 0.2 + (1 - macro) * 0.12 + this.fbm(warpedX * 1.34 + 1.1, warpedY * 1.28 - 3.2, 33.6, 2, 2.22, 0.48) * 0.1, 0, 1);
+    const density = clamp(this.fbm(warpedX * 0.8 + macro * 0.4, warpedY * 0.88 - meso * 0.3, 35.8, 3, 2.08, 0.54) * 0.52 + meso * 0.3 + moisture * 0.18, 0, 1);
+    const contour = clamp(macro * 0.46 + meso * 0.38 + micro * 0.16, 0, 1);
+    const flowAngle = this.fbm(warpedX * 0.62 - 4.2, warpedY * 0.64 + 6.1, 39.4 + time * 0.00013, 3, 2.03, 0.52) * TWO_PI * 2;
+    const flowBias = this.fbm(warpedX * 1.02 + 3.2, warpedY * 0.96 - 4.8, 41.7, 2, 2.14, 0.5) * 2 - 1;
+
+    return { macro, meso, micro, elevation, moisture, fertility, roughness, density, contour, flowAngle, flowBias };
   }
 
   sample(x: number, y: number, time: number, influence: WorldFieldInfluence): WorldFieldSample {
@@ -206,6 +215,9 @@ export class WorldFieldModel {
     );
 
     return {
+      macro: layers.macro,
+      meso: layers.meso,
+      micro: layers.micro,
       terrain,
       habitat,
       habitatWeights: {

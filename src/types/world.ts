@@ -16,6 +16,9 @@ export interface TerrainCell {
   index: number;
   center: Vec2;
   radius: number;
+  macro: number;
+  meso: number;
+  micro: number;
   terrain: TerrainType;
   habitat: HabitatType;
   habitatWeights: {

@@ -8,6 +8,9 @@ export interface HabitatWeights {
 }
 
 export interface FieldSample {
+  macro: number;
+  meso: number;
+  micro: number;
   terrain: TerrainType;
   habitat: HabitatType;
   habitatWeights: HabitatWeights;
