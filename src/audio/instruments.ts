@@ -1,5 +1,6 @@
-export type InstrumentTimbralFamily = 'plucked' | 'bowed' | 'air' | 'percussive' | 'textural' | 'hybrid';
-export type InstrumentEnvelopeCharacter = 'soft' | 'rounded' | 'percussive' | 'long';
+export type InstrumentTimbralFamily = 'plucked' | 'bowed' | 'air' | 'percussive' | 'textural' | 'hybrid' | 'bass' | 'reed';
+export type InstrumentEnvelopeCharacter = 'soft' | 'rounded' | 'percussive' | 'long' | 'breathy';
+export type InstrumentRoleAffinity = 'bloom' | 'rooted' | 'growth' | 'grazer' | 'forager' | 'pollinator' | 'drifter' | 'predator' | 'decomposer' | 'decay' | 'atmosphere' | 'mixed';
 
 export interface InstrumentDescriptor {
   id: string;
@@ -8,7 +9,7 @@ export interface InstrumentDescriptor {
     minMidi: number;
     maxMidi: number;
   };
-  roleAffinity: Array<'bloom' | 'grazer' | 'pollinator' | 'decay' | 'mixed'>;
+  roleAffinity: InstrumentRoleAffinity[];
   rhythmicTendency: number;
   envelopeCharacter: InstrumentEnvelopeCharacter;
   timbralFamily: InstrumentTimbralFamily;
@@ -37,47 +38,69 @@ export const createInstrumentRegistry = (seed: InstrumentDescriptor[] = []): Ins
 
 export const DEFAULT_INSTRUMENT_DESCRIPTORS: InstrumentDescriptor[] = [
   {
-    id: 'bloom-pad',
-    name: 'Bloom Pad',
-    pitchRange: { minMidi: 36, maxMidi: 68 },
-    roleAffinity: ['bloom'],
-    rhythmicTendency: 0.24,
-    envelopeCharacter: 'long',
-    timbralFamily: 'textural',
-    voiceLimit: 3,
-    maxDensity: 0.7,
+    id: 'soft-pluck',
+    name: 'Soft Pluck',
+    pitchRange: { minMidi: 57, maxMidi: 88 },
+    roleAffinity: ['pollinator', 'drifter', 'growth'],
+    rhythmicTendency: 0.74,
+    envelopeCharacter: 'percussive',
+    timbralFamily: 'plucked',
+    voiceLimit: 2,
+    maxDensity: 0.62,
   },
   {
-    id: 'grazer-pulse',
-    name: 'Grazer Pulse',
-    pitchRange: { minMidi: 42, maxMidi: 78 },
-    roleAffinity: ['grazer'],
-    rhythmicTendency: 0.76,
-    envelopeCharacter: 'percussive',
+    id: 'mellow-mallet',
+    name: 'Mellow Mallet',
+    pitchRange: { minMidi: 45, maxMidi: 76 },
+    roleAffinity: ['bloom', 'rooted', 'grazer'],
+    rhythmicTendency: 0.58,
+    envelopeCharacter: 'rounded',
     timbralFamily: 'percussive',
     voiceLimit: 2,
-    maxDensity: 0.8,
+    maxDensity: 0.72,
   },
   {
-    id: 'pollinator-chime',
-    name: 'Pollinator Chime',
-    pitchRange: { minMidi: 55, maxMidi: 92 },
-    roleAffinity: ['pollinator'],
-    rhythmicTendency: 0.62,
-    envelopeCharacter: 'rounded',
-    timbralFamily: 'air',
-    voiceLimit: 2,
-    maxDensity: 0.6,
-  },
-  {
-    id: 'decay-grain',
-    name: 'Decay Grain',
-    pitchRange: { minMidi: 30, maxMidi: 62 },
-    roleAffinity: ['decay'],
-    rhythmicTendency: 0.34,
+    id: 'warm-bass-pulse',
+    name: 'Warm Bass Pulse',
+    pitchRange: { minMidi: 30, maxMidi: 58 },
+    roleAffinity: ['grazer', 'forager', 'predator'],
+    rhythmicTendency: 0.42,
     envelopeCharacter: 'soft',
-    timbralFamily: 'hybrid',
+    timbralFamily: 'bass',
     voiceLimit: 2,
-    maxDensity: 0.65,
+    maxDensity: 0.56,
+  },
+  {
+    id: 'reed-breath',
+    name: 'Reed Breath',
+    pitchRange: { minMidi: 49, maxMidi: 80 },
+    roleAffinity: ['decomposer', 'decay', 'predator'],
+    rhythmicTendency: 0.36,
+    envelopeCharacter: 'breathy',
+    timbralFamily: 'reed',
+    voiceLimit: 2,
+    maxDensity: 0.48,
+  },
+  {
+    id: 'wood-tick',
+    name: 'Wood Tick',
+    pitchRange: { minMidi: 60, maxMidi: 96 },
+    roleAffinity: ['pollinator', 'forager', 'mixed'],
+    rhythmicTendency: 0.82,
+    envelopeCharacter: 'percussive',
+    timbralFamily: 'percussive',
+    voiceLimit: 1,
+    maxDensity: 0.45,
+  },
+  {
+    id: 'atmo-hush',
+    name: 'Atmos Hush',
+    pitchRange: { minMidi: 34, maxMidi: 67 },
+    roleAffinity: ['atmosphere', 'decomposer', 'decay', 'bloom'],
+    rhythmicTendency: 0.2,
+    envelopeCharacter: 'long',
+    timbralFamily: 'textural',
+    voiceLimit: 2,
+    maxDensity: 0.4,
   },
 ];
