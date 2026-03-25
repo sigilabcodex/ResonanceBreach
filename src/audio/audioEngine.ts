@@ -7,7 +7,12 @@ import { createAudioFocusContext, scoreEntities, selectForegroundVoices, type Au
 import { createHarmonyState, getHarmonyFrequency, type HarmonyState } from './harmony';
 import { createAudioBusLayout, type AudioBusLayout } from './audioBuses';
 import { createMusicalInterpreter, type MusicalInterpretationMode } from './musicalInterpreter';
-import { createInstrumentRegistry, DEFAULT_INSTRUMENT_DESCRIPTORS, type InstrumentRegistry } from './instruments';
+import {
+  createInstrumentRegistry,
+  DEFAULT_INSTRUMENT_DESCRIPTORS,
+  type InstrumentDescriptor,
+  type InstrumentRegistry,
+} from './instruments';
 import { createEnvironmentalPulseEvent, mapWorldEventToEcologicalAudioEvents, type EcologicalAudioEvent } from './musicalEvents';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -86,6 +91,23 @@ const ECOLOGICAL_WAVEFORM: Record<EcologicalVoiceRole, OscillatorType> = {
   grazer: 'triangle',
   pollinator: 'sine',
   decay: 'triangle',
+};
+
+type OrchestrationRole = 'bloom' | 'pollinator' | 'grazer' | 'predator' | 'decomposer' | 'atmosphere' | 'mixed';
+
+type EventInstrumentGesture = {
+  instrument: InstrumentDescriptor;
+  role: OrchestrationRole;
+  layer: 'plant' | 'mobile' | 'cluster' | 'event';
+  waveform: OscillatorType;
+  filterType: BiquadFilterType;
+  contour: number;
+  octave: number;
+  duration: number;
+  amount: number;
+  filterScale: number;
+  q: number;
+  destination: GainNode;
 };
 
 export class AudioEngine {
@@ -289,9 +311,11 @@ export class AudioEngine {
 
     const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
-    this.busLayout.music.gain.setTargetAtTime(0.86 + music.composition.foregroundLift * 0.16, now, 0.4);
-    this.busLayout.atmosphere.gain.setTargetAtTime(0.92 + (1 - music.interpretation.tension) * 0.1, now, 0.6);
-    this.busLayout.rawEcology.gain.setTargetAtTime(0.88 + music.interpretation.intensity * 0.14, now, 0.3);
+    const musicalLift = this.interpretationMode === 'musical' ? 0.12 : this.interpretationMode === 'hybrid' ? 0.06 : 0;
+    const rawLift = this.interpretationMode === 'raw' ? 0.12 : this.interpretationMode === 'hybrid' ? 0.04 : -0.04;
+    this.busLayout.music.gain.setTargetAtTime(0.84 + musicalLift + music.composition.foregroundLift * 0.18, now, 0.4);
+    this.busLayout.atmosphere.gain.setTargetAtTime(0.74 + (1 - music.interpretation.tension) * 0.08, now, 0.6);
+    this.busLayout.rawEcology.gain.setTargetAtTime(0.84 + rawLift + music.interpretation.intensity * 0.12, now, 0.3);
     this.busLayout.selectionUi.gain.setTargetAtTime(0.86 + focus.intensity * 0.18, now, 0.22);
     const focusMasterDip = focus.active ? 1 - focus.intensity * 0.01 : 1;
     const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1)
@@ -663,30 +687,36 @@ export class AudioEngine {
   ): void {
     const gesture = this.interpreter.interpret(ecologicalEvent);
     if (sourceWorldEvent) {
-      if (sourceWorldEvent.type !== 'toolUsed') this.triggerEventTone(sourceWorldEvent, gesture.intensity);
+      if (sourceWorldEvent.type !== 'toolUsed') this.triggerEventTone(sourceWorldEvent, ecologicalEvent, gesture.intensity);
       return;
     }
-    if (!this.context || !this.eventBus) return;
+    if (!this.context || !this.eventBus || !this.busLayout) return;
     if (gesture.outputEventType !== 'environmentalPulse') return;
     if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
+    const role = this.inferRoleFromEcologicalEvent(ecologicalEvent);
+    const descriptor = this.chooseInstrumentForRole(role, ecologicalEvent.id);
+    const destination = descriptor.id === 'atmo-hush' ? this.busLayout.atmosphere : this.busLayout.music;
     const now = this.context.currentTime;
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
-    osc.type = 'sine';
-    osc.frequency.value = 80 + gesture.intensity * 40;
-    filter.type = 'lowpass';
-    filter.frequency.value = 180 + gesture.intensity * 120;
-    filter.Q.value = 0.8;
+    osc.type = this.interpretationMode === 'raw' ? 'sine' : descriptor.timbralFamily === 'textural' ? 'triangle' : 'sine';
+    osc.frequency.value = 72 + gesture.intensity * 30 + (this.interpretationMode === 'musical' ? 8 : 0);
+    filter.type = descriptor.timbralFamily === 'textural' ? 'bandpass' : 'lowpass';
+    filter.frequency.value = 130 + gesture.intensity * 140 + (this.interpretationMode === 'raw' ? 0 : 35);
+    filter.Q.value = descriptor.timbralFamily === 'textural' ? 1.2 : 0.9;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.006 + gesture.intensity * 0.01, now + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+    const attack = this.interpretationMode === 'musical' ? 0.06 : 0.08;
+    const release = this.interpretationMode === 'raw' ? 0.34 : 0.44;
+    const amount = (0.004 + gesture.intensity * 0.008) * (descriptor.maxDensity * 0.7 + 0.58);
+    gain.gain.exponentialRampToValueAtTime(amount, now + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + release);
     osc.connect(filter);
     filter.connect(gain);
-    gain.connect(this.eventBus);
+    gain.connect(destination);
     osc.start(now);
-    osc.stop(now + 0.44);
+    osc.stop(now + release + 0.08);
     this.activeTransientVoices += 1;
   }
 
@@ -748,8 +778,8 @@ export class AudioEngine {
     }, harmony, event.blocked ? 0.2 : 0.46);
   }
 
-  private triggerEventTone(event: WorldEvent, intensityScale = 1): void {
-    if (!this.context || !this.eventBus) return;
+  private triggerEventTone(event: WorldEvent, ecologicalEvent: EcologicalAudioEvent, intensityScale = 1): void {
+    if (!this.context || !this.eventBus || !this.busLayout) return;
     if (event.type === 'toolUsed') return;
     if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
@@ -789,37 +819,142 @@ export class AudioEngine {
       diagnostics: createDefaultDiagnostics(),
     });
 
+    const settings = this.createEventInstrumentGesture(event, ecologicalEvent);
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
     const pan = this.context.createStereoPanner();
 
-    const settings = {
-      entityBorn: { layer: 'event' as const, contour: 0.55, octave: 1, dur: 0.24, type: 'triangle' as OscillatorType, amount: 0.026 },
-      entityFed: { layer: 'event' as const, contour: 0.82, octave: 1, dur: 0.16, type: 'sine' as OscillatorType, amount: 0.024 },
-      entityDied: { layer: 'plant' as const, contour: 0.2, octave: -1, dur: 0.42, type: 'sine' as OscillatorType, amount: 0.018 },
-      residueCreated: { layer: 'cluster' as const, contour: 0.22, octave: -2, dur: 0.28, type: 'triangle' as OscillatorType, amount: 0.016 },
-      fruitCreated: { layer: 'event' as const, contour: 0.9, octave: 1, dur: 0.26, type: 'triangle' as OscillatorType, amount: 0.018 },
-    }[event.type];
-
-    osc.type = settings.type;
+    osc.type = settings.waveform;
     osc.frequency.value = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave);
-    filter.type = event.type === 'entityDied' ? 'lowpass' : event.type === 'fruitCreated' ? 'highpass' : 'bandpass';
-    filter.frequency.value = event.type === 'entityDied' ? 320 : event.type === 'fruitCreated' ? osc.frequency.value * 2.1 : osc.frequency.value * 1.7;
-    filter.Q.value = event.type === 'entityFed' ? 2.4 : event.type === 'fruitCreated' ? 1.6 : 1.2;
+    filter.type = settings.filterType;
+    filter.frequency.value = clamp(osc.frequency.value * settings.filterScale, 120, 6200);
+    filter.Q.value = settings.q;
     pan.pan.value = clamp((event.position.x - 1200) / 1200, -0.8, 0.8);
 
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(settings.amount * clamp(intensityScale, 0.2, 1.4), now + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + settings.dur);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + settings.duration);
 
     osc.connect(filter);
     filter.connect(pan);
     pan.connect(gain);
-    gain.connect(this.eventBus);
+    gain.connect(settings.destination);
     osc.start(now);
-    osc.stop(now + settings.dur + 0.08);
+    osc.stop(now + settings.duration + 0.08);
     this.activeTransientVoices += 1;
+  }
+
+  private inferRoleFromEcologicalEvent(event: EcologicalAudioEvent): OrchestrationRole {
+    const tags = new Set(event.tags);
+    if (tags.has('predator')) return 'predator';
+    if (tags.has('cluster') || tags.has('parasite') || tags.has('residue') || tags.has('death')) return 'decomposer';
+    if (tags.has('flocker')) return 'pollinator';
+    if (tags.has('grazer')) return 'grazer';
+    if (tags.has('plant') || tags.has('ephemeral') || tags.has('canopy') || tags.has('fruit') || tags.has('propagation')) return 'bloom';
+    if (tags.has('environment')) return 'atmosphere';
+    return 'mixed';
+  }
+
+  private chooseInstrumentForRole(role: OrchestrationRole, eventId: number): InstrumentDescriptor {
+    const descriptors = this.instrumentRegistry.list();
+    const weighted = descriptors
+      .map((descriptor) => {
+        const hasRole = descriptor.roleAffinity.includes(role)
+          || (role === 'decomposer' && descriptor.roleAffinity.includes('decay'))
+          || (role === 'bloom' && (descriptor.roleAffinity.includes('rooted') || descriptor.roleAffinity.includes('growth')))
+          || (role === 'grazer' && descriptor.roleAffinity.includes('forager'));
+        const modeWeight = this.interpretationMode === 'musical'
+          ? descriptor.maxDensity + descriptor.rhythmicTendency * 0.4
+          : this.interpretationMode === 'hybrid'
+            ? descriptor.maxDensity * 0.7 + descriptor.rhythmicTendency * 0.3
+            : 0.4;
+        const affinityWeight = hasRole ? 1 : descriptor.roleAffinity.includes('mixed') ? 0.4 : 0;
+        return { descriptor, weight: affinityWeight * modeWeight };
+      })
+      .filter((item) => item.weight > 0);
+    const pool = weighted.length > 0 ? weighted : descriptors.map((descriptor) => ({ descriptor, weight: 1 }));
+    const total = pool.reduce((sum, item) => sum + item.weight, 0);
+    const seed = Math.abs(Math.sin((eventId + 1) * 12.9898)) % 1;
+    let threshold = seed * total;
+    for (const item of pool) {
+      threshold -= item.weight;
+      if (threshold <= 0) return item.descriptor;
+    }
+    return pool[pool.length - 1]?.descriptor ?? descriptors[0];
+  }
+
+  private createEventInstrumentGesture(event: WorldEvent, ecologicalEvent: EcologicalAudioEvent): EventInstrumentGesture {
+    const role = this.inferRoleFromEcologicalEvent(ecologicalEvent);
+    const instrument = this.chooseInstrumentForRole(role, ecologicalEvent.id);
+    const destination = role === 'decomposer' || role === 'atmosphere'
+      ? this.busLayout?.atmosphere ?? this.eventBus!
+      : this.interpretationMode === 'raw'
+        ? this.busLayout?.rawEcology ?? this.eventBus!
+        : this.busLayout?.music ?? this.eventBus!;
+    const modeDurationScale = this.interpretationMode === 'raw' ? 0.86 : this.interpretationMode === 'hybrid' ? 1 : 1.08;
+    const contourByRole: Record<OrchestrationRole, number> = {
+      bloom: 0.62,
+      pollinator: 0.84,
+      grazer: 0.4,
+      predator: 0.24,
+      decomposer: 0.2,
+      atmosphere: 0.3,
+      mixed: 0.52,
+    };
+    const octaveByRole: Record<OrchestrationRole, number> = {
+      bloom: 0,
+      pollinator: 1,
+      grazer: -1,
+      predator: -2,
+      decomposer: -1,
+      atmosphere: -1,
+      mixed: 0,
+    };
+    const layerByRole: Record<OrchestrationRole, 'plant' | 'mobile' | 'cluster' | 'event'> = {
+      bloom: 'plant',
+      pollinator: 'mobile',
+      grazer: 'cluster',
+      predator: 'cluster',
+      decomposer: 'cluster',
+      atmosphere: 'plant',
+      mixed: 'event',
+    };
+    const waveformByFamily: Record<InstrumentDescriptor['timbralFamily'], OscillatorType> = {
+      plucked: 'triangle',
+      bowed: 'triangle',
+      air: 'sine',
+      percussive: 'triangle',
+      textural: 'sine',
+      hybrid: 'triangle',
+      bass: 'sine',
+      reed: 'sawtooth',
+    };
+    const filterByFamily: Record<InstrumentDescriptor['timbralFamily'], BiquadFilterType> = {
+      plucked: 'bandpass',
+      bowed: 'lowpass',
+      air: 'highpass',
+      percussive: 'bandpass',
+      textural: 'lowpass',
+      hybrid: 'bandpass',
+      bass: 'lowpass',
+      reed: 'bandpass',
+    };
+
+    return {
+      instrument,
+      role,
+      layer: layerByRole[role],
+      waveform: this.interpretationMode === 'raw' ? 'triangle' : waveformByFamily[instrument.timbralFamily],
+      filterType: event.type === 'entityDied' ? 'lowpass' : filterByFamily[instrument.timbralFamily],
+      contour: clamp(contourByRole[role] + (instrument.rhythmicTendency - 0.5) * 0.16, 0.1, 0.95),
+      octave: octaveByRole[role] + (this.interpretationMode === 'musical' ? 1 : 0),
+      duration: clamp((0.12 + (1 - instrument.rhythmicTendency) * 0.3) * modeDurationScale, 0.1, 0.54),
+      amount: clamp(0.012 + instrument.maxDensity * 0.022, 0.012, 0.034),
+      filterScale: clamp(1.2 + instrument.rhythmicTendency * 1.2 + (role === 'predator' ? -0.35 : 0), 1.05, 2.6),
+      q: clamp(0.8 + instrument.rhythmicTendency * 1.8 + (this.interpretationMode === 'musical' ? 0.28 : 0), 0.8, 2.8),
+      destination,
+    };
   }
 
   private triggerToolTone(tool: ToolState, harmony: HarmonyState, intensity: number): void {
