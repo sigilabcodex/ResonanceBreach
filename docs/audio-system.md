@@ -200,5 +200,19 @@ Core implementation lives in:
 - `src/audio/audioEngine.ts`
 - `src/audio/harmony.ts`
 - `src/audio/salience.ts`
+- `src/audio/musicalEvents.ts`
+- `src/audio/musicalInterpreter.ts`
+- `src/audio/instruments.ts`
+- `src/audio/audioBuses.ts`
 
 These modules separate harmony selection, salience scoring, and pooled voice rendering so future audio passes can remain focused instead of sprawling.
+
+## Musical interpretation architecture foundation
+
+The engine now includes a lightweight intermediate architecture:
+
+- simulation events -> **ecological audio events** (`musicalEvents.ts`)
+- ecological audio events -> **musical interpreter** (`musicalInterpreter.ts`) with `raw | hybrid | musical` modes
+- interpreted gestures -> existing transient/voice rendering
+- explicit output routing via **named buses** (`audioBuses.ts`): `music`, `atmosphere`, `rawEcology`, `selectionUi`
+- future-facing **instrument descriptors/registry** (`instruments.ts`) for role/timbre metadata without a full instrument engine yet
