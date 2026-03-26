@@ -1,5 +1,6 @@
 import type { AudioDebugState } from '../audio/audioEngine';
 import type { InterpretationStatus } from '../audio/audioEngine';
+import type { MusicalInterpretationMode } from '../audio/musicalInterpreter';
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
 import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
@@ -94,12 +95,15 @@ export class Hud {
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
   private readonly interpretationValue: HTMLSpanElement;
+  private readonly interpretationOverlay: HTMLDivElement;
+  private readonly interpretationOverlayValue: HTMLSpanElement;
   private readonly debugBody: HTMLDivElement;
   private readonly debugSummary: HTMLSpanElement;
   private readonly toolButtons = new Map<ToolType, HTMLButtonElement>();
   private readonly rangeInputs = new Map<string, HTMLInputElement>();
   private readonly rangeOutputs = new Map<string, HTMLSpanElement>();
   private readonly toggleInputs = new Map<string, HTMLInputElement>();
+  private readonly choiceButtons = new Map<string, HTMLButtonElement[]>();
   private readonly panelElements: Record<PanelKey, HTMLElement>;
   private readonly panelBodies: Record<PanelKey, HTMLElement>;
   private readonly panelToggleButtons = new Map<PanelKey, HTMLButtonElement>();
@@ -108,6 +112,8 @@ export class Hud {
   private settings: GameSettings;
   private collapsed: PanelState = { ...DEFAULT_COLLAPSED };
   private lastFocusedElement: HTMLElement | null = null;
+  private interpretationOverlayTimer: number | null = null;
+  private lastInterpretationMode: MusicalInterpretationMode | null = null;
 
   constructor(
     onToolSelect: (tool: ToolType) => void,
@@ -234,6 +240,9 @@ export class Hud {
       <div class="hud__minimal" data-minimal-overlay aria-live="polite">
         <span data-minimal-hint>Minimal HUD · H restores the full interface · O opens settings</span>
       </div>
+      <div class="hud__interpretation-toast" data-interpretation-toast hidden aria-live="polite">
+        <span data-interpretation-toast-value>Hybrid · Musicification 50%</span>
+      </div>
     `;
 
     this.restartButton = this.element.querySelector('.hud__restart') as HTMLButtonElement;
@@ -259,6 +268,8 @@ export class Hud {
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
     this.interpretationValue = this.element.querySelector('[data-interpretation]') as HTMLSpanElement;
+    this.interpretationOverlay = this.element.querySelector('[data-interpretation-toast]') as HTMLDivElement;
+    this.interpretationOverlayValue = this.element.querySelector('[data-interpretation-toast-value]') as HTMLSpanElement;
     this.debugBody = this.element.querySelector('[data-debug-body]') as HTMLDivElement;
     this.debugSummary = this.element.querySelector('[data-debug-summary]') as HTMLSpanElement;
 
@@ -319,6 +330,7 @@ export class Hud {
     window.addEventListener('keydown', this.handleWindowKeyDown);
 
     this.syncSettings(this.settings);
+    this.lastInterpretationMode = this.settings.audio.interpretationMode;
     this.renderPanelState();
     this.renderDebugOverlay(undefined, undefined, undefined);
   }
@@ -350,6 +362,10 @@ export class Hud {
       : interpretationMode === 'hybrid'
         ? 'Hybrid lens'
         : 'Raw ecology';
+    if (interpretationStatus && this.lastInterpretationMode !== interpretationStatus.mode) {
+      this.showInterpretationOverlay(interpretationStatus);
+      this.lastInterpretationMode = interpretationStatus.mode;
+    }
 
     for (const tool of TOOLS) {
       const button = this.toolButtons.get(tool);
@@ -413,9 +429,18 @@ export class Hud {
     this.rangeOutputs.get('masterVolume')!.textContent = percent(this.settings.audio.masterVolume);
     this.rangeOutputs.get('ambienceVolume')!.textContent = percent(this.settings.audio.ambienceVolume);
     this.rangeOutputs.get('entityVolume')!.textContent = percent(this.settings.audio.entityVolume);
+    this.rangeOutputs.get('musicBusLevel')!.textContent = percent(this.settings.audio.musicBusLevel);
+    this.rangeOutputs.get('rawEcologyBusLevel')!.textContent = percent(this.settings.audio.rawEcologyBusLevel);
+    this.rangeOutputs.get('atmosphereBusLevel')!.textContent = percent(this.settings.audio.atmosphereBusLevel);
+    this.rangeOutputs.get('musicificationAmount')!.textContent = percent(this.settings.audio.musicificationAmount);
     this.rangeInputs.get('masterVolume')!.value = String(this.settings.audio.masterVolume);
     this.rangeInputs.get('ambienceVolume')!.value = String(this.settings.audio.ambienceVolume);
     this.rangeInputs.get('entityVolume')!.value = String(this.settings.audio.entityVolume);
+    this.rangeInputs.get('musicBusLevel')!.value = String(this.settings.audio.musicBusLevel);
+    this.rangeInputs.get('rawEcologyBusLevel')!.value = String(this.settings.audio.rawEcologyBusLevel);
+    this.rangeInputs.get('atmosphereBusLevel')!.value = String(this.settings.audio.atmosphereBusLevel);
+    this.rangeInputs.get('musicificationAmount')!.value = String(this.settings.audio.musicificationAmount);
+    this.updateChoiceButtons('interpretationMode', this.settings.audio.interpretationMode);
     this.toggleInputs.get('terrainLines')!.checked = this.settings.visuals.terrainLines;
     this.toggleInputs.get('motionTrails')!.checked = this.settings.visuals.motionTrails;
     this.toggleInputs.get('debugOverlays')!.checked = this.settings.visuals.debugOverlays;
@@ -517,6 +542,30 @@ export class Hud {
       this.settings = { ...this.settings, audio: { ...this.settings.audio, entityVolume: value } };
       this.emitSettings();
     });
+    this.createChoiceControl(audioGroup, 'Interpretation mode', 'interpretationMode', [
+      { label: 'Raw', value: 'raw' },
+      { label: 'Hybrid', value: 'hybrid' },
+      { label: 'Musical', value: 'musical' },
+    ], this.settings.audio.interpretationMode, (mode) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, interpretationMode: mode as MusicalInterpretationMode } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Musicification', 'musicificationAmount', this.settings.audio.musicificationAmount, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, musicificationAmount: value } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Music bus level', 'musicBusLevel', this.settings.audio.musicBusLevel, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, musicBusLevel: value } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Raw ecology bus', 'rawEcologyBusLevel', this.settings.audio.rawEcologyBusLevel, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, rawEcologyBusLevel: value } };
+      this.emitSettings();
+    });
+    this.createRangeControl(audioGroup, 'Atmosphere bus', 'atmosphereBusLevel', this.settings.audio.atmosphereBusLevel, (value) => {
+      this.settings = { ...this.settings, audio: { ...this.settings.audio, atmosphereBusLevel: value } };
+      this.emitSettings();
+    });
 
     this.createToggleControl(visualsGroup, 'Terrain lines', 'terrainLines', this.settings.visuals.terrainLines, (checked) => {
       this.settings = { ...this.settings, visuals: { ...this.settings.visuals, terrainLines: checked } };
@@ -591,6 +640,62 @@ export class Hud {
     input.addEventListener('change', () => onToggle(input.checked));
     this.toggleInputs.set(key, input);
     parent.append(row);
+  }
+
+  private createChoiceControl(
+    parent: HTMLElement,
+    label: string,
+    key: string,
+    options: Array<{ label: string; value: string }>,
+    currentValue: string,
+    onSelect: (value: string) => void,
+  ): void {
+    const row = document.createElement('div');
+    row.className = 'hud__setting';
+    row.innerHTML = `<span class="hud__setting-head"><span>${label}</span></span>`;
+    const choices = document.createElement('div');
+    choices.className = 'hud__choice-row';
+    const buttons = options.map((option) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'hud__choice-button';
+      button.textContent = option.label;
+      button.dataset.value = option.value;
+      button.setAttribute('aria-pressed', String(option.value === currentValue));
+      button.classList.toggle('is-active', option.value === currentValue);
+      button.addEventListener('click', () => {
+        this.updateChoiceButtons(key, option.value);
+        onSelect(option.value);
+      });
+      choices.append(button);
+      return button;
+    });
+    this.choiceButtons.set(key, buttons);
+    row.append(choices);
+    parent.append(row);
+  }
+
+  private updateChoiceButtons(key: string, activeValue: string): void {
+    const buttons = this.choiceButtons.get(key);
+    if (!buttons) return;
+    buttons.forEach((button) => {
+      const active = button.dataset.value === activeValue;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  private showInterpretationOverlay(status: InterpretationStatus): void {
+    const modeLabel = status.mode === 'musical' ? 'Musical' : status.mode === 'hybrid' ? 'Hybrid' : 'Raw';
+    this.interpretationOverlayValue.textContent = `${modeLabel} · Musicification ${percent(status.musicification)} · Buses M ${Math.round(status.musicBus * 100)} / R ${Math.round(status.rawBus * 100)} / A ${Math.round(status.atmosphereBus * 100)}`;
+    this.interpretationOverlay.hidden = false;
+    this.interpretationOverlay.classList.add('is-visible');
+    if (this.interpretationOverlayTimer !== null) window.clearTimeout(this.interpretationOverlayTimer);
+    this.interpretationOverlayTimer = window.setTimeout(() => {
+      this.interpretationOverlay.classList.remove('is-visible');
+      this.interpretationOverlay.hidden = true;
+      this.interpretationOverlayTimer = null;
+    }, 1800);
   }
 
   private togglePanelCollapsed(panel: PanelKey): void {

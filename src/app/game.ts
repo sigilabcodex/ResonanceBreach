@@ -55,7 +55,10 @@ export class App {
 
   constructor(mount: HTMLElement) {
     this.settings = normalizeSettings(loadSettings());
+    this.interpretationMode = this.settings.audio.interpretationMode;
     this.hud = new Hud((tool) => this.selectTool(tool), (settings) => this.applySettings(settings), this.settings);
+    this.audio.setInterpretationMode(this.interpretationMode);
+    this.audio.setMusicification(this.settings.audio.musicificationAmount);
 
     mount.innerHTML = `
       <div class="shell">
@@ -106,6 +109,9 @@ export class App {
 
   private applySettings(settings: GameSettings): void {
     this.settings = normalizeSettings(settings);
+    this.interpretationMode = this.settings.audio.interpretationMode;
+    this.audio.setInterpretationMode(this.interpretationMode);
+    this.audio.setMusicification(this.settings.audio.musicificationAmount);
     this.hud.syncSettings(this.settings);
     storeSettings(this.settings);
   }
@@ -146,7 +152,13 @@ export class App {
     const currentIndex = order.indexOf(this.interpretationMode);
     const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % order.length : 0;
     this.interpretationMode = order[nextIndex];
-    this.audio.setInterpretationMode(this.interpretationMode);
+    this.applySettings({
+      ...this.settings,
+      audio: {
+        ...this.settings.audio,
+        interpretationMode: this.interpretationMode,
+      },
+    });
   }
 
   private handleResize = (): void => {

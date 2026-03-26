@@ -114,6 +114,9 @@ type EventInstrumentGesture = {
 export interface InterpretationStatus {
   mode: MusicalInterpretationMode;
   musicification: number;
+  musicBus: number;
+  rawBus: number;
+  atmosphereBus: number;
 }
 
 const modeToMusicification = (mode: MusicalInterpretationMode): number => {
@@ -154,7 +157,13 @@ export class AudioEngine {
   private interpretationMode: MusicalInterpretationMode = 'raw';
   private interpretationBlend = modeToMusicification(this.interpretationMode);
   private interpretationTarget = this.interpretationBlend;
+  private interpretationBias = this.interpretationBlend;
   private interpreter = createMusicalInterpreter(this.interpretationMode);
+  private statusBusLevels = {
+    music: 0.8,
+    raw: 0.8,
+    atmosphere: 0.7,
+  };
   private readonly instrumentRegistry: InstrumentRegistry = createInstrumentRegistry(DEFAULT_INSTRUMENT_DESCRIPTORS);
   private environmentalPulseId = 1_000_000;
   private lastEnvironmentalPulseTime = -100;
@@ -327,12 +336,19 @@ export class AudioEngine {
 
     const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
-    const musicalLift = this.interpretationBlend * 0.14;
-    const rawLift = (1 - this.interpretationBlend) * 0.16 - 0.05 * this.interpretationBlend;
-    const atmosphereLift = (1 - Math.abs(this.interpretationBlend - 0.5) * 2) * 0.06;
-    this.busLayout.music.gain.setTargetAtTime(0.8 + musicalLift + music.composition.foregroundLift * 0.18, now, 0.4);
-    this.busLayout.atmosphere.gain.setTargetAtTime(0.7 + atmosphereLift + (1 - music.interpretation.tension) * 0.08, now, 0.6);
-    this.busLayout.rawEcology.gain.setTargetAtTime(0.78 + rawLift + music.interpretation.intensity * 0.12, now, 0.3);
+    const rawPresence = 1 - this.interpretationBlend;
+    const musicalPresence = this.interpretationBlend;
+    const hybridPresence = 1 - Math.abs(this.interpretationBlend - 0.5) * 2;
+    const musicLevel = this.mapVolume(settings.audio.musicBusLevel);
+    const rawLevel = this.mapVolume(settings.audio.rawEcologyBusLevel);
+    const atmosphereLevel = this.mapVolume(settings.audio.atmosphereBusLevel);
+    const musicTarget = clamp((0.52 + musicalPresence * 0.68 + hybridPresence * 0.08 + music.composition.foregroundLift * 0.26) * musicLevel, 0.12, 1.8);
+    const rawTarget = clamp((0.44 + rawPresence * 0.9 + music.interpretation.intensity * 0.22 - musicalPresence * 0.18) * rawLevel, 0.12, 1.8);
+    const atmosphereTarget = clamp((0.6 + hybridPresence * 0.2 + (1 - music.interpretation.tension) * 0.12 - musicalPresence * 0.08) * atmosphereLevel, 0.12, 1.6);
+    this.statusBusLevels = { music: musicTarget, raw: rawTarget, atmosphere: atmosphereTarget };
+    this.busLayout.music.gain.setTargetAtTime(musicTarget, now, 0.36);
+    this.busLayout.atmosphere.gain.setTargetAtTime(atmosphereTarget, now, 0.55);
+    this.busLayout.rawEcology.gain.setTargetAtTime(rawTarget, now, 0.28);
     this.busLayout.selectionUi.gain.setTargetAtTime(0.86 + focus.intensity * 0.18, now, 0.22);
     const focusMasterDip = focus.active ? 1 - focus.intensity * 0.01 : 1;
     const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1)
@@ -364,14 +380,24 @@ export class AudioEngine {
 
   setInterpretationMode(mode: MusicalInterpretationMode): void {
     this.interpretationMode = mode;
-    this.interpretationTarget = modeToMusicification(mode);
+    const targetByMode = modeToMusicification(mode);
+    this.interpretationTarget = clamp(targetByMode * 0.8 + this.interpretationBias * 0.2, 0, 1);
     this.interpreter = createMusicalInterpreter(mode);
+  }
+
+  setMusicification(amount: number): void {
+    this.interpretationBias = clamp(amount, 0, 1);
+    const targetByMode = modeToMusicification(this.interpretationMode);
+    this.interpretationTarget = clamp(targetByMode * 0.8 + this.interpretationBias * 0.2, 0, 1);
   }
 
   getInterpretationStatus(): InterpretationStatus {
     return {
       mode: this.interpretationMode,
       musicification: this.interpretationBlend,
+      musicBus: this.statusBusLevels.music,
+      rawBus: this.statusBusLevels.raw,
+      atmosphereBus: this.statusBusLevels.atmosphere,
     };
   }
 
@@ -1139,6 +1165,7 @@ export class AudioEngine {
     settings: GameSettings,
   ): void {
     if (!this.context || !this.phraseBus) return;
+    const phraseBias = clamp(this.interpretationBlend, 0, 1);
     const localDensity = clamp(
       snapshot.entities.filter((entity) => this.distance(entity.position, snapshot.camera.center, snapshot) < 340).length / 16,
       0,
@@ -1150,6 +1177,11 @@ export class AudioEngine {
     for (const agent of this.phraseAgents) {
       if (now < agent.nextActionTime) continue;
       if (agent.phase === 'idle') {
+        const launchChance = 0.14 + phraseBias * 0.62;
+        if (Math.random() > launchChance) {
+          agent.nextActionTime = now + 0.35 + (1 - phraseBias) * 0.9 + Math.random() * 0.5;
+          continue;
+        }
         const callResponseEligible = this.phraseRecentType !== null && now - this.phraseRecentTime < 1.4;
         const responseCandidate = callResponseEligible
           ? candidates.find((entry) => entry.entity.type === this.phraseRecentType)
@@ -1160,10 +1192,10 @@ export class AudioEngine {
         const remembered = this.phraseMotifMemory.get(candidate.entity.id);
         const baseMotif = remembered
           ? remembered.map((interval, idx) => interval + (Math.random() < 0.22 && idx > 0 ? (Math.random() < 0.5 ? -1 : 1) : 0))
-          : [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3].slice(0, 2 + Math.floor(Math.random() * 3));
+          : [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3].slice(0, 1 + Math.round(phraseBias * 3));
         agent.motif = baseMotif;
         this.phraseMotifMemory.set(candidate.entity.id, baseMotif.slice(0, 4));
-        const spacing = clamp(0.12 + localDensity * 0.1, 0.12, 0.28);
+        const spacing = clamp(0.2 - phraseBias * 0.1 + localDensity * 0.08, 0.1, 0.3);
         agent.rhythm = agent.motif.map((_, idx) => spacing + (idx % 2 === 0 ? 0.02 : 0.08) + Math.random() * 0.08);
         agent.variation = 0.06 + Math.random() * 0.12;
         agent.notesRemaining = agent.motif.length;
@@ -1179,7 +1211,7 @@ export class AudioEngine {
         }
         const interval = agent.motif[agent.noteIndex] ?? 0;
         const contour = clamp(target.tone * 0.5 + target.harmony * 0.34 + 0.16 + interval * 0.06 + (Math.random() * 2 - 1) * agent.variation, 0, 1);
-        const phraseAmount = (0.038 + target.activity * 0.034 + (1 - zoomNorm) * 0.008) * (1 - localDensity * 0.2);
+        const phraseAmount = (0.022 + phraseBias * 0.028 + target.activity * 0.03 + (1 - zoomNorm) * 0.008) * (1 - localDensity * 0.2);
         this.playPhraseNote(snapshot, harmony, target, contour, Math.max(0.02, phraseAmount), agent.rhythm[agent.noteIndex] ?? 0.2, settings);
         const nextDuration = agent.rhythm[agent.noteIndex] ?? 0.2;
         agent.noteIndex += 1;
@@ -1189,13 +1221,13 @@ export class AudioEngine {
         this.phraseRecentType = target.type;
         if (agent.notesRemaining <= 0) {
           agent.phase = 'listening';
-          agent.nextActionTime = now + 1 + Math.random() * 1.6 + localDensity * 0.4;
+          agent.nextActionTime = now + 1.2 - phraseBias * 0.44 + Math.random() * 1.2 + localDensity * 0.4;
         } else {
           agent.nextActionTime = now + nextDuration * 0.92;
         }
       } else if (agent.phase === 'listening') {
         agent.phase = 'idle';
-        agent.nextActionTime = now + 0.6 + Math.random() * 1.8 + localDensity * 0.36;
+        agent.nextActionTime = now + 0.8 - phraseBias * 0.3 + Math.random() * 1.6 + localDensity * 0.32;
       }
     }
   }
@@ -1218,14 +1250,19 @@ export class AudioEngine {
     const layer = entity.type === 'plant' || entity.type === 'canopy' ? 'plant' : 'mobile';
     const perception = this.computePerceptualAttenuation(entity.position, snapshot, clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1));
 
-    voice.type = entity.type === 'flocker' ? 'sine' : 'triangle';
+    const phraseBias = clamp(this.interpretationBlend, 0, 1);
+    voice.type = phraseBias > 0.72
+      ? (entity.type === 'flocker' ? 'triangle' : 'sine')
+      : entity.type === 'flocker'
+        ? 'sine'
+        : 'triangle';
     voice.frequency.value = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1);
     filter.type = 'bandpass';
     filter.frequency.value = voice.frequency.value * (1.6 + entity.tone * 0.8) * perception.highFreq;
     filter.Q.value = 1.8 + entity.activity;
     pan.pan.value = this.panFromPosition(entity.position.x, snapshot);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(amount * perception.gain * this.mapVolume(settings.audio.entityVolume), now + 0.02);
+    gain.gain.exponentialRampToValueAtTime((amount * (0.72 + phraseBias * 0.6)) * perception.gain * this.mapVolume(settings.audio.entityVolume), now + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     voice.connect(filter);
     filter.connect(pan);

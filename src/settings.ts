@@ -1,7 +1,14 @@
+import type { MusicalInterpretationMode } from './audio/musicalInterpreter';
+
 export interface AudioSettings {
   masterVolume: number;
   ambienceVolume: number;
   entityVolume: number;
+  musicBusLevel: number;
+  rawEcologyBusLevel: number;
+  atmosphereBusLevel: number;
+  interpretationMode: MusicalInterpretationMode;
+  musicificationAmount: number;
 }
 
 export interface VisualSettings {
@@ -26,6 +33,11 @@ export const DEFAULT_SETTINGS: GameSettings = {
     masterVolume: 0.84,
     ambienceVolume: 0.78,
     entityVolume: 0.88,
+    musicBusLevel: 0.88,
+    rawEcologyBusLevel: 0.9,
+    atmosphereBusLevel: 0.8,
+    interpretationMode: 'hybrid',
+    musicificationAmount: 0.5,
   },
   visuals: {
     terrainLines: true,
@@ -48,6 +60,13 @@ export const normalizeSettings = (value?: Partial<GameSettings> | null): GameSet
     masterVolume: sanitizeNumber(value?.audio?.masterVolume, DEFAULT_SETTINGS.audio.masterVolume),
     ambienceVolume: sanitizeNumber(value?.audio?.ambienceVolume, DEFAULT_SETTINGS.audio.ambienceVolume),
     entityVolume: sanitizeNumber(value?.audio?.entityVolume, DEFAULT_SETTINGS.audio.entityVolume),
+    musicBusLevel: sanitizeNumber(value?.audio?.musicBusLevel, DEFAULT_SETTINGS.audio.musicBusLevel),
+    rawEcologyBusLevel: sanitizeNumber(value?.audio?.rawEcologyBusLevel, DEFAULT_SETTINGS.audio.rawEcologyBusLevel),
+    atmosphereBusLevel: sanitizeNumber(value?.audio?.atmosphereBusLevel, DEFAULT_SETTINGS.audio.atmosphereBusLevel),
+    interpretationMode: value?.audio?.interpretationMode === 'raw' || value?.audio?.interpretationMode === 'hybrid' || value?.audio?.interpretationMode === 'musical'
+      ? value.audio.interpretationMode
+      : DEFAULT_SETTINGS.audio.interpretationMode,
+    musicificationAmount: sanitizeNumber(value?.audio?.musicificationAmount, DEFAULT_SETTINGS.audio.musicificationAmount),
   },
   visuals: {
     terrainLines: sanitizeBoolean(value?.visuals?.terrainLines, DEFAULT_SETTINGS.visuals.terrainLines),
