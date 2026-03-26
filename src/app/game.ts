@@ -59,6 +59,7 @@ export class App {
     this.hud = new Hud((tool) => this.selectTool(tool), (settings) => this.applySettings(settings), this.settings);
     this.audio.setInterpretationMode(this.interpretationMode);
     this.audio.setMusicification(this.settings.audio.musicificationAmount);
+    this.audio.applyLiveSettings(this.settings);
 
     mount.innerHTML = `
       <div class="shell">
@@ -112,6 +113,7 @@ export class App {
     this.interpretationMode = this.settings.audio.interpretationMode;
     this.audio.setInterpretationMode(this.interpretationMode);
     this.audio.setMusicification(this.settings.audio.musicificationAmount);
+    this.audio.applyLiveSettings(this.settings);
     this.hud.syncSettings(this.settings);
     storeSettings(this.settings);
   }

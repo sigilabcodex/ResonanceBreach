@@ -128,6 +128,7 @@ const modeToMusicification = (mode: MusicalInterpretationMode): number => {
 export class AudioEngine {
   private context?: AudioContext;
   private master?: GainNode;
+  private masterControl?: GainNode;
   private limiter?: DynamicsCompressorNode;
   private bedGain?: GainNode;
   private bedLowFilter?: BiquadFilterNode;
@@ -164,6 +165,7 @@ export class AudioEngine {
     raw: 0.8,
     atmosphere: 0.7,
   };
+  private liveSettings: GameSettings | null = null;
   private readonly instrumentRegistry: InstrumentRegistry = createInstrumentRegistry(DEFAULT_INSTRUMENT_DESCRIPTORS);
   private environmentalPulseId = 1_000_000;
   private lastEnvironmentalPulseTime = -100;
@@ -192,6 +194,8 @@ export class AudioEngine {
     const context = new AudioContext();
     const master = context.createGain();
     master.gain.value = 0.0001;
+    const masterControl = context.createGain();
+    masterControl.gain.value = 1;
 
     const limiter = context.createDynamicsCompressor();
     limiter.threshold.value = -16;
@@ -199,7 +203,8 @@ export class AudioEngine {
     limiter.ratio.value = 10;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.22;
-    master.connect(limiter);
+    master.connect(masterControl);
+    masterControl.connect(limiter);
     limiter.connect(context.destination);
 
     const busLayout = createAudioBusLayout(context, master);
@@ -264,6 +269,7 @@ export class AudioEngine {
 
     this.context = context;
     this.master = master;
+    this.masterControl = masterControl;
     this.limiter = limiter;
     this.bedGain = bedGain;
     this.bedLowFilter = bedLowFilter;
@@ -289,6 +295,7 @@ export class AudioEngine {
       nextActionTime: context.currentTime + id * 0.4,
     }));
     this.started = true;
+    if (this.liveSettings) this.applyLiveControls(this.liveSettings, true);
   }
 
   update(snapshot: SimulationSnapshot, settings: GameSettings): void {
@@ -306,6 +313,7 @@ export class AudioEngine {
       || !this.phraseBus
       || !this.limiter
       || !this.busLayout
+      || !this.masterControl
     ) {
       return;
     }
@@ -339,23 +347,19 @@ export class AudioEngine {
     const rawPresence = 1 - this.interpretationBlend;
     const musicalPresence = this.interpretationBlend;
     const hybridPresence = 1 - Math.abs(this.interpretationBlend - 0.5) * 2;
-    const musicLevel = this.mapVolume(settings.audio.musicBusLevel);
-    const rawLevel = this.mapVolume(settings.audio.rawEcologyBusLevel);
-    const atmosphereLevel = this.mapVolume(settings.audio.atmosphereBusLevel);
-    const musicTarget = clamp((0.52 + musicalPresence * 0.68 + hybridPresence * 0.08 + music.composition.foregroundLift * 0.26) * musicLevel, 0.12, 1.8);
-    const rawTarget = clamp((0.44 + rawPresence * 0.9 + music.interpretation.intensity * 0.22 - musicalPresence * 0.18) * rawLevel, 0.12, 1.8);
-    const atmosphereTarget = clamp((0.6 + hybridPresence * 0.2 + (1 - music.interpretation.tension) * 0.12 - musicalPresence * 0.08) * atmosphereLevel, 0.12, 1.6);
+    const musicTarget = clamp(0.52 + musicalPresence * 0.68 + hybridPresence * 0.08 + music.composition.foregroundLift * 0.26, 0.0001, 1.8);
+    const rawTarget = clamp(0.44 + rawPresence * 0.9 + music.interpretation.intensity * 0.22 - musicalPresence * 0.18, 0.0001, 1.8);
+    const atmosphereTarget = clamp(0.6 + hybridPresence * 0.2 + (1 - music.interpretation.tension) * 0.12 - musicalPresence * 0.08, 0.0001, 1.6);
     this.statusBusLevels = { music: musicTarget, raw: rawTarget, atmosphere: atmosphereTarget };
-    this.busLayout.music.gain.setTargetAtTime(musicTarget, now, 0.36);
-    this.busLayout.atmosphere.gain.setTargetAtTime(atmosphereTarget, now, 0.55);
-    this.busLayout.rawEcology.gain.setTargetAtTime(rawTarget, now, 0.28);
-    this.busLayout.selectionUi.gain.setTargetAtTime(0.86 + focus.intensity * 0.18, now, 0.22);
+    this.busLayout.music.gain.setTargetAtTime(musicTarget, now, 0.22);
+    this.busLayout.atmosphere.gain.setTargetAtTime(atmosphereTarget, now, 0.24);
+    this.busLayout.rawEcology.gain.setTargetAtTime(rawTarget, now, 0.2);
+    this.busLayout.selectionUi.gain.setTargetAtTime(0.86 + focus.intensity * 0.18, now, 0.14);
     const focusMasterDip = focus.active ? 1 - focus.intensity * 0.01 : 1;
-    const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1)
-      * focusMasterDip
-      * this.mapVolume(settings.audio.masterVolume);
-    this.master.gain.setTargetAtTime(masterTarget, now, 0.22);
-    this.updateDebugState(snapshot, foreground, harmony, music, focus, masterTarget);
+    const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1) * focusMasterDip;
+    this.master.gain.setTargetAtTime(masterTarget, now, 0.12);
+    this.applyLiveControls(settings);
+    this.updateDebugState(snapshot, foreground, harmony, music, focus, masterTarget * this.mapVolume(settings.audio.masterVolume));
 
     if (snapshot.tool.feedback && snapshot.tool.feedback.id !== this.lastFeedbackId) {
       this.lastFeedbackId = snapshot.tool.feedback.id;
@@ -389,6 +393,12 @@ export class AudioEngine {
     this.interpretationBias = clamp(amount, 0, 1);
     const targetByMode = modeToMusicification(this.interpretationMode);
     this.interpretationTarget = clamp(targetByMode * 0.8 + this.interpretationBias * 0.2, 0, 1);
+  }
+
+  applyLiveSettings(settings: GameSettings): void {
+    this.liveSettings = settings;
+    if (!this.context) return;
+    this.applyLiveControls(settings, true);
   }
 
   getInterpretationStatus(): InterpretationStatus {
@@ -1305,7 +1315,36 @@ export class AudioEngine {
   }
 
   private mapVolume(value: number): number {
-    return 0.18 + value * value * 0.82;
+    const normalized = clamp(value, 0, 1);
+    if (normalized <= 0) return 0.0001;
+    return normalized * normalized;
+  }
+
+  private applyLiveControls(settings: GameSettings, fast = false): void {
+    if (!this.context || !this.masterControl || !this.busLayout) return;
+    const now = this.context.currentTime;
+    const timeConstant = fast ? 0.02 : 0.05;
+    const master = this.mapVolume(settings.audio.masterVolume);
+    const ambience = this.mapVolume(settings.audio.ambienceVolume);
+    const entity = this.mapVolume(settings.audio.entityVolume);
+    const musicBus = this.mapVolume(settings.audio.musicBusLevel);
+    const rawBus = this.mapVolume(settings.audio.rawEcologyBusLevel);
+    const atmosphereBus = this.mapVolume(settings.audio.atmosphereBusLevel);
+    const selectionTrim = clamp(entity * 1.15, 0.0001, 1);
+    const rawTrim = clamp(rawBus * (entity * 0.6 + ambience * 0.4), 0.0001, 1);
+    const musicTrim = clamp(musicBus * (0.7 + entity * 0.3), 0.0001, 1);
+    const atmosphereTrim = clamp(atmosphereBus * ambience, 0.0001, 1);
+
+    this.masterControl.gain.cancelScheduledValues(now);
+    this.masterControl.gain.setTargetAtTime(master, now, timeConstant);
+    this.busLayout.musicControl.gain.cancelScheduledValues(now);
+    this.busLayout.musicControl.gain.setTargetAtTime(musicTrim, now, timeConstant);
+    this.busLayout.rawEcologyControl.gain.cancelScheduledValues(now);
+    this.busLayout.rawEcologyControl.gain.setTargetAtTime(rawTrim, now, timeConstant);
+    this.busLayout.atmosphereControl.gain.cancelScheduledValues(now);
+    this.busLayout.atmosphereControl.gain.setTargetAtTime(atmosphereTrim, now, timeConstant);
+    this.busLayout.selectionUiControl.gain.cancelScheduledValues(now);
+    this.busLayout.selectionUiControl.gain.setTargetAtTime(selectionTrim, now, timeConstant);
   }
 
   private distance(a: Vec2, b: Vec2, snapshot: SimulationSnapshot): number {
