@@ -31,13 +31,13 @@ export const SETTINGS_STORAGE_KEY = 'resonance-garden-settings';
 export const DEFAULT_SETTINGS: GameSettings = {
   audio: {
     masterVolume: 0.84,
-    ambienceVolume: 0.78,
-    entityVolume: 0.88,
-    musicBusLevel: 0.88,
-    rawEcologyBusLevel: 0.9,
-    atmosphereBusLevel: 0.8,
+    ambienceVolume: 0.64,
+    entityVolume: 0.9,
+    musicBusLevel: 0.94,
+    rawEcologyBusLevel: 0.74,
+    atmosphereBusLevel: 0.62,
     interpretationMode: 'hybrid',
-    musicificationAmount: 0.5,
+    musicificationAmount: 0.62,
   },
   visuals: {
     terrainLines: true,
