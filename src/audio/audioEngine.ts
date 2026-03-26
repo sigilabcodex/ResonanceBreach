@@ -4,7 +4,7 @@ import type { GameSettings } from '../settings';
 import type { SimulationSnapshot, ToolState, Vec2 } from '../types/world';
 import { createEcologicalMusicState, type EcologicalMusicState, type EcologicalVoiceRole } from './ecologicalMusic';
 import { createAudioFocusContext, scoreEntities, selectForegroundVoices, type AudioFocusContext, type ScoredEntity } from './salience';
-import { createHarmonyState, getHarmonyFrequency, type HarmonyState } from './harmony';
+import { createHarmonyState, getHarmonyFrequency, quantizeToRoleZone, type HarmonyState } from './harmony';
 import { createAudioBusLayout, type AudioBusLayout } from './audioBuses';
 import { createMusicalInterpreter, type MusicalInterpretationMode } from './musicalInterpreter';
 import {
@@ -100,6 +100,7 @@ type OrchestrationRole = 'bloom' | 'pollinator' | 'grazer' | 'predator' | 'decom
 type EventInstrumentGesture = {
   instrument: InstrumentDescriptor;
   role: OrchestrationRole;
+  voiceRole: EcologicalVoiceRole;
   layer: 'plant' | 'mobile' | 'cluster' | 'event';
   waveform: OscillatorType;
   filterType: BiquadFilterType;
@@ -157,6 +158,7 @@ export class AudioEngine {
   private phraseRecentTime = -100;
   private phraseRecentType: ScoredEntity['entity']['type'] | null = null;
   private musicState?: EcologicalMusicState;
+  private lastHarmony?: HarmonyState;
   private interpretationMode: MusicalInterpretationMode = 'raw';
   private interpretationBlend = modeToMusicification(this.interpretationMode);
   private interpretationTarget = this.interpretationBlend;
@@ -337,6 +339,7 @@ export class AudioEngine {
     this.musicState = createEcologicalMusicState(snapshot, this.musicState);
     const music = this.musicState;
     const harmony = createHarmonyState(snapshot, music);
+    this.lastHarmony = harmony;
     const focus = createAudioFocusContext(snapshot);
     const scored = scoreEntities(snapshot, focus, this.entityPriority);
     const foreground = selectForegroundVoices(scored, FOREGROUND_VOICE_COUNT);
@@ -387,6 +390,7 @@ export class AudioEngine {
     this.phraseRecentTime = -100;
     this.phraseRecentType = null;
     this.musicState = undefined;
+    this.lastHarmony = undefined;
     this.lastSelectedEntityId = null;
   }
 
@@ -496,6 +500,7 @@ export class AudioEngine {
       'bed',
       clamp(music.interpretation.stability * 0.64 + habitat.basin * 0.22 + drift * 0.14 + 0.12, 0, 1),
       -1,
+      this.getPitchTightness('atmosphere'),
     );
     const pulsePhase = snapshot.time * (0.04 + music.composition.evolutionSpeed * 0.05);
     const breathe = 0.5 + Math.sin(pulsePhase * Math.PI * 2) * 0.5;
@@ -646,8 +651,11 @@ export class AudioEngine {
         + music.interpretation.harmonicRichness * (role === 'bloom' ? 120 : 180);
 
       voice.oscillator.type = ECOLOGICAL_WAVEFORM[role];
+      const roleTightness = role === 'pollinator'
+        ? this.getPitchTightness('music')
+        : this.getPitchTightness('raw');
       voice.oscillator.frequency.setTargetAtTime(
-        getHarmonyFrequency(harmony, harmonyLayer, contour, layer.register) * roleShape,
+        getHarmonyFrequency(harmony, harmonyLayer, contour, layer.register, roleTightness) * roleShape,
         now,
         role === 'bloom' ? 0.9 : role === 'decay' ? 0.42 : 0.26 + (1 - music.composition.evolutionSpeed) * 0.28,
       );
@@ -711,7 +719,11 @@ export class AudioEngine {
       const layer = candidate.entity.type === 'plant' || candidate.entity.type === 'ephemeral' || candidate.entity.type === 'canopy' ? 'plant' : candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 'cluster' : 'mobile';
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
-      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type]), now, 0.24);
+      voice.oscillator.frequency.setTargetAtTime(
+        getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type], this.getPitchTightness('raw')),
+        now,
+        0.24,
+      );
       voice.filter.type = candidate.entity.type === 'plant' ? 'lowpass' : 'bandpass';
       voice.filter.frequency.setTargetAtTime(filterFrequency * perception.highFreq * (candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.42 : candidate.entity.type === 'flocker' ? 1.36 : candidate.entity.type === 'grazer' ? 0.94 : 0.7), now, 0.18);
       voice.filter.Q.setTargetAtTime(candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 0.72 : candidate.entity.type === 'predator' ? 2.4 : candidate.entity.type === 'grazer' ? 1.1 + detailLift * 0.72 : 1.6 + detailLift * 1.15, now, 0.16);
@@ -750,7 +762,11 @@ export class AudioEngine {
       );
       const filterBase = index === 0 ? 380 : index === 1 ? 1100 : 2100;
       voice.oscillator.type = index === 2 && phraseBias > 0.74 ? 'triangle' : 'sine';
-      voice.oscillator.frequency.setTargetAtTime(getHarmonyFrequency(harmony, layer, contour, register), now, 0.26);
+      voice.oscillator.frequency.setTargetAtTime(
+        getHarmonyFrequency(harmony, layer, contour, register, this.getPitchTightness('music')),
+        now,
+        0.26,
+      );
       voice.filter.type = index === 0 ? 'lowpass' : index === 1 ? 'bandpass' : 'highpass';
       voice.filter.frequency.setTargetAtTime(filterBase + music.interpretation.harmonicRichness * 1100 + sway * 360, now, 0.28);
       voice.filter.Q.setTargetAtTime(index === 0 ? 0.7 : index === 1 ? 1.4 : 1.1, now, 0.24);
@@ -810,7 +826,16 @@ export class AudioEngine {
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
     osc.type = this.interpretationMode === 'raw' ? 'sine' : descriptor.timbralFamily === 'textural' ? 'triangle' : 'sine';
-    osc.frequency.value = 72 + gesture.intensity * 30 + (this.interpretationMode === 'musical' ? 8 : 0);
+    const pulseBase = this.lastHarmony
+      ? getHarmonyFrequency(
+        this.lastHarmony,
+        'event',
+        clamp(0.18 + gesture.intensity * 0.58, 0, 1),
+        -1,
+        this.getPitchTightness('music'),
+      )
+      : 72 + gesture.intensity * 28;
+    osc.frequency.value = pulseBase;
     filter.type = descriptor.timbralFamily === 'textural' ? 'bandpass' : 'lowpass';
     filter.frequency.value = 130 + gesture.intensity * 140 + (this.interpretationMode === 'raw' ? 0 : 35);
     filter.Q.value = descriptor.timbralFamily === 'textural' ? 1.2 : 0.9;
@@ -934,7 +959,11 @@ export class AudioEngine {
     const pan = this.context.createStereoPanner();
 
     osc.type = settings.waveform;
-    osc.frequency.value = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave);
+    const baseEventFreq = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave, this.getPitchTightness('music'));
+    const baseEventMidi = 69 + 12 * Math.log2(baseEventFreq / 440);
+    const zoneMidi = quantizeToRoleZone(baseEventMidi, harmony, settings.voiceRole, this.getPitchTightness('music'));
+    const rangedMidi = clamp(zoneMidi, settings.instrument.pitchRange.minMidi, settings.instrument.pitchRange.maxMidi);
+    osc.frequency.value = 440 * 2 ** ((rangedMidi - 69) / 12);
     filter.type = settings.filterType;
     filter.frequency.value = clamp(osc.frequency.value * settings.filterScale, 120, 6200);
     filter.Q.value = settings.q;
@@ -1028,6 +1057,15 @@ export class AudioEngine {
       atmosphere: 'plant',
       mixed: 'event',
     };
+    const voiceRoleByOrchestration: Record<OrchestrationRole, EcologicalVoiceRole> = {
+      bloom: 'bloom',
+      pollinator: 'pollinator',
+      grazer: 'grazer',
+      predator: 'decay',
+      decomposer: 'decay',
+      atmosphere: 'bloom',
+      mixed: 'grazer',
+    };
     const waveformByFamily: Record<InstrumentDescriptor['timbralFamily'], OscillatorType> = {
       plucked: 'triangle',
       bowed: 'triangle',
@@ -1052,6 +1090,7 @@ export class AudioEngine {
     return {
       instrument,
       role,
+      voiceRole: voiceRoleByOrchestration[role],
       layer: layerByRole[role],
       waveform: this.interpretationMode === 'raw' ? 'triangle' : waveformByFamily[instrument.timbralFamily],
       filterType: event.type === 'entityDied' ? 'lowpass' : filterByFamily[instrument.timbralFamily],
@@ -1313,7 +1352,17 @@ export class AudioEngine {
       : entity.type === 'flocker'
         ? 'sine'
         : 'triangle';
-    voice.frequency.value = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1);
+    const entityRole: EcologicalVoiceRole = entity.type === 'plant' || entity.type === 'canopy' || entity.type === 'ephemeral'
+      ? 'bloom'
+      : entity.type === 'flocker'
+        ? 'pollinator'
+        : entity.type === 'predator' || entity.type === 'parasite' || entity.type === 'cluster'
+          ? 'decay'
+          : 'grazer';
+    const basePhraseFreq = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1, this.getPitchTightness('music'));
+    const basePhraseMidi = 69 + 12 * Math.log2(basePhraseFreq / 440);
+    const snappedPhraseMidi = quantizeToRoleZone(basePhraseMidi, harmony, entityRole, this.getPitchTightness('music'));
+    voice.frequency.value = 440 * 2 ** ((snappedPhraseMidi - 69) / 12);
     filter.type = 'bandpass';
     filter.frequency.value = voice.frequency.value * (1.6 + entity.tone * 0.8) * perception.highFreq;
     filter.Q.value = 1.8 + entity.activity;
@@ -1365,6 +1414,12 @@ export class AudioEngine {
     const normalized = clamp(value, 0, 1);
     if (normalized <= 0) return 0.0001;
     return normalized * normalized;
+  }
+
+  private getPitchTightness(layer: 'raw' | 'music' | 'atmosphere'): number {
+    if (layer === 'music') return clamp(0.56 + this.interpretationBlend * 0.4, 0.56, 0.96);
+    if (layer === 'atmosphere') return clamp(0.62 + this.interpretationBlend * 0.3, 0.5, 0.9);
+    return clamp(0.14 + this.interpretationBlend * 0.28, 0.08, 0.52);
   }
 
   private applyLiveControls(settings: GameSettings, fast = false): void {
