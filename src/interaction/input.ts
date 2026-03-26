@@ -14,6 +14,7 @@ export interface InputCallbacks {
   onSelectTool(tool: ToolType): void;
   onToggleMinimalHud(): void;
   onToggleSettings(): void;
+  onCycleInterpretationMode(): void;
   getCamera(): CameraState;
 }
 
@@ -150,6 +151,13 @@ export class PlayerInput {
     if (key === 'o') {
       event.preventDefault();
       this.callbacks.onToggleSettings();
+      this.callbacks.onInteract();
+      return;
+    }
+
+    if (key === 'm') {
+      event.preventDefault();
+      this.callbacks.onCycleInterpretationMode();
       this.callbacks.onInteract();
       return;
     }

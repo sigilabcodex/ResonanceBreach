@@ -1,4 +1,5 @@
 import type { AudioDebugState } from '../audio/audioEngine';
+import type { InterpretationStatus } from '../audio/audioEngine';
 import { GAME_TITLE, TOOLS, type ToolType } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
 import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
@@ -92,6 +93,7 @@ export class Hud {
   private readonly unlockValue: HTMLSpanElement;
   private readonly hintValue: HTMLSpanElement;
   private readonly flowValue: HTMLSpanElement;
+  private readonly interpretationValue: HTMLSpanElement;
   private readonly debugBody: HTMLDivElement;
   private readonly debugSummary: HTMLSpanElement;
   private readonly toolButtons = new Map<ToolType, HTMLButtonElement>();
@@ -142,7 +144,7 @@ export class Hud {
             <div class="hud__tools-card">
               <div class="hud__row hud__row--tools-head">
                 <span>Field tools</span>
-                <span data-tool-hint>1–5 select tools · drag places regions · O opens settings</span>
+                <span data-tool-hint>1–5 select tools · M cycles interpretation · drag places regions · O opens settings</span>
               </div>
               <div class="hud__tool-grid"></div>
             </div>
@@ -172,6 +174,7 @@ export class Hud {
             </div>
             <div class="hud__panel-section">
               <div class="hud__row"><span>Flow</span><span data-flow>Normal 1×</span></div>
+              <div class="hud__row"><span>Interpretation</span><span data-interpretation>Raw ecology</span></div>
               <div class="hud__row"><span>Unlocked</span><span data-unlocked>0%</span></div>
               <div class="hud__row hud__row--hint"><span>Field note</span><span data-hint>Observe the garden long enough to see blooms fruit, grazers feed, residue linger, and decomposers return it to the soil.</span></div>
             </div>
@@ -255,6 +258,7 @@ export class Hud {
     this.unlockValue = this.element.querySelector('[data-unlocked]') as HTMLSpanElement;
     this.hintValue = this.element.querySelector('[data-hint]') as HTMLSpanElement;
     this.flowValue = this.element.querySelector('[data-flow]') as HTMLSpanElement;
+    this.interpretationValue = this.element.querySelector('[data-interpretation]') as HTMLSpanElement;
     this.debugBody = this.element.querySelector('[data-debug-body]') as HTMLDivElement;
     this.debugSummary = this.element.querySelector('[data-debug-summary]') as HTMLSpanElement;
 
@@ -323,7 +327,12 @@ export class Hud {
     target.append(this.element);
   }
 
-  update(snapshot: SimulationSnapshot, audioDebug?: AudioDebugState, performanceStats?: PerformanceStats): void {
+  update(
+    snapshot: SimulationSnapshot,
+    audioDebug?: AudioDebugState,
+    performanceStats?: PerformanceStats,
+    interpretationStatus?: InterpretationStatus,
+  ): void {
     this.energyValue.textContent = `${Math.round(snapshot.stats.energy * 100)}%`;
     this.harmonyValue.textContent = `${Math.round(snapshot.stats.harmony * 100)}%`;
     this.stabilityValue.textContent = `${Math.round(snapshot.stats.stability * 100)}%`;
@@ -335,6 +344,12 @@ export class Hud {
     this.temperatureValue.textContent = `${Math.round(snapshot.stats.temperature * 100)}%`;
     this.unlockValue.textContent = `${Math.round(snapshot.unlockedProgress * 100)}%`;
     this.flowValue.textContent = timeLabels[String(snapshot.timeScale)] ?? `Flow ${snapshot.timeScale.toFixed(1)}×`;
+    const interpretationMode = interpretationStatus?.mode ?? 'raw';
+    this.interpretationValue.textContent = interpretationMode === 'musical'
+      ? 'Musical lens'
+      : interpretationMode === 'hybrid'
+        ? 'Hybrid lens'
+        : 'Raw ecology';
 
     for (const tool of TOOLS) {
       const button = this.toolButtons.get(tool);
@@ -383,11 +398,11 @@ export class Hud {
 
     this.minimalHintValue.textContent = this.settings.visuals.minimalHud
       ? snapshot.attention.mode === 'entity' && snapshot.attention.entityId !== null
-        ? 'Minimal HUD · following selection · H restores full HUD · O opens settings'
+        ? `Minimal HUD · ${this.interpretationValue.textContent} · following selection · M cycles mode · H restores full HUD · O opens settings`
         : snapshot.attention.mode === 'region'
-          ? 'Minimal HUD · listening region active · H restores full HUD · O opens settings'
-          : `Minimal HUD · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · H restores full HUD · O opens settings`
-      : 'Minimal HUD · H restores the full interface · O opens settings';
+          ? `Minimal HUD · ${this.interpretationValue.textContent} · listening region active · M cycles mode · H restores full HUD · O opens settings`
+          : `Minimal HUD · ${this.interpretationValue.textContent} · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · M cycles mode · H restores full HUD · O opens settings`
+      : 'Minimal HUD · M cycles interpretation · H restores the full interface · O opens settings';
 
     this.renderInspectionCard(snapshot);
     this.renderDebugOverlay(snapshot, audioDebug, performanceStats);

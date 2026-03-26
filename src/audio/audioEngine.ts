@@ -16,6 +16,7 @@ import {
 import { createEnvironmentalPulseEvent, mapWorldEventToEcologicalAudioEvents, type EcologicalAudioEvent } from './musicalEvents';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const smoothstep = (edge0: number, edge1: number, value: number) => {
   const t = clamp((value - edge0) / (edge1 - edge0 || 1), 0, 1);
   return t * t * (3 - 2 * t);
@@ -110,6 +111,17 @@ type EventInstrumentGesture = {
   destination: GainNode;
 };
 
+export interface InterpretationStatus {
+  mode: MusicalInterpretationMode;
+  musicification: number;
+}
+
+const modeToMusicification = (mode: MusicalInterpretationMode): number => {
+  if (mode === 'raw') return 0;
+  if (mode === 'hybrid') return 0.5;
+  return 1;
+};
+
 export class AudioEngine {
   private context?: AudioContext;
   private master?: GainNode;
@@ -140,6 +152,8 @@ export class AudioEngine {
   private phraseRecentType: ScoredEntity['entity']['type'] | null = null;
   private musicState?: EcologicalMusicState;
   private interpretationMode: MusicalInterpretationMode = 'raw';
+  private interpretationBlend = modeToMusicification(this.interpretationMode);
+  private interpretationTarget = this.interpretationBlend;
   private interpreter = createMusicalInterpreter(this.interpretationMode);
   private readonly instrumentRegistry: InstrumentRegistry = createInstrumentRegistry(DEFAULT_INSTRUMENT_DESCRIPTORS);
   private environmentalPulseId = 1_000_000;
@@ -290,6 +304,8 @@ export class AudioEngine {
     const now = this.context.currentTime;
     const dt = this.lastSnapshotTime > 0 ? Math.max(0.016, snapshot.time - this.lastSnapshotTime) : 0.016;
     this.lastSnapshotTime = snapshot.time;
+    const transitionT = 1 - Math.exp(-dt * 3.8);
+    this.interpretationBlend = lerp(this.interpretationBlend, this.interpretationTarget, transitionT);
     this.decayEntityPriority(dt);
     this.processEvents(snapshot.events);
     this.processEnvironmentalPulse(snapshot, now);
@@ -311,11 +327,12 @@ export class AudioEngine {
 
     const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
-    const musicalLift = this.interpretationMode === 'musical' ? 0.12 : this.interpretationMode === 'hybrid' ? 0.06 : 0;
-    const rawLift = this.interpretationMode === 'raw' ? 0.12 : this.interpretationMode === 'hybrid' ? 0.04 : -0.04;
-    this.busLayout.music.gain.setTargetAtTime(0.84 + musicalLift + music.composition.foregroundLift * 0.18, now, 0.4);
-    this.busLayout.atmosphere.gain.setTargetAtTime(0.74 + (1 - music.interpretation.tension) * 0.08, now, 0.6);
-    this.busLayout.rawEcology.gain.setTargetAtTime(0.84 + rawLift + music.interpretation.intensity * 0.12, now, 0.3);
+    const musicalLift = this.interpretationBlend * 0.14;
+    const rawLift = (1 - this.interpretationBlend) * 0.16 - 0.05 * this.interpretationBlend;
+    const atmosphereLift = (1 - Math.abs(this.interpretationBlend - 0.5) * 2) * 0.06;
+    this.busLayout.music.gain.setTargetAtTime(0.8 + musicalLift + music.composition.foregroundLift * 0.18, now, 0.4);
+    this.busLayout.atmosphere.gain.setTargetAtTime(0.7 + atmosphereLift + (1 - music.interpretation.tension) * 0.08, now, 0.6);
+    this.busLayout.rawEcology.gain.setTargetAtTime(0.78 + rawLift + music.interpretation.intensity * 0.12, now, 0.3);
     this.busLayout.selectionUi.gain.setTargetAtTime(0.86 + focus.intensity * 0.18, now, 0.22);
     const focusMasterDip = focus.active ? 1 - focus.intensity * 0.01 : 1;
     const masterTarget = (0.48 + snapshot.stats.energy * 0.2 + music.interpretation.intensity * 0.1)
@@ -347,7 +364,15 @@ export class AudioEngine {
 
   setInterpretationMode(mode: MusicalInterpretationMode): void {
     this.interpretationMode = mode;
+    this.interpretationTarget = modeToMusicification(mode);
     this.interpreter = createMusicalInterpreter(mode);
+  }
+
+  getInterpretationStatus(): InterpretationStatus {
+    return {
+      mode: this.interpretationMode,
+      musicification: this.interpretationBlend,
+    };
   }
 
   private createVoice(context: AudioContext, waveform: OscillatorType, destination: GainNode): PooledVoice {
@@ -1231,7 +1256,7 @@ export class AudioEngine {
     this.debugState.foregroundVoiceCount = foreground.length;
     this.debugState.focusedVoiceCount = focusedVoiceCount;
     this.debugState.groupedVoiceCount = ECOLOGICAL_ROLE_ORDER.filter((role) => music.composition.voices[role].presence > 0.06).length;
-    this.debugState.mode = `${music.composition.mode}/${this.interpretationMode}/i${this.instrumentRegistry.list().length}`;
+    this.debugState.mode = `${music.composition.mode}/${this.interpretationMode}/m${this.interpretationBlend.toFixed(2)}/i${this.instrumentRegistry.list().length}`;
     this.debugState.tonalCenterHz = harmony.rootHz;
     this.debugState.roleLevels = {
       bloom: music.composition.voices.bloom.presence,

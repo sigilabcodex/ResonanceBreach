@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, storeSettings, type 
 import { Simulation } from '../sim/simulation';
 import type { CameraState, PerformanceStats } from '../types/world';
 import { Hud } from '../ui/hud';
+import type { MusicalInterpretationMode } from '../audio/musicalInterpreter';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -50,6 +51,7 @@ export class App {
   private fpsAccumulator = 0;
   private fpsFrameCount = 0;
   private followingSelection = false;
+  private interpretationMode: MusicalInterpretationMode = 'raw';
 
   constructor(mount: HTMLElement) {
     this.settings = normalizeSettings(loadSettings());
@@ -83,6 +85,7 @@ export class App {
       onSelectTool: (tool) => this.selectTool(tool),
       onToggleMinimalHud: () => this.hud.toggleMinimalHud(),
       onToggleSettings: () => this.hud.toggleSettings(),
+      onCycleInterpretationMode: () => this.cycleInterpretationMode(),
       getCamera: () => this.camera,
     });
 
@@ -119,6 +122,7 @@ export class App {
     this.followAnchor.center.x = WORLD_WIDTH / 2;
     this.followAnchor.center.y = WORLD_HEIGHT / 2;
     this.followingSelection = false;
+    this.audio.setInterpretationMode(this.interpretationMode);
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
   }
 
@@ -135,6 +139,14 @@ export class App {
   private selectTool(tool: ToolType): void {
     this.simulation.setTool(tool);
     void this.audio.ensureStarted();
+  }
+
+  private cycleInterpretationMode(): void {
+    const order: MusicalInterpretationMode[] = ['raw', 'hybrid', 'musical'];
+    const currentIndex = order.indexOf(this.interpretationMode);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % order.length : 0;
+    this.interpretationMode = order[nextIndex];
+    this.audio.setInterpretationMode(this.interpretationMode);
   }
 
   private handleResize = (): void => {
@@ -251,7 +263,7 @@ export class App {
     const audioStart = performance.now();
     this.audio.update(snapshot, this.settings);
     this.perfStats.audioUpdateTimeMs = performance.now() - audioStart;
-    this.hud.update(snapshot, this.audio.getDebugState(), this.perfStats);
+    this.hud.update(snapshot, this.audio.getDebugState(), this.perfStats, this.audio.getInterpretationStatus());
     const renderStart = performance.now();
     this.renderer.render(snapshot, this.settings, this.audio.getDebugState(), this.perfStats);
     this.perfStats.renderTimeMs = performance.now() - renderStart;
