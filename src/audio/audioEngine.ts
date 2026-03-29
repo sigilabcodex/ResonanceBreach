@@ -8,6 +8,16 @@ import { createHarmonyState, getHarmonyFrequency, quantizeToRoleZone, type Harmo
 import { createAudioBusLayout, type AudioBusLayout } from './audioBuses';
 import { createMusicalInterpreter, type MusicalInterpretationMode } from './musicalInterpreter';
 import {
+  alignToSoftPulse,
+  createEnvelopeByDensity,
+  scheduleAdsrGain,
+  shouldTriggerNote,
+  type NoteEvent,
+  type NoteInstrumentFamilyHint,
+  type NoteSourceKind,
+  type NoteTimingGate,
+} from './noteEvents';
+import {
   createInstrumentRegistry,
   DEFAULT_INSTRUMENT_DESCRIPTORS,
   type InstrumentDescriptor,
@@ -173,6 +183,8 @@ export class AudioEngine {
   private readonly instrumentRegistry: InstrumentRegistry = createInstrumentRegistry(DEFAULT_INSTRUMENT_DESCRIPTORS);
   private environmentalPulseId = 1_000_000;
   private lastEnvironmentalPulseTime = -100;
+  private noteGateState = new Map<string, number>();
+  private noteTiming: NoteTimingGate = { pulseSeconds: 0.28, looseness: 0.45, jitter: 0.01 };
   private readonly debugState: AudioDebugState = {
     masterGain: 0,
     foregroundVoiceCount: 0,
@@ -338,6 +350,11 @@ export class AudioEngine {
 
     this.musicState = createEcologicalMusicState(snapshot, this.musicState);
     const music = this.musicState;
+    this.noteTiming = {
+      pulseSeconds: clamp(0.22 + (1 - music.composition.rhythmDensity) * 0.24, 0.18, 0.46),
+      looseness: clamp(0.58 - this.interpretationBlend * 0.24 + music.composition.pulseJitter * 0.2, 0.2, 0.7),
+      jitter: clamp(0.004 + music.composition.pulseJitter * 0.016, 0.002, 0.024),
+    };
     const harmony = createHarmonyState(snapshot, music);
     this.lastHarmony = harmony;
     const focus = createAudioFocusContext(snapshot);
@@ -387,6 +404,7 @@ export class AudioEngine {
     this.entityPriority.clear();
     this.selectionVoiceMemory.clear();
     this.phraseMotifMemory.clear();
+    this.noteGateState.clear();
     this.phraseRecentTime = -100;
     this.phraseRecentType = null;
     this.musicState = undefined;
@@ -917,6 +935,11 @@ export class AudioEngine {
     if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
     const now = this.context.currentTime;
+    const eventGateKey = this.createNoteGateKey('worldEvent', ecologicalEvent.sourceEntityId ?? event.id);
+    const eventProbability = this.interpretationMode === 'raw' ? 0.42 : this.interpretationMode === 'hybrid' ? 0.62 : 0.82;
+    const eventCooldown = this.interpretationMode === 'raw' ? 0.28 : 0.18;
+    if (!shouldTriggerNote(now, this.noteGateState, eventGateKey, eventCooldown, eventProbability)) return;
+
     const harmony = createHarmonyState({
       dimensions: { width: 0, height: 0, wrapped: true },
       entities: [],
@@ -963,22 +986,36 @@ export class AudioEngine {
     const baseEventMidi = 69 + 12 * Math.log2(baseEventFreq / 440);
     const zoneMidi = quantizeToRoleZone(baseEventMidi, harmony, settings.voiceRole, this.getPitchTightness('music'));
     const rangedMidi = clamp(zoneMidi, settings.instrument.pitchRange.minMidi, settings.instrument.pitchRange.maxMidi);
-    osc.frequency.value = 440 * 2 ** ((rangedMidi - 69) / 12);
+    const pitchHz = 440 * 2 ** ((rangedMidi - 69) / 12);
+    const noteEvent = this.createNoteEvent({
+      pitchHz,
+      duration: settings.duration,
+      velocity: settings.amount * clamp(intensityScale, 0.2, 1.4),
+      roleHint: settings.voiceRole,
+      sourceKind: 'worldEvent',
+      sourceId: ecologicalEvent.sourceEntityId ?? event.id,
+      instrumentFamilyHint: this.instrumentHintFromDescriptor(settings.instrument.timbralFamily),
+    });
+    const startAt = alignToSoftPulse(now, this.noteTiming);
+    osc.frequency.value = noteEvent.pitchHz;
     filter.type = settings.filterType;
-    filter.frequency.value = clamp(osc.frequency.value * settings.filterScale, 120, 6200);
+    filter.frequency.value = clamp(noteEvent.pitchHz * settings.filterScale, 120, 6200);
     filter.Q.value = settings.q;
     pan.pan.value = clamp((event.position.x - 1200) / 1200, -0.8, 0.8);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(settings.amount * clamp(intensityScale, 0.2, 1.4), now + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + settings.duration);
+    const stopAt = scheduleAdsrGain(
+      gain,
+      startAt,
+      noteEvent.velocity,
+      { attack: noteEvent.attack, decay: noteEvent.decay, sustain: noteEvent.sustain, release: noteEvent.release },
+      noteEvent.duration,
+    );
 
     osc.connect(filter);
     filter.connect(pan);
     pan.connect(gain);
     gain.connect(settings.destination);
-    osc.start(now);
-    osc.stop(now + settings.duration + 0.08);
+    osc.start(startAt);
+    osc.stop(stopAt + 0.02);
     this.activeTransientVoices += 1;
   }
 
@@ -1101,6 +1138,49 @@ export class AudioEngine {
       filterScale: clamp(1.2 + instrument.rhythmicTendency * 1.2 + (role === 'predator' ? -0.35 : 0), 1.05, 2.6),
       q: clamp(0.8 + instrument.rhythmicTendency * 1.8 + (this.interpretationMode === 'musical' ? 0.28 : 0), 0.8, 2.8),
       destination,
+    };
+  }
+
+  private instrumentHintFromDescriptor(family: InstrumentDescriptor['timbralFamily']): NoteInstrumentFamilyHint {
+    if (family === 'bass') return 'bass';
+    if (family === 'air') return 'air';
+    if (family === 'reed') return 'reed';
+    if (family === 'textural') return 'textural';
+    if (family === 'hybrid') return 'hybrid';
+    if (family === 'plucked') return 'plucked';
+    return 'unknown';
+  }
+
+  private createNoteGateKey(sourceKind: NoteSourceKind, sourceId: number | string): string {
+    return `${sourceKind}:${sourceId}`;
+  }
+
+  private createNoteEvent(input: {
+    pitchHz: number;
+    duration: number;
+    velocity: number;
+    roleHint?: EcologicalVoiceRole;
+    sourceKind: NoteSourceKind;
+    sourceId: number | string;
+    instrumentFamilyHint?: NoteInstrumentFamilyHint;
+  }): NoteEvent {
+    const envelopeShape = createEnvelopeByDensity(
+      input.duration,
+      this.noteTiming.looseness < 0.35 ? 0.78 : 0.52,
+      input.sourceKind === 'phraseAgent' ? 'rounded' : 'percussive',
+    );
+    return {
+      pitchHz: clamp(input.pitchHz, 28, 5400),
+      duration: clamp(input.duration, 0.07, 0.8),
+      velocity: clamp(input.velocity, 0.003, 0.08),
+      attack: envelopeShape.attack,
+      decay: envelopeShape.decay,
+      sustain: envelopeShape.sustain,
+      release: envelopeShape.release,
+      roleHint: input.roleHint,
+      sourceKind: input.sourceKind,
+      sourceId: input.sourceId,
+      instrumentFamilyHint: input.instrumentFamilyHint,
     };
   }
 
@@ -1308,11 +1388,11 @@ export class AudioEngine {
         const interval = agent.motif[agent.noteIndex] ?? 0;
         const contour = clamp(target.tone * 0.5 + target.harmony * 0.34 + 0.16 + interval * 0.06 + (Math.random() * 2 - 1) * agent.variation, 0, 1);
         const phraseAmount = (0.046 + phraseBias * 0.036 + target.activity * 0.034 + (1 - zoomNorm) * 0.012) * (1 - localDensity * 0.2);
-        this.playPhraseNote(snapshot, harmony, target, contour, Math.max(0.02, phraseAmount), agent.rhythm[agent.noteIndex] ?? 0.2, settings);
+        const played = this.playPhraseNote(snapshot, harmony, target, contour, Math.max(0.02, phraseAmount), agent.rhythm[agent.noteIndex] ?? 0.2, settings);
         const nextDuration = agent.rhythm[agent.noteIndex] ?? 0.2;
         agent.noteIndex += 1;
         agent.notesRemaining -= 1;
-        this.activeTransientVoices += 1;
+        if (played) this.activeTransientVoices += 1;
         this.phraseRecentTime = now;
         this.phraseRecentType = target.type;
         if (agent.notesRemaining <= 0) {
@@ -1336,13 +1416,17 @@ export class AudioEngine {
     amount: number,
     duration: number,
     settings: GameSettings,
-  ): void {
-    if (!this.context || !this.phraseBus) return;
+  ): boolean {
+    if (!this.context || !this.phraseBus) return false;
+    const now = this.context.currentTime;
+    const phraseGateKey = this.createNoteGateKey('phraseAgent', entity.id);
+    const phraseProbability = this.interpretationMode === 'musical' ? 0.9 : 0.72;
+    if (!shouldTriggerNote(now, this.noteGateState, phraseGateKey, 0.1 + duration * 0.45, phraseProbability)) return false;
+
     const voice = this.context.createOscillator();
     const filter = this.context.createBiquadFilter();
     const gain = this.context.createGain();
     const pan = this.context.createStereoPanner();
-    const now = this.context.currentTime;
     const layer = entity.type === 'plant' || entity.type === 'canopy' ? 'plant' : 'mobile';
     const perception = this.computePerceptualAttenuation(entity.position, snapshot, clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1));
 
@@ -1362,20 +1446,35 @@ export class AudioEngine {
     const basePhraseFreq = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1, this.getPitchTightness('music'));
     const basePhraseMidi = 69 + 12 * Math.log2(basePhraseFreq / 440);
     const snappedPhraseMidi = quantizeToRoleZone(basePhraseMidi, harmony, entityRole, this.getPitchTightness('music'));
-    voice.frequency.value = 440 * 2 ** ((snappedPhraseMidi - 69) / 12);
+    const noteEvent = this.createNoteEvent({
+      pitchHz: 440 * 2 ** ((snappedPhraseMidi - 69) / 12),
+      duration,
+      velocity: (amount * (0.72 + phraseBias * 0.6)) * perception.gain * this.mapVolume(settings.audio.entityVolume),
+      roleHint: entityRole,
+      sourceKind: 'phraseAgent',
+      sourceId: entity.id,
+      instrumentFamilyHint: entity.type === 'flocker' ? 'air' : entity.type === 'grazer' ? 'reed' : 'plucked',
+    });
+    const startAt = alignToSoftPulse(now, this.noteTiming);
+    voice.frequency.value = noteEvent.pitchHz;
     filter.type = 'bandpass';
-    filter.frequency.value = voice.frequency.value * (1.6 + entity.tone * 0.8) * perception.highFreq;
+    filter.frequency.value = noteEvent.pitchHz * (1.6 + entity.tone * 0.8) * perception.highFreq;
     filter.Q.value = 1.8 + entity.activity;
     pan.pan.value = this.panFromPosition(entity.position.x, snapshot);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime((amount * (0.72 + phraseBias * 0.6)) * perception.gain * this.mapVolume(settings.audio.entityVolume), now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    const stopAt = scheduleAdsrGain(
+      gain,
+      startAt,
+      noteEvent.velocity,
+      { attack: noteEvent.attack, decay: noteEvent.decay, sustain: noteEvent.sustain, release: noteEvent.release },
+      noteEvent.duration,
+    );
     voice.connect(filter);
     filter.connect(pan);
     pan.connect(gain);
     gain.connect(this.phraseBus);
-    voice.start(now);
-    voice.stop(now + duration + 0.08);
+    voice.start(startAt);
+    voice.stop(stopAt + 0.02);
+    return true;
   }
 
   getDebugState(): AudioDebugState {
