@@ -129,6 +129,17 @@ type EventInstrumentGesture = {
   destination: GainNode;
 };
 
+type InstrumentVoiceProfile = {
+  waveform: OscillatorType;
+  filterType: BiquadFilterType;
+  filterScale: number;
+  q: number;
+  detuneCents: number;
+  durationScale: number;
+  amountScale: number;
+  envelopeShape: 'soft' | 'percussive' | 'rounded';
+};
+
 export interface InterpretationStatus {
   mode: MusicalInterpretationMode;
   musicification: number;
@@ -844,12 +855,13 @@ export class AudioEngine {
 
     const role = this.inferRoleFromEcologicalEvent(ecologicalEvent);
     const descriptor = this.chooseInstrumentForRole(role, ecologicalEvent.id);
-    const destination = descriptor.id === 'atmo-hush' ? this.busLayout.atmosphere : this.busLayout.music;
+    const profile = this.getInstrumentVoiceProfile(descriptor, 'environmentPulse');
+    const destination = descriptor.foregroundFamily === 'soft-pad' ? this.busLayout.atmosphere : this.busLayout.music;
     const now = this.context.currentTime;
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
-    osc.type = this.interpretationMode === 'raw' ? 'sine' : descriptor.timbralFamily === 'textural' ? 'triangle' : 'sine';
+    osc.type = this.interpretationMode === 'raw' ? 'sine' : profile.waveform;
     const pulseBase = this.lastHarmony
       ? getHarmonyFrequency(
         this.lastHarmony,
@@ -860,13 +872,13 @@ export class AudioEngine {
       )
       : 72 + gesture.intensity * 28;
     osc.frequency.value = pulseBase;
-    filter.type = descriptor.timbralFamily === 'textural' ? 'bandpass' : 'lowpass';
-    filter.frequency.value = 130 + gesture.intensity * 140 + (this.interpretationMode === 'raw' ? 0 : 35);
-    filter.Q.value = descriptor.timbralFamily === 'textural' ? 1.2 : 0.9;
+    filter.type = profile.filterType;
+    filter.frequency.value = clamp((130 + gesture.intensity * 140 + (this.interpretationMode === 'raw' ? 0 : 35)) * profile.filterScale, 90, 4800);
+    filter.Q.value = profile.q;
     gain.gain.setValueAtTime(0.0001, now);
     const attack = this.interpretationMode === 'musical' ? 0.06 : 0.08;
-    const release = this.interpretationMode === 'raw' ? 0.34 : 0.44;
-    const amount = (0.004 + gesture.intensity * 0.008) * (descriptor.maxDensity * 0.7 + 0.58);
+    const release = (this.interpretationMode === 'raw' ? 0.34 : 0.44) * profile.durationScale;
+    const amount = (0.004 + gesture.intensity * 0.008) * (descriptor.maxDensity * 0.7 + 0.58) * profile.amountScale;
     gain.gain.exponentialRampToValueAtTime(amount, now + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + release);
     osc.connect(filter);
@@ -982,12 +994,14 @@ export class AudioEngine {
     });
 
     const settings = this.createEventInstrumentGesture(event, ecologicalEvent);
+    const eventProfile = this.getInstrumentVoiceProfile(settings.instrument, 'worldEvent');
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
     const pan = this.context.createStereoPanner();
 
     osc.type = settings.waveform;
+    osc.detune.value = eventProfile.detuneCents * (Math.random() * 2 - 1);
     const baseEventFreq = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave, this.getPitchTightness('music'));
     const baseEventMidi = 69 + 12 * Math.log2(baseEventFreq / 440);
     const zoneMidi = quantizeToRoleZone(baseEventMidi, harmony, this.toHarmonicPitchRole(settings.role), this.getPitchTightness('music'));
@@ -1001,6 +1015,7 @@ export class AudioEngine {
       sourceKind: 'worldEvent',
       sourceId: ecologicalEvent.sourceEntityId ?? event.id,
       instrumentFamilyHint: this.instrumentHintFromDescriptor(settings.instrument.timbralFamily),
+      envelopeShape: eventProfile.envelopeShape,
     });
     const startAt = alignToSoftPulse(now, this.noteTiming);
     osc.frequency.value = noteEvent.pitchHz;
@@ -1072,7 +1087,8 @@ export class AudioEngine {
       : this.interpretationMode === 'raw'
         ? this.busLayout?.rawEcology ?? this.eventBus!
         : this.busLayout?.music ?? this.eventBus!;
-    const modeDurationScale = this.interpretationMode === 'raw' ? 0.86 : this.interpretationMode === 'hybrid' ? 1 : 1.08;
+    const profile = this.getInstrumentVoiceProfile(instrument, 'worldEvent');
+    const modeDurationScale = (this.interpretationMode === 'raw' ? 0.86 : this.interpretationMode === 'hybrid' ? 1 : 1.08) * profile.durationScale;
     const contourByRole: Record<OrchestrationRole, number> = {
       bloom: 0.62,
       pollinator: 0.84,
@@ -1109,42 +1125,105 @@ export class AudioEngine {
       atmosphere: 'bloom',
       mixed: 'grazer',
     };
-    const waveformByFamily: Record<InstrumentDescriptor['timbralFamily'], OscillatorType> = {
-      plucked: 'triangle',
-      bowed: 'triangle',
-      air: 'sine',
-      percussive: 'triangle',
-      textural: 'sine',
-      hybrid: 'triangle',
-      bass: 'sine',
-      reed: 'sawtooth',
-    };
-    const filterByFamily: Record<InstrumentDescriptor['timbralFamily'], BiquadFilterType> = {
-      plucked: 'bandpass',
-      bowed: 'lowpass',
-      air: 'highpass',
-      percussive: 'bandpass',
-      textural: 'lowpass',
-      hybrid: 'bandpass',
-      bass: 'lowpass',
-      reed: 'bandpass',
-    };
-
     return {
       instrument,
       role,
       voiceRole: voiceRoleByOrchestration[role],
       layer: layerByRole[role],
-      waveform: this.interpretationMode === 'raw' ? 'triangle' : waveformByFamily[instrument.timbralFamily],
-      filterType: event.type === 'entityDied' ? 'lowpass' : filterByFamily[instrument.timbralFamily],
+      waveform: this.interpretationMode === 'raw' ? 'triangle' : profile.waveform,
+      filterType: event.type === 'entityDied' ? 'lowpass' : profile.filterType,
       contour: clamp(contourByRole[role] + (instrument.rhythmicTendency - 0.5) * 0.16, 0.1, 0.95),
       octave: octaveByRole[role] + (this.interpretationMode === 'musical' ? 1 : 0),
       duration: clamp((0.12 + (1 - instrument.rhythmicTendency) * 0.3) * modeDurationScale, 0.1, 0.54),
-      amount: clamp(0.012 + instrument.maxDensity * 0.022, 0.012, 0.034),
-      filterScale: clamp(1.2 + instrument.rhythmicTendency * 1.2 + (role === 'predator' ? -0.35 : 0), 1.05, 2.6),
-      q: clamp(0.8 + instrument.rhythmicTendency * 1.8 + (this.interpretationMode === 'musical' ? 0.28 : 0), 0.8, 2.8),
+      amount: clamp((0.012 + instrument.maxDensity * 0.022) * profile.amountScale, 0.01, 0.04),
+      filterScale: clamp((1.2 + instrument.rhythmicTendency * 1.2 + (role === 'predator' ? -0.35 : 0)) * profile.filterScale, 0.95, 2.9),
+      q: clamp((0.8 + instrument.rhythmicTendency * 1.8 + (this.interpretationMode === 'musical' ? 0.28 : 0)) * profile.q, 0.75, 3.2),
       destination,
     };
+  }
+
+  private getInstrumentVoiceProfile(
+    instrument: InstrumentDescriptor,
+    sourceKind: 'worldEvent' | 'phraseAgent' | 'environmentPulse',
+  ): InstrumentVoiceProfile {
+    const byFamily: Record<InstrumentDescriptor['foregroundFamily'], InstrumentVoiceProfile> = {
+      'soft-pad': {
+        waveform: 'triangle',
+        filterType: 'lowpass',
+        filterScale: 1.15,
+        q: 0.72,
+        detuneCents: 1.5,
+        durationScale: 1.36,
+        amountScale: 0.86,
+        envelopeShape: 'soft',
+      },
+      'bell-chime': {
+        waveform: 'sine',
+        filterType: 'highpass',
+        filterScale: 1.9,
+        q: 1.28,
+        detuneCents: 4,
+        durationScale: 0.9,
+        amountScale: 0.9,
+        envelopeShape: 'percussive',
+      },
+      'soft-pluck': {
+        waveform: 'triangle',
+        filterType: 'bandpass',
+        filterScale: 1.55,
+        q: 1.18,
+        detuneCents: 2.4,
+        durationScale: 0.85,
+        amountScale: 1.06,
+        envelopeShape: 'percussive',
+      },
+      'mellow-mallet': {
+        waveform: 'triangle',
+        filterType: 'bandpass',
+        filterScale: 1.34,
+        q: 1.04,
+        detuneCents: 1.2,
+        durationScale: 0.96,
+        amountScale: 1.02,
+        envelopeShape: 'rounded',
+      },
+      'reed-lead': {
+        waveform: 'sawtooth',
+        filterType: 'bandpass',
+        filterScale: 1.2,
+        q: 1.4,
+        detuneCents: 3.2,
+        durationScale: 1.04,
+        amountScale: 1.08,
+        envelopeShape: 'rounded',
+      },
+      'soft-bass-pulse': {
+        waveform: 'sine',
+        filterType: 'lowpass',
+        filterScale: 0.9,
+        q: 0.82,
+        detuneCents: 2,
+        durationScale: 1.1,
+        amountScale: 1.16,
+        envelopeShape: 'soft',
+      },
+    };
+    const profile = byFamily[instrument.foregroundFamily];
+    if (sourceKind === 'phraseAgent') {
+      return {
+        ...profile,
+        q: profile.q * 1.08,
+        amountScale: profile.amountScale * 1.06,
+      };
+    }
+    if (sourceKind === 'environmentPulse') {
+      return {
+        ...profile,
+        durationScale: profile.durationScale * 0.9,
+        amountScale: profile.amountScale * 0.84,
+      };
+    }
+    return profile;
   }
 
   private instrumentHintFromDescriptor(family: InstrumentDescriptor['timbralFamily']): NoteInstrumentFamilyHint {
@@ -1182,11 +1261,12 @@ export class AudioEngine {
     sourceKind: NoteSourceKind;
     sourceId: number | string;
     instrumentFamilyHint?: NoteInstrumentFamilyHint;
+    envelopeShape?: 'soft' | 'percussive' | 'rounded';
   }): NoteEvent {
     const envelopeShape = createEnvelopeByDensity(
       input.duration,
       this.noteTiming.looseness < 0.35 ? 0.78 : 0.52,
-      input.sourceKind === 'phraseAgent' ? 'rounded' : 'percussive',
+      input.envelopeShape ?? (input.sourceKind === 'phraseAgent' ? 'rounded' : 'percussive'),
     );
     return {
       pitchHz: clamp(input.pitchHz, 28, 5400),
@@ -1466,11 +1546,19 @@ export class AudioEngine {
     const perception = this.computePerceptualAttenuation(entity.position, snapshot, clamp((snapshot.camera.zoom - 0.24) / (2.4 - 0.24), 0, 1));
 
     const phraseBias = clamp(this.interpretationBlend, 0, 1);
-    voice.type = phraseBias > 0.72
-      ? (entity.type === 'flocker' ? 'triangle' : 'sine')
-      : entity.type === 'flocker'
-        ? 'sine'
-        : 'triangle';
+    const orchestrationRole: OrchestrationRole = entity.type === 'predator'
+      ? 'predator'
+      : entity.type === 'parasite' || entity.type === 'cluster'
+        ? 'decomposer'
+        : entity.type === 'flocker'
+          ? 'pollinator'
+          : entity.type === 'plant' || entity.type === 'canopy' || entity.type === 'ephemeral'
+            ? 'bloom'
+            : 'grazer';
+    const instrument = this.chooseInstrumentForRole(orchestrationRole, entity.id);
+    const profile = this.getInstrumentVoiceProfile(instrument, 'phraseAgent');
+    voice.type = phraseBias > 0.72 ? profile.waveform : (profile.waveform === 'sawtooth' ? 'triangle' : profile.waveform);
+    voice.detune.value = profile.detuneCents * (Math.random() * 2 - 1);
     const entityRole: EcologicalVoiceRole = entity.type === 'plant' || entity.type === 'canopy' || entity.type === 'ephemeral'
       ? 'bloom'
       : entity.type === 'flocker'
@@ -1497,13 +1585,14 @@ export class AudioEngine {
       roleHint: entityRole,
       sourceKind: 'phraseAgent',
       sourceId: entity.id,
-      instrumentFamilyHint: entity.type === 'flocker' ? 'air' : entity.type === 'grazer' ? 'reed' : 'plucked',
+      instrumentFamilyHint: this.instrumentHintFromDescriptor(instrument.timbralFamily),
+      envelopeShape: profile.envelopeShape,
     });
     const startAt = alignToSoftPulse(now, this.noteTiming);
     voice.frequency.value = noteEvent.pitchHz;
-    filter.type = 'bandpass';
-    filter.frequency.value = noteEvent.pitchHz * (1.6 + entity.tone * 0.8) * perception.highFreq;
-    filter.Q.value = 1.8 + entity.activity;
+    filter.type = profile.filterType;
+    filter.frequency.value = clamp(noteEvent.pitchHz * (1.3 + entity.tone * 0.8) * profile.filterScale * perception.highFreq, 140, 6800);
+    filter.Q.value = clamp((1.2 + entity.activity) * profile.q, 0.7, 3.4);
     pan.pan.value = this.panFromPosition(entity.position.x, snapshot);
     const stopAt = scheduleAdsrGain(
       gain,
