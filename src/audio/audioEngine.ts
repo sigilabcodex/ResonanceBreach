@@ -697,8 +697,10 @@ export class AudioEngine {
       const roleTightness = role === 'pollinator'
         ? this.getPitchTightness('music')
         : this.getPitchTightness('raw');
+      const harmonicRole: HarmonicPitchRole = role === 'bloom' ? 'rooted' : role === 'pollinator' ? 'drifter' : role === 'grazer' ? 'grazer' : 'decomposer';
+      const baseRoleFrequency = getHarmonyFrequency(harmony, harmonyLayer, contour, layer.register, roleTightness) * roleShape;
       voice.oscillator.frequency.setTargetAtTime(
-        getHarmonyFrequency(harmony, harmonyLayer, contour, layer.register, roleTightness) * roleShape,
+        this.snapFrequencyToRole(baseRoleFrequency, harmony, harmonicRole, roleTightness),
         now,
         role === 'bloom' ? 0.9 : role === 'decay' ? 0.42 : 0.26 + (1 - music.composition.evolutionSpeed) * 0.28,
       );
@@ -760,10 +762,26 @@ export class AudioEngine {
             ? 420 + detailLift * 420
             : 820 + detailLift * 980;
       const layer = candidate.entity.type === 'plant' || candidate.entity.type === 'ephemeral' || candidate.entity.type === 'canopy' ? 'plant' : candidate.entity.type === 'cluster' || candidate.entity.type === 'parasite' ? 'cluster' : 'mobile';
+      const pitchRole: HarmonicPitchRole = candidate.entity.type === 'predator'
+        ? 'predator'
+        : candidate.entity.type === 'parasite' || candidate.entity.type === 'cluster'
+          ? 'decomposer'
+          : candidate.entity.type === 'flocker'
+            ? 'drifter'
+            : candidate.entity.type === 'plant' || candidate.entity.type === 'ephemeral' || candidate.entity.type === 'canopy'
+              ? 'rooted'
+              : 'grazer';
+      const baseForegroundFrequency = getHarmonyFrequency(
+        harmony,
+        layer,
+        contour,
+        ENTITY_OCTAVE[candidate.entity.type],
+        this.getPitchTightness('raw'),
+      );
 
       voice.oscillator.type = ENTITY_WAVEFORM[candidate.entity.type];
       voice.oscillator.frequency.setTargetAtTime(
-        getHarmonyFrequency(harmony, layer, contour, ENTITY_OCTAVE[candidate.entity.type], this.getPitchTightness('raw')),
+        this.snapFrequencyToRole(baseForegroundFrequency, harmony, pitchRole, this.getPitchTightness('raw')),
         now,
         0.24,
       );
@@ -797,6 +815,7 @@ export class AudioEngine {
       const sway = 0.5 + Math.sin(snapshot.time * (0.08 + index * 0.02) * Math.PI * 2 + index) * 0.5;
       const register = index === 0 ? -1 : index === 1 ? 0 : 1;
       const layer = index === 0 ? 'cluster' : index === 1 ? 'plant' : 'mobile';
+      const leadRole: HarmonicPitchRole = index === 0 ? 'grazer' : index === 1 ? 'rooted' : 'drifter';
       const focusDuck = focus.active ? 1 - focus.intensity * 0.08 : 1;
       const gain = clamp(
         (0.026 + phraseBias * 0.06 + music.composition.foregroundLift * 0.05 + sway * 0.018) * (0.86 + (1 - zoomNorm) * 0.14) * focusDuck * this.mapVolume(settings.audio.musicBusLevel),
@@ -805,8 +824,9 @@ export class AudioEngine {
       );
       const filterBase = index === 0 ? 380 : index === 1 ? 1100 : 2100;
       voice.oscillator.type = index === 2 && phraseBias > 0.74 ? 'triangle' : 'sine';
+      const baseLeadFrequency = getHarmonyFrequency(harmony, layer, contour, register, this.getPitchTightness('music'));
       voice.oscillator.frequency.setTargetAtTime(
-        getHarmonyFrequency(harmony, layer, contour, register, this.getPitchTightness('music')),
+        this.snapFrequencyToRole(baseLeadFrequency, harmony, leadRole, this.getPitchTightness('music')),
         now,
         0.26,
       );
@@ -872,16 +892,24 @@ export class AudioEngine {
     const gain = this.context.createGain();
     const filter = this.context.createBiquadFilter();
     osc.type = this.interpretationMode === 'raw' ? 'sine' : profile.waveform;
-    const pulseBase = this.lastHarmony
+    const pulseHarmony = this.lastHarmony;
+    const pulseBase = pulseHarmony
       ? getHarmonyFrequency(
-        this.lastHarmony,
+        pulseHarmony,
         'event',
         clamp(0.18 + gesture.intensity * 0.58, 0, 1),
         -1,
         this.getPitchTightness('music'),
       )
       : 72 + gesture.intensity * 28;
-    osc.frequency.value = pulseBase;
+    osc.frequency.value = pulseHarmony
+      ? this.snapFrequencyToRole(
+        pulseBase,
+        pulseHarmony,
+        role === 'predator' ? 'predator' : role === 'decomposer' ? 'decomposer' : role === 'atmosphere' ? 'drifter' : 'mixed',
+        this.getPitchTightness('music'),
+      )
+      : pulseBase;
     filter.type = profile.filterType;
     filter.frequency.value = clamp((130 + gesture.intensity * 140 + (this.interpretationMode === 'raw' ? 0 : 35)) * profile.filterScale, 90, 4800);
     filter.Q.value = profile.q;
@@ -911,7 +939,7 @@ export class AudioEngine {
   private triggerToolEventTone(event: Extract<WorldEvent, { type: 'toolUsed' }>): void {
     if (!this.context || !this.eventBus) return;
 
-    const harmony = createHarmonyState({
+    const harmony = this.lastHarmony ?? createHarmonyState({
       dimensions: { width: 0, height: 0, wrapped: true },
       entities: [],
       terrain: [],
@@ -971,7 +999,7 @@ export class AudioEngine {
     const eventCooldown = this.interpretationMode === 'raw' ? 0.36 : this.interpretationMode === 'hybrid' ? 0.3 : 0.24;
     if (!shouldTriggerNote(now, this.noteGateState, eventGateKey, eventCooldown, eventProbability)) return;
 
-    const harmony = createHarmonyState({
+    const harmony = this.lastHarmony ?? createHarmonyState({
       dimensions: { width: 0, height: 0, wrapped: true },
       entities: [],
       terrain: [],
@@ -1690,6 +1718,17 @@ export class AudioEngine {
     if (layer === 'music') return clamp(0.56 + this.interpretationBlend * 0.4, 0.56, 0.96);
     if (layer === 'atmosphere') return clamp(0.62 + this.interpretationBlend * 0.3, 0.5, 0.9);
     return clamp(0.14 + this.interpretationBlend * 0.28, 0.08, 0.52);
+  }
+
+  private snapFrequencyToRole(
+    frequencyHz: number,
+    harmony: HarmonyState,
+    role: HarmonicPitchRole,
+    tightness: number,
+  ): number {
+    const midi = 69 + 12 * Math.log2(Math.max(12, frequencyHz) / 440);
+    const snappedMidi = quantizeToRoleZone(midi, harmony, role, tightness);
+    return 440 * 2 ** ((snappedMidi - 69) / 12);
   }
 
   private applyLiveControls(settings: GameSettings, fast = false): void {
