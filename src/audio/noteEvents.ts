@@ -41,25 +41,25 @@ export const createEnvelopeByDensity = (
   const rhythm = clamp(density, 0, 1);
   if (shape === 'percussive') {
     return {
-      attack: clamp(0.004 + (1 - rhythm) * 0.004, 0.004, 0.012),
-      decay: clamp(safeDuration * (0.22 + rhythm * 0.12), 0.02, safeDuration * 0.46),
-      sustain: clamp(0.22 - rhythm * 0.1, 0.08, 0.26),
-      release: clamp(safeDuration * (0.38 - rhythm * 0.08), 0.03, safeDuration * 0.44),
+      attack: clamp(0.003 + (1 - rhythm) * 0.003, 0.003, 0.01),
+      decay: clamp(safeDuration * (0.18 + rhythm * 0.1), 0.016, safeDuration * 0.34),
+      sustain: clamp(0.13 - rhythm * 0.07, 0.04, 0.16),
+      release: clamp(safeDuration * (0.24 - rhythm * 0.06), 0.02, safeDuration * 0.3),
     };
   }
   if (shape === 'soft') {
     return {
-      attack: clamp(0.016 + (1 - rhythm) * 0.02, 0.012, 0.048),
-      decay: clamp(safeDuration * 0.26, 0.03, safeDuration * 0.34),
-      sustain: 0.62,
-      release: clamp(safeDuration * 0.44 + 0.04, 0.08, safeDuration * 0.6),
+      attack: clamp(0.014 + (1 - rhythm) * 0.016, 0.01, 0.038),
+      decay: clamp(safeDuration * 0.22, 0.024, safeDuration * 0.3),
+      sustain: clamp(0.46 - rhythm * 0.08, 0.34, 0.5),
+      release: clamp(safeDuration * 0.32 + 0.03, 0.06, safeDuration * 0.44),
     };
   }
   return {
-    attack: clamp(0.008 + (1 - rhythm) * 0.012, 0.008, 0.024),
-    decay: clamp(safeDuration * 0.24, 0.03, safeDuration * 0.36),
-    sustain: clamp(0.36 + (1 - rhythm) * 0.12, 0.28, 0.52),
-    release: clamp(safeDuration * 0.36, 0.04, safeDuration * 0.52),
+    attack: clamp(0.006 + (1 - rhythm) * 0.01, 0.006, 0.02),
+    decay: clamp(safeDuration * 0.2, 0.024, safeDuration * 0.3),
+    sustain: clamp(0.26 + (1 - rhythm) * 0.08, 0.2, 0.36),
+    release: clamp(safeDuration * 0.24, 0.03, safeDuration * 0.34),
   };
 };
 

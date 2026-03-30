@@ -201,6 +201,10 @@ export class AudioEngine {
   private environmentalPulseId = 1_000_000;
   private lastEnvironmentalPulseTime = -100;
   private noteGateState = new Map<string, number>();
+  private recentNoteOnsets: number[] = [];
+  private lastAnyOnsetTime = -100;
+  private phraseCooldownUntil = -100;
+  private eventCooldownUntil = -100;
   private noteTiming: NoteTimingGate = { pulseSeconds: 0.28, looseness: 0.45, jitter: 0.01 };
   private readonly debugState: AudioDebugState = {
     masterGain: 0,
@@ -422,6 +426,10 @@ export class AudioEngine {
     this.selectionVoiceMemory.clear();
     this.phraseMotifMemory.clear();
     this.noteGateState.clear();
+    this.recentNoteOnsets = [];
+    this.lastAnyOnsetTime = -100;
+    this.phraseCooldownUntil = -100;
+    this.eventCooldownUntil = -100;
     this.phraseRecentTime = -100;
     this.phraseRecentType = null;
     this.musicState = undefined;
@@ -834,7 +842,8 @@ export class AudioEngine {
   }
 
   private processEnvironmentalPulse(snapshot: SimulationSnapshot, now: number): void {
-    if (now - this.lastEnvironmentalPulseTime < 1.2) return;
+    const pulseInterval = clamp(1.55 + this.noteTiming.pulseSeconds * 1.4, 1.5, 2.2);
+    if (now - this.lastEnvironmentalPulseTime < pulseInterval) return;
     this.lastEnvironmentalPulseTime = now;
     const pulseEvent = createEnvironmentalPulseEvent(snapshot, this.environmentalPulseId++);
     this.processEcologicalAudioEvent(pulseEvent);
@@ -852,6 +861,7 @@ export class AudioEngine {
     if (!this.context || !this.eventBus || !this.busLayout) return;
     if (gesture.outputEventType !== 'environmentalPulse') return;
     if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
+    if (!this.canAdmitOnset(this.context.currentTime, { minGap: 0.09, maxInWindow: 4, windowSeconds: 0.7 })) return;
 
     const role = this.inferRoleFromEcologicalEvent(ecologicalEvent);
     const descriptor = this.chooseInstrumentForRole(role, ecologicalEvent.id);
@@ -886,6 +896,7 @@ export class AudioEngine {
     gain.connect(destination);
     osc.start(now);
     osc.stop(now + release + 0.08);
+    this.registerOnset(now);
     this.activeTransientVoices += 1;
   }
 
@@ -953,9 +964,11 @@ export class AudioEngine {
     if (this.activeTransientVoices >= MAX_ACTIVE_VOICES) return;
 
     const now = this.context.currentTime;
+    if (now < this.eventCooldownUntil) return;
+    if (!this.canAdmitOnset(now, { minGap: 0.05, maxInWindow: 5, windowSeconds: 0.6 })) return;
     const eventGateKey = this.createNoteGateKey('worldEvent', ecologicalEvent.sourceEntityId ?? event.id);
-    const eventProbability = this.interpretationMode === 'raw' ? 0.42 : this.interpretationMode === 'hybrid' ? 0.62 : 0.82;
-    const eventCooldown = this.interpretationMode === 'raw' ? 0.28 : 0.18;
+    const eventProbability = this.interpretationMode === 'raw' ? 0.34 : this.interpretationMode === 'hybrid' ? 0.5 : 0.68;
+    const eventCooldown = this.interpretationMode === 'raw' ? 0.36 : this.interpretationMode === 'hybrid' ? 0.3 : 0.24;
     if (!shouldTriggerNote(now, this.noteGateState, eventGateKey, eventCooldown, eventProbability)) return;
 
     const harmony = createHarmonyState({
@@ -1037,6 +1050,8 @@ export class AudioEngine {
     gain.connect(settings.destination);
     osc.start(startAt);
     osc.stop(stopAt + 0.02);
+    this.eventCooldownUntil = now + (this.interpretationMode === 'musical' ? 0.06 : 0.1);
+    this.registerOnset(startAt);
     this.activeTransientVoices += 1;
   }
 
@@ -1153,8 +1168,8 @@ export class AudioEngine {
         filterScale: 1.15,
         q: 0.72,
         detuneCents: 1.5,
-        durationScale: 1.36,
-        amountScale: 0.86,
+        durationScale: 1.14,
+        amountScale: 0.82,
         envelopeShape: 'soft',
       },
       'bell-chime': {
@@ -1163,7 +1178,7 @@ export class AudioEngine {
         filterScale: 1.9,
         q: 1.28,
         detuneCents: 4,
-        durationScale: 0.9,
+        durationScale: 0.72,
         amountScale: 0.9,
         envelopeShape: 'percussive',
       },
@@ -1173,7 +1188,7 @@ export class AudioEngine {
         filterScale: 1.55,
         q: 1.18,
         detuneCents: 2.4,
-        durationScale: 0.85,
+        durationScale: 0.7,
         amountScale: 1.06,
         envelopeShape: 'percussive',
       },
@@ -1183,7 +1198,7 @@ export class AudioEngine {
         filterScale: 1.34,
         q: 1.04,
         detuneCents: 1.2,
-        durationScale: 0.96,
+        durationScale: 0.78,
         amountScale: 1.02,
         envelopeShape: 'rounded',
       },
@@ -1193,7 +1208,7 @@ export class AudioEngine {
         filterScale: 1.2,
         q: 1.4,
         detuneCents: 3.2,
-        durationScale: 1.04,
+        durationScale: 0.88,
         amountScale: 1.08,
         envelopeShape: 'rounded',
       },
@@ -1203,7 +1218,7 @@ export class AudioEngine {
         filterScale: 0.9,
         q: 0.82,
         detuneCents: 2,
-        durationScale: 1.1,
+        durationScale: 0.84,
         amountScale: 1.16,
         envelopeShape: 'soft',
       },
@@ -1213,7 +1228,7 @@ export class AudioEngine {
       return {
         ...profile,
         q: profile.q * 1.08,
-        amountScale: profile.amountScale * 1.06,
+        amountScale: profile.amountScale * 0.98,
       };
     }
     if (sourceKind === 'environmentPulse') {
@@ -1264,8 +1279,8 @@ export class AudioEngine {
     envelopeShape?: 'soft' | 'percussive' | 'rounded';
   }): NoteEvent {
     const envelopeShape = createEnvelopeByDensity(
-      input.duration,
-      this.noteTiming.looseness < 0.35 ? 0.78 : 0.52,
+      input.sourceKind === 'phraseAgent' ? clamp(input.duration * 0.84, 0.08, 0.6) : input.duration,
+      this.noteTiming.looseness < 0.35 ? 0.84 : 0.62,
       input.envelopeShape ?? (input.sourceKind === 'phraseAgent' ? 'rounded' : 'percussive'),
     );
     return {
@@ -1457,6 +1472,8 @@ export class AudioEngine {
   ): void {
     if (!this.context || !this.phraseBus) return;
     const phraseBias = clamp(this.interpretationBlend, 0, 1);
+    const supportsPhraseLayer = this.interpretationMode !== 'raw' || phraseBias > 0.3;
+    if (!supportsPhraseLayer) return;
     const localDensity = clamp(
       snapshot.entities.filter((entity) => this.distance(entity.position, snapshot.camera.center, snapshot) < 340).length / 16,
       0,
@@ -1468,9 +1485,13 @@ export class AudioEngine {
     for (const agent of this.phraseAgents) {
       if (now < agent.nextActionTime) continue;
       if (agent.phase === 'idle') {
-        const launchChance = 0.14 + phraseBias * 0.62;
+        if (now < this.phraseCooldownUntil) {
+          agent.nextActionTime = this.phraseCooldownUntil + Math.random() * 0.2;
+          continue;
+        }
+        const launchChance = 0.1 + phraseBias * 0.44 - localDensity * 0.08;
         if (Math.random() > launchChance) {
-          agent.nextActionTime = now + 0.35 + (1 - phraseBias) * 0.9 + Math.random() * 0.5;
+          agent.nextActionTime = now + 0.5 + (1 - phraseBias) * 0.95 + Math.random() * 0.6;
           continue;
         }
         const callResponseEligible = this.phraseRecentType !== null && now - this.phraseRecentTime < 1.4;
@@ -1481,17 +1502,19 @@ export class AudioEngine {
         if (!candidate) continue;
         agent.entityId = candidate.entity.id;
         const remembered = this.phraseMotifMemory.get(candidate.entity.id);
+        const motifLength = 2 + Math.round(phraseBias * 2);
         const baseMotif = remembered
           ? remembered.map((interval, idx) => interval + (Math.random() < 0.22 && idx > 0 ? (Math.random() < 0.5 ? -1 : 1) : 0))
-          : [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3].slice(0, 1 + Math.round(phraseBias * 3));
-        agent.motif = baseMotif;
+          : [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3];
+        agent.motif = baseMotif.slice(0, clamp(motifLength, 2, 4));
         this.phraseMotifMemory.set(candidate.entity.id, baseMotif.slice(0, 4));
-        const spacing = clamp(0.2 - phraseBias * 0.1 + localDensity * 0.08, 0.1, 0.3);
-        agent.rhythm = agent.motif.map((_, idx) => spacing + (idx % 2 === 0 ? 0.02 : 0.08) + Math.random() * 0.08);
+        const spacing = clamp(0.22 - phraseBias * 0.06 + localDensity * 0.11, 0.16, 0.36);
+        agent.rhythm = agent.motif.map((_, idx) => spacing + (idx % 2 === 0 ? 0.06 : 0.12) + Math.random() * 0.06);
         agent.variation = 0.06 + Math.random() * 0.12;
         agent.notesRemaining = agent.motif.length;
         agent.noteIndex = 0;
         agent.phase = 'playing';
+        this.phraseCooldownUntil = now + clamp(0.34 + localDensity * 0.16 + (1 - phraseBias) * 0.3, 0.32, 0.8);
       }
       if (agent.phase === 'playing' && agent.notesRemaining > 0 && this.activeTransientVoices < MAX_ACTIVE_VOICES) {
         const target = snapshot.entities.find((entity) => entity.id === agent.entityId);
@@ -1512,13 +1535,14 @@ export class AudioEngine {
         this.phraseRecentType = target.type;
         if (agent.notesRemaining <= 0) {
           agent.phase = 'listening';
-          agent.nextActionTime = now + 1.2 - phraseBias * 0.44 + Math.random() * 1.2 + localDensity * 0.4;
+          agent.nextActionTime = now + 1.45 - phraseBias * 0.38 + Math.random() * 1.3 + localDensity * 0.55;
         } else {
-          agent.nextActionTime = now + nextDuration * 0.92;
+          const interNoteRest = clamp(0.035 + localDensity * 0.012 + (1 - phraseBias) * 0.008, 0.026, 0.08);
+          agent.nextActionTime = now + nextDuration + interNoteRest;
         }
       } else if (agent.phase === 'listening') {
         agent.phase = 'idle';
-        agent.nextActionTime = now + 0.8 - phraseBias * 0.3 + Math.random() * 1.6 + localDensity * 0.32;
+        agent.nextActionTime = now + 1.0 - phraseBias * 0.24 + Math.random() * 1.7 + localDensity * 0.44;
       }
     }
   }
@@ -1534,9 +1558,10 @@ export class AudioEngine {
   ): boolean {
     if (!this.context || !this.phraseBus) return false;
     const now = this.context.currentTime;
+    if (!this.canAdmitOnset(now, { minGap: 0.075, maxInWindow: 4, windowSeconds: 0.58 })) return false;
     const phraseGateKey = this.createNoteGateKey('phraseAgent', entity.id);
-    const phraseProbability = this.interpretationMode === 'musical' ? 0.9 : 0.72;
-    if (!shouldTriggerNote(now, this.noteGateState, phraseGateKey, 0.1 + duration * 0.45, phraseProbability)) return false;
+    const phraseProbability = this.interpretationMode === 'musical' ? 0.82 : 0.62;
+    if (!shouldTriggerNote(now, this.noteGateState, phraseGateKey, 0.14 + duration * 0.5, phraseProbability)) return false;
 
     const voice = this.context.createOscillator();
     const filter = this.context.createBiquadFilter();
@@ -1607,7 +1632,20 @@ export class AudioEngine {
     gain.connect(this.phraseBus);
     voice.start(startAt);
     voice.stop(stopAt + 0.02);
+    this.registerOnset(startAt);
     return true;
+  }
+
+  private canAdmitOnset(now: number, limits: { minGap: number; maxInWindow: number; windowSeconds: number }): boolean {
+    if (now - this.lastAnyOnsetTime < limits.minGap) return false;
+    this.recentNoteOnsets = this.recentNoteOnsets.filter((time) => now - time <= limits.windowSeconds);
+    return this.recentNoteOnsets.length < limits.maxInWindow;
+  }
+
+  private registerOnset(time: number): void {
+    this.lastAnyOnsetTime = time;
+    this.recentNoteOnsets.push(time);
+    if (this.recentNoteOnsets.length > 20) this.recentNoteOnsets.shift();
   }
 
   getDebugState(): AudioDebugState {
