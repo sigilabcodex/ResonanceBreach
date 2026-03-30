@@ -1,17 +1,21 @@
-import { CAMERA_PAN_SPEED, WORLD_HEIGHT, WORLD_WIDTH, type ToolType } from '../config';
+import { CAMERA_PAN_SPEED, WORLD_HEIGHT, WORLD_WIDTH } from '../config';
 import type { CameraState } from '../types/world';
 
 const wrap = (value: number, size: number) => ((value % size) + size) % size;
+const DRAG_THRESHOLD = 28;
+
+export type GestureButton = 'primary' | 'alternate';
 
 export interface InputCallbacks {
-  onTool(active: boolean, x: number, y: number): void;
+  onGestureStart(button: GestureButton, x: number, y: number): void;
+  onGestureMove(button: GestureButton, x: number, y: number, dragDistance: number, holdSeconds: number): void;
+  onGestureEnd(button: GestureButton, x: number, y: number, gesture: 'tap' | 'hold' | 'drag', dragDistance: number, holdSeconds: number): void;
   onToolHover(x: number, y: number): void;
   onInteract(): void;
   onRestart(): void;
   onToggleDebugOverlay(): void;
   onPan(deltaX: number, deltaY: number): void;
   onZoom(deltaY: number, clientX: number, clientY: number): void;
-  onSelectTool(tool: ToolType): void;
   onToggleMinimalHud(): void;
   onToggleSettings(): void;
   onCycleInterpretationMode(): void;
@@ -19,10 +23,12 @@ export interface InputCallbacks {
 }
 
 export class PlayerInput {
-  private toolPointerId: number | null = null;
+  private gesturePointerId: number | null = null;
+  private gestureButton: GestureButton = 'primary';
   private panPointerId: number | null = null;
   private lastPan = { x: 0, y: 0 };
-  private lastToolStamp = { x: 0, y: 0 };
+  private gestureStart = { x: 0, y: 0 };
+  private gestureStartedAt = 0;
   private readonly keys = new Set<string>();
 
   constructor(
@@ -77,19 +83,24 @@ export class PlayerInput {
 
   private handlePointerDown = (event: PointerEvent): void => {
     this.callbacks.onInteract();
-    if (event.button === 2 || event.button === 1) {
+
+    if (event.button === 1) {
       this.panPointerId = event.pointerId;
       this.lastPan = { x: event.clientX, y: event.clientY };
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
 
-    if (event.button !== 0) return;
-    this.toolPointerId = event.pointerId;
+    const gestureButton: GestureButton = event.button === 2 || (event.button === 0 && event.shiftKey) ? 'alternate' : 'primary';
+    if (event.button !== 0 && event.button !== 2) return;
+
+    this.gesturePointerId = event.pointerId;
+    this.gestureButton = gestureButton;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.project(event.clientX, event.clientY);
-    this.lastToolStamp = point;
-    this.callbacks.onTool(true, point.x, point.y);
+    this.gestureStart = point;
+    this.gestureStartedAt = performance.now();
+    this.callbacks.onGestureStart(gestureButton, point.x, point.y);
   };
 
   private handlePointerMove = (event: PointerEvent): void => {
@@ -107,12 +118,10 @@ export class PlayerInput {
       return;
     }
 
-    if (this.toolPointerId !== event.pointerId) return;
-    const dist = Math.hypot(point.x - this.lastToolStamp.x, point.y - this.lastToolStamp.y);
-    if (dist > 72) {
-      this.lastToolStamp = point;
-      this.callbacks.onTool(true, point.x, point.y);
-    }
+    if (this.gesturePointerId !== event.pointerId) return;
+    const dragDistance = Math.hypot(point.x - this.gestureStart.x, point.y - this.gestureStart.y);
+    const holdSeconds = (performance.now() - this.gestureStartedAt) / 1000;
+    this.callbacks.onGestureMove(this.gestureButton, point.x, point.y, dragDistance, holdSeconds);
   };
 
   private handlePointerUp = (event: PointerEvent): void => {
@@ -122,11 +131,14 @@ export class PlayerInput {
       return;
     }
 
-    if (this.toolPointerId !== event.pointerId) return;
-    this.toolPointerId = null;
-    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+    if (this.gesturePointerId !== event.pointerId) return;
     const point = this.project(event.clientX, event.clientY);
-    this.callbacks.onTool(false, point.x, point.y);
+    const dragDistance = Math.hypot(point.x - this.gestureStart.x, point.y - this.gestureStart.y);
+    const holdSeconds = (performance.now() - this.gestureStartedAt) / 1000;
+    const gesture = dragDistance >= DRAG_THRESHOLD ? 'drag' : holdSeconds >= 0.24 ? 'hold' : 'tap';
+    this.callbacks.onGestureEnd(this.gestureButton, point.x, point.y, gesture, dragDistance, holdSeconds);
+    this.gesturePointerId = null;
+    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
@@ -162,20 +174,6 @@ export class PlayerInput {
       return;
     }
 
-    const toolMap: Record<string, ToolType> = {
-      '1': 'observe',
-      '2': 'grow',
-      '3': 'feed',
-      '4': 'repel',
-      '5': 'disrupt',
-    };
-
-    if (toolMap[key]) {
-      this.callbacks.onSelectTool(toolMap[key]);
-      this.callbacks.onInteract();
-      return;
-    }
-
     this.keys.add(key);
     this.callbacks.onInteract();
   };
@@ -195,9 +193,8 @@ export class PlayerInput {
   };
 
   private handlePointerLeave = (): void => {
-    if (this.toolPointerId === null) {
+    if (this.gesturePointerId === null) {
       this.callbacks.onToolHover(-1, -1);
-      this.callbacks.onTool(false, -1, -1);
     }
   };
 

@@ -4,7 +4,7 @@ import { PlayerInput } from '../interaction/input';
 import { Renderer } from '../render/renderer';
 import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, storeSettings, type GameSettings } from '../settings';
 import { Simulation } from '../sim/simulation';
-import type { CameraState, PerformanceStats } from '../types/world';
+import type { CameraState, PerformanceStats, SimulationSnapshot, TerrainCell, Vec2 } from '../types/world';
 import { Hud } from '../ui/hud';
 import type { MusicalInterpretationMode } from '../audio/musicalInterpreter';
 
@@ -52,11 +52,18 @@ export class App {
   private fpsFrameCount = 0;
   private followingSelection = false;
   private interpretationMode: MusicalInterpretationMode = 'raw';
+  private latestSnapshot: SimulationSnapshot | null = null;
+  private activeGesture: {
+    button: 'primary' | 'alternate';
+    startedAt: Vec2;
+    mode: 'pending' | 'hold-observe' | 'drag-influence';
+    lastStamp: Vec2;
+  } | null = null;
 
   constructor(mount: HTMLElement) {
     this.settings = normalizeSettings(loadSettings());
     this.interpretationMode = this.settings.audio.interpretationMode;
-    this.hud = new Hud((tool) => this.selectTool(tool), (settings) => this.applySettings(settings), this.settings);
+    this.hud = new Hud((settings) => this.applySettings(settings), this.settings);
     this.audio.setInterpretationMode(this.interpretationMode);
     this.audio.setMusicification(this.settings.audio.musicificationAmount);
     this.audio.applyLiveSettings(this.settings);
@@ -77,7 +84,9 @@ export class App {
     this.simulation.setCamera(this.camera.center.x, this.camera.center.y, this.camera.zoom);
 
     this.input = new PlayerInput(canvas, {
-      onTool: (active, x, y) => this.simulation.setToolEngaged(active, x, y),
+      onGestureStart: (button, x, y) => this.handleGestureStart(button, x, y),
+      onGestureMove: (button, x, y, dragDistance, holdSeconds) => this.handleGestureMove(button, x, y, dragDistance, holdSeconds),
+      onGestureEnd: (button, x, y, gesture, dragDistance, holdSeconds) => this.handleGestureEnd(button, x, y, gesture, dragDistance, holdSeconds),
       onToolHover: (x, y) => this.simulation.hoverTool(x, y),
       onInteract: () => {
         void this.audio.ensureStarted();
@@ -86,7 +95,6 @@ export class App {
       onToggleDebugOverlay: () => this.toggleDebugOverlay(),
       onPan: (deltaX, deltaY) => this.panCamera(deltaX, deltaY),
       onZoom: (deltaY, clientX, clientY) => this.zoomCamera(deltaY, clientX, clientY, canvas),
-      onSelectTool: (tool) => this.selectTool(tool),
       onToggleMinimalHud: () => this.hud.toggleMinimalHud(),
       onToggleSettings: () => this.hud.toggleSettings(),
       onCycleInterpretationMode: () => this.cycleInterpretationMode(),
@@ -147,6 +155,153 @@ export class App {
   private selectTool(tool: ToolType): void {
     this.simulation.setTool(tool);
     void this.audio.ensureStarted();
+  }
+
+  private handleGestureStart(button: 'primary' | 'alternate', x: number, y: number): void {
+    this.activeGesture = {
+      button,
+      startedAt: { x, y },
+      mode: 'pending',
+      lastStamp: { x, y },
+    };
+    this.simulation.hoverTool(x, y);
+  }
+
+  private handleGestureMove(button: 'primary' | 'alternate', x: number, y: number, dragDistance: number, holdSeconds: number): void {
+    if (!this.activeGesture || this.activeGesture.button !== button) return;
+
+    if (button === 'primary' && this.activeGesture.mode === 'pending' && holdSeconds >= 0.24 && dragDistance < 28) {
+      this.activeGesture.mode = 'hold-observe';
+      this.selectTool('observe');
+      this.simulation.setToolEngaged(true, this.activeGesture.startedAt.x, this.activeGesture.startedAt.y);
+    }
+
+    if (dragDistance >= 28 && this.activeGesture.mode !== 'drag-influence') {
+      if (this.activeGesture.mode === 'hold-observe') {
+        this.simulation.setToolEngaged(false, x, y);
+      }
+      this.activeGesture.mode = 'drag-influence';
+      this.activeGesture.lastStamp = { x, y };
+      const dragTool = button === 'alternate' ? this.pickAvailableTool(['repel', 'disrupt']) : this.pickAvailableTool(['repel', 'grow']);
+      this.selectTool(dragTool);
+      this.simulation.setToolEngaged(true, x, y);
+      return;
+    }
+
+    if (this.activeGesture.mode === 'hold-observe') {
+      this.simulation.setToolEngaged(true, x, y);
+      return;
+    }
+
+    if (this.activeGesture.mode !== 'drag-influence') return;
+    const distFromStamp = Math.hypot(x - this.activeGesture.lastStamp.x, y - this.activeGesture.lastStamp.y);
+    if (distFromStamp >= 64) {
+      const dragTool = button === 'alternate' ? this.pickAvailableTool(['repel', 'disrupt']) : this.pickAvailableTool(['repel', 'grow']);
+      this.selectTool(dragTool);
+      this.simulation.setToolEngaged(true, x, y);
+      this.activeGesture.lastStamp = { x, y };
+    }
+  }
+
+  private handleGestureEnd(
+    button: 'primary' | 'alternate',
+    x: number,
+    y: number,
+    gesture: 'tap' | 'hold' | 'drag',
+    _dragDistance: number,
+    _holdSeconds: number,
+  ): void {
+    if (!this.activeGesture || this.activeGesture.button !== button) return;
+
+    if (this.activeGesture.mode === 'hold-observe' || gesture === 'hold') {
+      this.selectTool('observe');
+      this.simulation.setToolEngaged(false, x, y);
+      this.activeGesture = null;
+      return;
+    }
+
+    if (gesture === 'drag' || this.activeGesture.mode === 'drag-influence') {
+      this.activeGesture = null;
+      return;
+    }
+
+    const tool = button === 'alternate'
+      ? this.pickAlternateTapTool({ x, y })
+      : this.pickPrimaryTapTool({ x, y });
+    this.selectTool(tool);
+    this.simulation.setToolEngaged(true, x, y);
+    this.simulation.setToolEngaged(false, x, y);
+    this.activeGesture = null;
+  }
+
+  private pickPrimaryTapTool(position: Vec2): ToolType {
+    const context = this.getInteractionContext(position);
+    if (context.entityDensity > 0.3 || context.fruitDensity < 0.14) {
+      return this.pickAvailableTool(['feed', 'grow', 'repel']);
+    }
+    if (context.fertility < 0.38) return this.pickAvailableTool(['grow', 'feed', 'repel']);
+    return this.pickAvailableTool(['grow', 'feed', 'repel']);
+  }
+
+  private pickAlternateTapTool(position: Vec2): ToolType {
+    const context = this.getInteractionContext(position);
+    if (context.entityDensity > 0.34 || context.threat > 0.36) {
+      return this.pickAvailableTool(['disrupt', 'repel', 'feed']);
+    }
+    return this.pickAvailableTool(['repel', 'disrupt', 'feed']);
+  }
+
+  private pickAvailableTool(preferences: ToolType[]): ToolType {
+    const unlocked = this.latestSnapshot?.tool.unlocked ?? ['observe', 'grow'];
+    const found = preferences.find((tool) => unlocked.includes(tool));
+    return found ?? (unlocked[0] ?? 'observe');
+  }
+
+  private getInteractionContext(position: Vec2): {
+    entityDensity: number;
+    fruitDensity: number;
+    fertility: number;
+    threat: number;
+  } {
+    const snapshot = this.latestSnapshot;
+    if (!snapshot) {
+      return { entityDensity: 0, fruitDensity: 0, fertility: 0.5, threat: 0 };
+    }
+
+    const radius = 230;
+    const nearbyEntities = snapshot.entities.filter((entity) => {
+      const deltaX = this.wrappedDelta(position.x, entity.position.x, WORLD_WIDTH);
+      const deltaY = this.wrappedDelta(position.y, entity.position.y, WORLD_HEIGHT);
+      return Math.hypot(deltaX, deltaY) <= radius;
+    }).length;
+    const nearbyFood = snapshot.particles.filter((particle) => {
+      const deltaX = this.wrappedDelta(position.x, particle.position.x, WORLD_WIDTH);
+      const deltaY = this.wrappedDelta(position.y, particle.position.y, WORLD_HEIGHT);
+      return Math.hypot(deltaX, deltaY) <= radius;
+    }).length;
+    const nearestTerrain = this.findNearestTerrainCell(snapshot.terrain, position);
+
+    return {
+      entityDensity: clamp(nearbyEntities / 18, 0, 1),
+      fruitDensity: clamp(nearbyFood / 14, 0, 1),
+      fertility: nearestTerrain?.fertility ?? snapshot.stats.growth,
+      threat: snapshot.stats.threat,
+    };
+  }
+
+  private findNearestTerrainCell(cells: TerrainCell[], position: Vec2): TerrainCell | null {
+    let bestCell: TerrainCell | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const cell of cells) {
+      const deltaX = this.wrappedDelta(position.x, cell.center.x, WORLD_WIDTH);
+      const deltaY = this.wrappedDelta(position.y, cell.center.y, WORLD_HEIGHT);
+      const dist = Math.hypot(deltaX, deltaY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestCell = cell;
+      }
+    }
+    return bestCell;
   }
 
   private cycleInterpretationMode(): void {
@@ -274,6 +429,7 @@ export class App {
     this.syncCamera();
 
     const snapshot = this.simulation.getSnapshot();
+    this.latestSnapshot = snapshot;
     const audioStart = performance.now();
     this.audio.update(snapshot, this.settings);
     this.perfStats.audioUpdateTimeMs = performance.now() - audioStart;
