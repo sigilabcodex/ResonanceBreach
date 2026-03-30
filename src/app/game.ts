@@ -333,7 +333,8 @@ export class App {
     const beforeScale = baseScale * this.cameraTarget.zoom;
     const worldX = this.cameraTarget.center.x + (clientX - rect.left - rect.width * 0.5) / beforeScale;
     const worldY = this.cameraTarget.center.y + (clientY - rect.top - rect.height * 0.5) / beforeScale;
-    const newZoom = clamp(this.cameraTarget.zoom * (1 - deltaY * CAMERA_ZOOM_SPEED), CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
+    const zoomFactor = Math.exp(-deltaY * CAMERA_ZOOM_SPEED);
+    const newZoom = clamp(this.cameraTarget.zoom * zoomFactor, CAMERA_MIN_ZOOM, CAMERA_MAX_ZOOM);
     const afterScale = baseScale * newZoom;
 
     this.cameraTarget.zoom = newZoom;

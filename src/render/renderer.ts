@@ -1,4 +1,4 @@
-import { GAME_TITLE, WORLD_HEIGHT, WORLD_WIDTH, type EntityType, type TerrainType, type ToolType } from '../config';
+import { CAMERA_MAX_ZOOM, CAMERA_MIN_ZOOM, GAME_TITLE, WORLD_HEIGHT, WORLD_WIDTH, type EntityType, type TerrainType, type ToolType } from '../config';
 import type { AudioDebugState } from '../audio/audioEngine';
 import type { GameSettings } from '../settings';
 import type { Attractor, CameraState, Entity, EventBurst, FeedParticle, PerformanceStats, Residue, SimulationSnapshot, TerrainCell, ToolField, Vec2 } from '../types/world';
@@ -88,6 +88,7 @@ export class Renderer {
     if (settings.visuals.terrainLines) {
       this.drawTerrain(snapshot.terrain, snapshot.camera, snapshot.time, settings);
       this.drawEnvironmentalFlows(snapshot.terrain, snapshot.camera, snapshot.time, settings);
+      this.drawWorldDepthCue(snapshot.camera, snapshot.time);
     }
     this.drawAttractors(snapshot.attractors, snapshot.camera);
     this.drawResidues(snapshot.residues, snapshot.camera);
@@ -114,6 +115,16 @@ export class Renderer {
     };
   }
 
+
+  private getZoomLod(zoom: number): { normalized: number; far: number; close: number } {
+    const normalized = clamp((zoom - CAMERA_MIN_ZOOM) / Math.max(0.0001, CAMERA_MAX_ZOOM - CAMERA_MIN_ZOOM), 0, 1);
+    return {
+      normalized,
+      far: clamp((0.38 - zoom) / 0.3, 0, 1),
+      close: clamp((zoom - 1.45) / 2.2, 0, 1),
+    };
+  }
+
   private isVisible(position: Vec2, padding = 0): boolean {
     const screenX = position.x * this.view.scale + this.view.offsetX;
     const screenY = position.y * this.view.scale + this.view.offsetY;
@@ -134,11 +145,25 @@ export class Renderer {
 
   private drawBackdrop(snapshot: SimulationSnapshot, width: number, height: number, settings: GameSettings): void {
     const { ctx } = this;
+    const lod = this.getZoomLod(snapshot.camera.zoom);
     const base = ctx.createLinearGradient(0, 0, 0, height);
     base.addColorStop(0, 'rgba(4, 10, 14, 1)');
-    base.addColorStop(0.5, 'rgba(3, 7, 11, 1)');
+    base.addColorStop(0.55, 'rgba(3, 7, 11, 1)');
     base.addColorStop(1, 'rgba(1, 4, 8, 1)');
     ctx.fillStyle = base;
+    ctx.fillRect(0, 0, width, height);
+
+    const groundCue = ctx.createLinearGradient(0, height * 0.22, 0, height);
+    groundCue.addColorStop(0, `rgba(40, 60, 74, ${0.025 + lod.far * 0.05})`);
+    groundCue.addColorStop(1, `rgba(6, 10, 14, ${0.18 + lod.far * 0.08})`);
+    ctx.fillStyle = groundCue;
+    ctx.fillRect(0, 0, width, height);
+
+    const vignetteAlpha = 0.08 + lod.far * 0.06;
+    const vignette = ctx.createRadialGradient(width * 0.5, height * 0.55, Math.min(width, height) * 0.2, width * 0.5, height * 0.55, Math.max(width, height) * 0.8);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, `rgba(0, 0, 0, ${vignetteAlpha})`);
+    ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, width, height);
 
     const motion = settings.visuals.reduceMotion ? 0.18 : 1;
@@ -174,9 +199,10 @@ export class Renderer {
   private drawTerrain(samples: TerrainCell[], camera: CameraState, time: number, settings: GameSettings): void {
     const { ctx } = this;
     const motion = settings.visuals.reduceMotion ? 0.2 : 1;
-    const zoomDetail = clamp((camera.zoom - 0.24) / (2.4 - 0.24), 0, 1);
-    const microVisibility = 0.22 + zoomDetail * 0.98;
-    const macroVisibility = 1.08 - zoomDetail * 0.18;
+    const lod = this.getZoomLod(camera.zoom);
+    const zoomDetail = lod.normalized;
+    const microVisibility = 0.08 + zoomDetail * 1.1;
+    const macroVisibility = 1.18 - lod.close * 0.2;
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -193,13 +219,14 @@ export class Renderer {
       const mesoField = clamp(sample.meso * 0.62 + sample.slope * 0.22 + sample.habitatWeights.basin * 0.16, 0, 1);
       const detailField = clamp(sample.micro * 0.62 + sample.roughness * 0.22 + sample.density * 0.1 + sample.resonance * 0.06, 0, 1);
       const majorCount = Math.max(1, Math.min(4, Math.round((1 + macroField * 2.8 + mesoField * 0.8 + sample.habitatWeights.highland * 0.5) * macroVisibility)));
-      const minorCount = Math.max(1, Math.min(6, Math.round((1 + mesoField * 2.4 + detailField * 2 + moistureWeight * 0.8) * (0.72 + zoomDetail * 0.48))));
+      const farMinorSuppression = 1 - lod.far * 0.8;
+      const minorCount = Math.max(0, Math.min(6, Math.round((1 + mesoField * 2.4 + detailField * 2 + moistureWeight * 0.8) * (0.6 + zoomDetail * 0.55) * farMinorSuppression)));
       const majorSpacing = sample.radius * clamp(0.12 + dryWeight * 0.1 + macroField * 0.05 + sample.habitatWeights.highland * 0.03, 0.1, 0.24);
       const minorSpacing = sample.radius * clamp(0.045 + dryWeight * 0.032 + (1 - sample.slope) * 0.02 + detailField * 0.012, 0.04, 0.11);
       const majorHalfLength = sample.radius * (0.24 + macroField * 0.2 + mesoField * 0.08);
       const minorHalfLength = sample.radius * (0.12 + mesoField * 0.11 + detailField * 0.15 + sample.habitatWeights.wetland * 0.03);
 
-      const ecologicalColor = this.getEcologicalTerrainColor(sample, density);
+      const ecologicalColor = this.getEcologicalTerrainColor(sample, density, lod.far);
       ctx.strokeStyle = ecologicalColor.majorStroke;
       ctx.lineWidth = 0.74 + sample.slope * 0.22 + sample.habitatWeights.highland * 0.24 + dryWeight * 0.1;
       for (let band = 0; band < majorCount; band += 1) {
@@ -210,8 +237,10 @@ export class Renderer {
         this.drawCallEstimate += 1;
       }
 
-      ctx.strokeStyle = ecologicalColor.minorStroke;
-      ctx.lineWidth = (0.26 + sample.slope * 0.08 + moistureWeight * 0.11 + detailField * 0.08) * microVisibility;
+      if (minorCount > 0) {
+        ctx.strokeStyle = ecologicalColor.minorStroke;
+        ctx.lineWidth = (0.24 + sample.slope * 0.08 + moistureWeight * 0.1 + detailField * 0.07) * microVisibility;
+      }
       for (let band = 0; band < minorCount; band += 1) {
         const spacingVariation = Math.cos(sample.index * 0.23 + band * 1.1) * sample.radius * 0.01;
         const offsetAmount = (band - (minorCount - 1) * 0.5) * minorSpacing + spacingVariation + asymmetry * sample.radius * 0.02;
@@ -227,9 +256,45 @@ export class Renderer {
     ctx.restore();
   }
 
+  private drawWorldDepthCue(camera: CameraState, time: number): void {
+    const { ctx } = this;
+    const lod = this.getZoomLod(camera.zoom);
+    const lineAlpha = 0.018 + lod.far * 0.035;
+    if (lineAlpha < 0.02) return;
+
+    const spanX = WORLD_WIDTH / 12;
+    const spanY = WORLD_HEIGHT / 10;
+    const phaseX = (camera.center.x + time * 0.02) % spanX;
+    const phaseY = (camera.center.y - time * 0.015) % spanY;
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(138, 174, 188, ${lineAlpha})`;
+    ctx.lineWidth = 0.9;
+
+    for (let x = -phaseX; x <= WORLD_WIDTH + spanX; x += spanX) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, WORLD_HEIGHT);
+      ctx.stroke();
+      this.drawCallEstimate += 1;
+    }
+
+    ctx.strokeStyle = `rgba(112, 148, 166, ${lineAlpha * 0.86})`;
+    for (let y = -phaseY; y <= WORLD_HEIGHT + spanY; y += spanY) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(WORLD_WIDTH, y);
+      ctx.stroke();
+      this.drawCallEstimate += 1;
+    }
+
+    ctx.restore();
+  }
+
   private drawEnvironmentalFlows(samples: TerrainCell[], camera: CameraState, time: number, settings: GameSettings): void {
     const { ctx } = this;
     const motion = settings.visuals.reduceMotion ? 0.14 : 1;
+    const lod = this.getZoomLod(camera.zoom);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -241,15 +306,15 @@ export class Renderer {
       const windStrength = clamp(Math.hypot(sample.flowTendency.x, sample.flowTendency.y), 0, 1.4);
       const basinWater = clamp(sample.habitatWeights.wetland * 0.7 + sample.habitatWeights.basin * 0.45 + (sample.terrain === 'water' ? 0.35 : 0), 0, 1.5);
       const moistureSoftness = clamp(0.6 + sample.moisture * 0.72 + sample.habitatWeights.wetland * 0.3, 0.6, 1.5);
-      const alpha = sample.terrain === 'water'
+      const alpha = (sample.terrain === 'water'
         ? 0.05 + sample.resonance * 0.02 + basinWater * 0.022
         : sample.terrain === 'fertile'
           ? 0.024 + sample.nutrient * 0.02 + sample.habitatWeights.basin * 0.012
-          : 0.012 + sample.density * 0.012;
+          : 0.012 + sample.density * 0.012) * (0.65 + lod.normalized * 0.35);
       ctx.strokeStyle = rgba(accent, alpha / moistureSoftness);
       ctx.lineWidth = (0.28 + basinWater * 0.16 + sample.moisture * 0.08) * (1 + windStrength * 0.05);
 
-      const streamCount = Math.max(1, Math.round(1 + sample.moisture * 1.2 + sample.habitatWeights.wetland * 1.4 + sample.habitatWeights.basin * 1 + windStrength * 0.7));
+      const streamCount = Math.max(0, Math.round((1 + sample.moisture * 1.2 + sample.habitatWeights.wetland * 1.4 + sample.habitatWeights.basin * 1 + windStrength * 0.7) * (0.35 + lod.normalized * 0.75)));
       for (let stream = 0; stream < streamCount; stream += 1) {
         this.traceFlowLine(center, sample, time * motion, stream);
         ctx.stroke();
@@ -363,7 +428,7 @@ export class Renderer {
     }
   }
 
-  private getEcologicalTerrainColor(sample: TerrainCell, density: number): { majorStroke: string; minorStroke: string; hue: number } {
+  private getEcologicalTerrainColor(sample: TerrainCell, density: number, farLod: number): { majorStroke: string; minorStroke: string; hue: number } {
     const waterWeight = clamp((sample.terrain === 'water' ? 0.55 : 0) + sample.habitatWeights.wetland * 0.6 + sample.moisture * 0.24, 0, 1);
     const fertilityWeight = clamp(sample.fertility * 0.64 + sample.nutrient * 0.24 + sample.habitatWeights.basin * 0.3, 0, 1);
     const decayWeight = clamp(sample.roughness * 0.48 + (1 - sample.stability) * 0.54 + sample.habitatWeights.highland * 0.16, 0, 1);
@@ -378,8 +443,8 @@ export class Renderer {
     const saturation = 7 + normalizedWater * 4 + normalizedFertility * 2 + normalizedDecay * 3;
     const lightness = 52 + sample.nutrient * 4 - sample.habitatWeights.highland * 2 + normalizedWater * 2;
     const moistureSoftness = clamp(0.5 + sample.moisture * 0.7 + sample.habitatWeights.wetland * 0.35, 0.5, 1.35);
-    const majorAlpha = (0.032 + density * 0.016 + sample.slope * 0.015 + sample.habitatWeights.basin * 0.01) / moistureSoftness;
-    const minorAlpha = (0.017 + density * 0.012 + sample.moisture * 0.01) / (moistureSoftness * 1.1);
+    const majorAlpha = ((0.036 + density * 0.016 + sample.slope * 0.017 + sample.habitatWeights.basin * 0.012) * (1 + farLod * 0.26)) / moistureSoftness;
+    const minorAlpha = ((0.016 + density * 0.011 + sample.moisture * 0.009) * (1 - farLod * 0.42)) / (moistureSoftness * 1.1);
     return {
       majorStroke: hsla(hue, saturation, lightness, majorAlpha),
       minorStroke: hsla(hue + 2, saturation - 1, lightness + 1, minorAlpha),
@@ -684,6 +749,8 @@ export class Renderer {
 
   private drawEntityAuras(entities: Entity[], camera: CameraState): void {
     const { ctx } = this;
+    const lod = this.getZoomLod(camera.zoom);
+    if (lod.far > 0.72) return;
     ctx.save();
     for (const entity of entities) {
       if (entity.activity < 0.14 && entity.visualPulse < 0.1 && entity.pollination < 0.18) continue;
@@ -692,8 +759,9 @@ export class Renderer {
       const color = entityPalette[entity.type];
       const radius = entity.size * (entity.type === 'plant' || entity.type === 'ephemeral' || entity.type === 'canopy' ? 2.8 : entity.type === 'cluster' || entity.type === 'parasite' ? 2.3 : entity.type === 'grazer' ? 2.7 : 2.5) * (0.82 + entity.activity * 0.44 + entity.visualPulse * 0.22 + entity.pollination * 0.08);
       const gradient = ctx.createRadialGradient(position.x, position.y, entity.size * 0.1, position.x, position.y, radius);
-      gradient.addColorStop(0, rgba(color, 0.04 + entity.activity * 0.06 + entity.pollination * 0.03));
-      gradient.addColorStop(0.65, rgba(color, 0.02 + entity.visualPulse * 0.06));
+      const auraStrength = 1 - lod.far * 0.85;
+      gradient.addColorStop(0, rgba(color, (0.04 + entity.activity * 0.06 + entity.pollination * 0.03) * auraStrength));
+      gradient.addColorStop(0.65, rgba(color, (0.02 + entity.visualPulse * 0.06) * auraStrength));
       gradient.addColorStop(1, rgba(color, 0));
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -705,9 +773,16 @@ export class Renderer {
   }
 
   private drawEntities(entities: Entity[], camera: CameraState, time: number, settings: GameSettings): void {
+    const lod = this.getZoomLod(camera.zoom);
     for (const entity of entities) {
       const position = this.wrappedPoint(entity.position, camera);
       if (!this.isVisible(position, entity.size * this.view.scale * 4 + 28)) continue;
+
+      if (lod.far > 0.52) {
+        this.drawEntityGlyph(entity, position, lod.far);
+        continue;
+      }
+
       if (entity.type === 'flocker') this.drawFlocker(entity, position, time, camera, settings);
       else if (entity.type === 'cluster' || entity.type === 'parasite') this.drawCluster(entity, position, time, camera, settings);
       else if (entity.type === 'grazer') this.drawGrazer(entity, position, time, camera, settings);
@@ -716,12 +791,34 @@ export class Renderer {
     }
   }
 
+  private drawEntityGlyph(entity: Entity, position: Vec2, farLod: number): void {
+    const { ctx } = this;
+    const color = entityPalette[entity.type];
+    const alpha = (0.2 + entity.activity * 0.22 + entity.pollination * 0.08) * (0.92 - farLod * 0.35);
+    const radius = entity.size * (0.5 + (1 - farLod) * 0.35);
+
+    ctx.fillStyle = rgba(color, alpha);
+    ctx.beginPath();
+    ctx.arc(position.x, position.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    this.drawCallEstimate += 1;
+
+    if (entity.type === 'cluster' || entity.type === 'parasite' || entity.type === 'canopy') {
+      ctx.strokeStyle = rgba(color, alpha * 0.95);
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(position.x, position.y, radius * 1.7, 0, Math.PI * 2);
+      ctx.stroke();
+      this.drawCallEstimate += 1;
+    }
+  }
+
   private drawFlocker(entity: Entity, position: Vec2, time: number, camera: CameraState, settings: GameSettings): void {
     const { ctx } = this;
     const color = entityPalette.flocker;
     const maturity = Math.min(1, entity.stageProgress * 1.2 + entity.growth * 0.3);
     ctx.save();
-    if (settings.visuals.motionTrails) {
+    if (settings.visuals.motionTrails && camera.zoom > 0.3) {
       for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
         const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
         if (!this.isVisible(trailPoint, 12)) continue;
@@ -764,7 +861,7 @@ export class Renderer {
     const color = entityPalette.cluster;
     const maturity = Math.min(1, entity.stageProgress * 1.18 + entity.growth * 0.22 + entity.memory * 0.18);
     ctx.save();
-    if (settings.visuals.motionTrails) {
+    if (settings.visuals.motionTrails && camera.zoom > 0.36) {
       for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
         const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
         if (!this.isVisible(trailPoint, 12)) continue;
@@ -810,7 +907,7 @@ export class Renderer {
     const color = entityPalette.grazer;
     const maturity = Math.min(1, entity.stageProgress * 1.1 + entity.growth * 0.26 + entity.food * 0.18);
     ctx.save();
-    if (settings.visuals.motionTrails) {
+    if (settings.visuals.motionTrails && camera.zoom > 0.42) {
       for (let i = entity.trail.length - 1; i >= 0; i -= 1) {
         const trailPoint = this.wrappedPoint(entity.trail[i] as Vec2, camera);
         if (!this.isVisible(trailPoint, 14)) continue;
