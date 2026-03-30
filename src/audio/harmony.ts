@@ -48,6 +48,9 @@ export interface HarmonicField {
   driftPhase: number;
   driftAmount: number;
   tonicDriftSemitones: number;
+  modalColorDrift: number;
+  rootStability: number;
+  consonanceBias: number;
   degreeWeights: number[];
   stableDegreeWeights: number[];
   emphasis: HarmonicEmphasis;
@@ -95,8 +98,11 @@ const createField = (snapshot: SimulationSnapshot, ecological: EcologicalMusicSt
   const tension = ecological?.interpretation.tension ?? snapshot.stats.threat;
   const richness = ecological?.interpretation.harmonicRichness ?? snapshot.stats.harmony;
   const driftSource = ecological?.composition.harmonicDrift ?? 0.1;
-  const driftAmount = clamp(0.06 + driftSource * 0.2, 0.06, 0.24);
+  const driftAmount = clamp(0.05 + driftSource * 0.16, 0.05, 0.2);
   const driftPhase = snapshot.time * (0.0018 + (ecological?.composition.evolutionSpeed ?? 0.1) * 0.0024) + richness * 0.8;
+  const rootStability = clamp(0.54 + stability * 0.32 - tension * 0.22, 0.42, 0.92);
+  const consonanceBias = clamp(0.52 + stability * 0.28 + (1 - tension) * 0.2 + richness * 0.08, 0.52, 0.96);
+  const modalColorDrift = Math.sin((driftPhase * 0.63 + richness * 0.28) * Math.PI * 2) * driftAmount * 0.42;
 
   const stableWeights = mode.map((_, idx) => {
     if (idx === 0) return 1.16;
@@ -114,17 +120,26 @@ const createField = (snapshot: SimulationSnapshot, ecological: EcologicalMusicSt
     const driftWave = 0.5 + Math.sin((driftPhase + degreeNorm * 0.64) * Math.PI * 2) * 0.5;
     const driftBias = driftWave * driftAmount;
     const calmLift = (1 - tension) * stableWeights[idx] * 0.34;
-    const tensionLift = tension * tensionWeights[idx] * 0.18;
-    const stabilityLift = stability * (idx === 0 || idx === 2 ? 0.2 : 0.08);
-    return 0.14 + stableWeights[idx] * 0.26 + driftBias + calmLift + tensionLift + stabilityLift;
+    const tensionLift = tension * tensionWeights[idx] * 0.12;
+    const stabilityLift = stability * (idx === 0 || idx === 2 ? 0.26 : 0.1);
+    const tonicLift = idx === 0 ? rootStability * 0.26 : 0;
+    const modalLift = idx === 1 || idx === mode.length - 1 ? modalColorDrift : modalColorDrift * 0.45;
+    return 0.14 + stableWeights[idx] * 0.26 + driftBias + calmLift + tensionLift + stabilityLift + tonicLift + modalLift;
   });
 
-  const stableDegreeWeights = mode.map((_, idx) => stableWeights[idx] + (1 - tension) * 0.2 + stability * 0.14);
+  const stableDegreeWeights = mode.map((_, idx) => {
+    const rootBias = idx === 0 ? rootStability * 0.38 : 0;
+    const degreeConsonance = idx === 0 || idx === 2 || idx === 3 ? consonanceBias * 0.22 : consonanceBias * 0.08;
+    return stableWeights[idx] + (1 - tension) * 0.2 + stability * 0.14 + rootBias + degreeConsonance;
+  });
 
   return {
     driftPhase,
     driftAmount,
-    tonicDriftSemitones: Math.sin(driftPhase * Math.PI * 2) * (0.2 + driftAmount * 0.8),
+    tonicDriftSemitones: Math.sin(driftPhase * Math.PI * 2) * (0.12 + driftAmount * 0.44) * (1 - rootStability * 0.34),
+    modalColorDrift,
+    rootStability,
+    consonanceBias,
     degreeWeights,
     stableDegreeWeights,
     emphasis: {
