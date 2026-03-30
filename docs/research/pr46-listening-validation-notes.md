@@ -1,39 +1,40 @@
 # PR #46 listening validation notes
 
-Date: 2026-03-26
+Date: 2026-03-29
 
 ## Validation approach
 
-- Built and ran the current audio stack in development mode.
-- Auditioned transitions across interpretation modes (`raw`, `hybrid`, `musical`).
-- Observed role behavior under mixed ecological activity (bloom-heavy, grazer-heavy, decay-heavy moments).
+- Ran a production build to verify TypeScript/audio code compiles after harmonic-field changes.
+- Manual code-path audit for pitch entry points:
+  - global bed / ecological voices / foreground / lead
+  - phrase notes
+  - world event notes
+  - selection and tool tones
+- Checked that strict snapping is concentrated in musical note events while continuous raw ecology remains comparatively loose.
 
 ## Observed improvements
 
-1. **Tonal coherence improved in musical layer**
-   - Foreground/lead/phrase/event voices now remain within a clear tonal atmosphere.
-   - Random-looking dissonant jumps are reduced compared with prior contour-only mapping.
+1. **Musical note events now stay in one tonal world**
+   - Phrase, event, selection, and tool note paths all pass through harmony-aware role-zone snapping.
+   - This sharply reduces accidental out-of-field tones in the foreground layer.
 
-2. **Pleasantness bias is audible**
-   - Tonic and stable scale members recur enough to sound intentional.
-   - Tension notes still occur, but less often and with gentler weight.
+2. **Pleasantness bias is explicit**
+   - Degree scoring now combines stable anchors + dynamic degree weights + mild tension weighting.
+   - Tonic/stable members are naturally favored while still allowing occasional color tones.
 
-3. **Slow harmonic climate drift**
-   - Harmonic emphasis evolves gradually over long windows.
-   - Mode color shifts are subtle and infrequent; no abrupt “song-chord” jumps.
+3. **Slow tonal drift is calmer and more continuous**
+   - Very slow mode rotation and tonic-adjacent drift create long-horizon evolution.
+   - No abrupt progression/chord-engine behavior was introduced.
 
-4. **Role-aware register identity**
-   - Bloom material tends to sit higher and sustained.
-   - Grazers remain more grounded midrange.
-   - Pollinators tend brighter/upper material.
-   - Decay/decomposer material stays lower-mid/low and sparse.
+4. **Role-aware register identity is stronger**
+   - Added dedicated pitch zones for rooted/drifter/predator/decomposer in addition to ecological roles.
+   - Event and phrase paths now map role semantics into those zones before rendering pitch.
 
-5. **Raw-vs-musical separation retained**
-   - Raw ecology remains less tightly quantized.
-   - Musical layer is noticeably more constrained and legible than raw/hybrid beds.
+5. **Raw ecology remains less rigid**
+   - Continuous bed/ecology oscillators still use lower pitch-tightness than musical note events.
+   - The system preserves ecological unpredictability and textural motion.
 
 ## Remaining caveats
 
-- Some predator/decomposer events can still produce momentary edge/roughness by timbre (intentional), though they now remain tonally bounded.
-- Phrase logic is still simple; future PRs can improve call/response structure and motif evolution.
-
+- Predators/decomposers remain intentionally darker/rougher by timbre; this is now mostly timbral edge rather than tonal collision.
+- Further listening polish can tune role-zone boundaries and degree weights by ear over longer sessions.

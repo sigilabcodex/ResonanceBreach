@@ -1,47 +1,57 @@
 # PR #46 design/dev note — harmonic field and pleasant note selection
 
-## Current pitch behavior (pre-change inspection)
+Date: 2026-03-29
 
-After inspecting `src/audio/audioEngine.ts`, `src/audio/harmony.ts`, `src/audio/ecologicalMusic.ts`, and `src/audio/musicalInterpreter.ts`:
+## Mandatory inspection summary (pre-change)
 
-- Pitch is primarily chosen through `getHarmonyFrequency(...)` from `harmony.ts`, which maps a normalized contour to a mode degree index and octave offset.
-- The current harmony model provides:
-  - a mode choice (`ionian/suspended/dorian/aeolian/lydian pentatonic`),
-  - a root MIDI center,
-  - layer-specific degree sequences (`bed/plant/cluster/mobile/event/water`).
-- The ecological system (`ecologicalMusic.ts`) already computes slow-moving composition controls (`tonalCenter`, `harmonicDrift`, `mode`, `voice register/presence/motion`) from world state.
-- Interpretation mode (`raw/hybrid/musical`) currently affects intensity/quantize/timbral bias and bus mixing, but **does not yet deeply change note selection quality**.
+Inspected before coding:
 
-## Why the result still can drift away from “consistently musical”
+- note event system in `src/audio/noteEvents.ts` (ADSR, trigger gating, pulse alignment)
+- pitch selection and scheduling in `src/audio/audioEngine.ts`
+- role/species pitch behavior in `src/audio/audioEngine.ts` + `src/audio/ecologicalMusic.ts`
+- interpretation mode logic in `src/audio/musicalInterpreter.ts` and `src/audio/audioEngine.ts`
+- harmony helpers in `src/audio/harmony.ts`
 
-- Pitch mapping is deterministic but still relatively coarse (contour-to-index), so multiple voices can land on less intentional combinations over time.
-- There is no explicit “pleasantness bias” toward tonic/chord-like anchors versus tensions.
-- Event/environment pulses still include direct raw frequency formulas in places (e.g., fixed Hz plus intensity terms) that bypass deeper harmonic logic.
-- Slow drift exists in ecology metrics, but there is no explicit harmonic-climate layer that carries weighted degree emphasis over long timescales.
-- Register tendencies exist partially (e.g., per-role register values), but role-aware ranges are not enforced as an explicit pitch-zone policy across musical voices.
+## Current pitch behavior
 
-## Where harmonic field should live
+1. Most tonal material routes through `getHarmonyFrequency(...)` in `harmony.ts`.
+2. Harmony already has a root + mode + layer degree maps (mostly pentatonic-friendly).
+3. Some musical notes are further constrained with `quantizeToRoleZone(...)` (not universal).
+4. Raw ecology beds/foreground oscillators still follow looser contour mapping and are intentionally less constrained.
+5. Interpretation mode changes bus mix/intensity/quantize feel, but not a strong explicit “pleasantness bias” policy at note-pick time.
 
-- `src/audio/harmony.ts` should host a lightweight global harmonic-field model:
-  - tonic/root,
-  - selected ambient-friendly scale/mode,
-  - weighted degree bias (stable tones + consonant tensions),
-  - slow drift phase/rate,
-  - role-aware register zone hints.
-- `src/audio/audioEngine.ts` should consume this field when generating musical notes and selectively loosen constraints for raw ecology layers.
+## Where arbitrary/rough behavior still dominates
 
-## What this PR will implement
+- Event/phrase/tool/selection paths can still lean on contour + local transforms without a shared explicit degree-emphasis profile.
+- Quantization exists but is nearest-candidate biased; it does not explicitly prefer stable degrees (tonic/third/fifth-like anchors) over tension degrees.
+- Harmonic drift exists mostly as per-degree weight wobble and mode rotation; tonic movement and climate emphasis are still limited.
+- Role register constraints exist for ecological roles (`bloom/grazer/pollinator/decay`) but not as a wider pitch-role vocabulary that includes rooted/drifter/predator/decomposer semantics.
 
-1. Extend harmony state with a harmonic field (degree weights, drift phase, role pitch zones).
-2. Add pleasant note quantization/snapping helpers (MIDI-level snapping with weighted degree preference).
-3. Route musical-layer note generation through harmonic snapping and role-aware register zones.
-4. Add subtle slow harmonic drift (degree emphasis + gentle mode-family evolution).
-5. Keep raw ecology layer less constrained than musical foreground by applying lower harmonic-tightness in raw interpretation.
+## Where to insert harmonic constraints safely
 
-## Out of scope for this PR
+- Keep the global harmonic policy in `src/audio/harmony.ts`:
+  - ambient-safe mode pool
+  - harmonic emphasis (stable/tension degree weights)
+  - weighted snapping helpers
+  - slow tonal drift (degree emphasis + tonic-adjacent drift)
+  - role-aware pitch zones
+- Apply stronger constraints only to the musical foreground/event/phrase paths in `src/audio/audioEngine.ts`.
+- Keep the raw ecology layer less constrained by using lower tightness and avoiding hard snapping for bed-like/continuous textures.
 
-- Full chord-progression/composition engine.
-- Full redesign of phrase architecture and all instruments.
-- Genre-specific arranging rules or user-facing advanced harmony controls.
-- Forcing all raw/noise/ecology layers into strict pitch quantization.
+## PR #46 implementation scope
 
+In scope:
+
+1. global harmonic center refinements (mode + tonic + emphasis)
+2. harmonic pleasantness bias for note choice
+3. constrained/snapped note selection for musical note events
+4. very slow tonal drift (modal color + tonic-adjacent movement)
+5. expanded role-aware pitch zones used during snapping
+6. listening validation notes update
+
+Out of scope:
+
+- chord-progression engine
+- strict DAW-like quantization
+- removing ecological unpredictability
+- heavy dependencies or large architecture rewrite

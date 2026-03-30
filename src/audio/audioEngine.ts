@@ -4,7 +4,13 @@ import type { GameSettings } from '../settings';
 import type { SimulationSnapshot, ToolState, Vec2 } from '../types/world';
 import { createEcologicalMusicState, type EcologicalMusicState, type EcologicalVoiceRole } from './ecologicalMusic';
 import { createAudioFocusContext, scoreEntities, selectForegroundVoices, type AudioFocusContext, type ScoredEntity } from './salience';
-import { createHarmonyState, getHarmonyFrequency, quantizeToRoleZone, type HarmonyState } from './harmony';
+import {
+  createHarmonyState,
+  getHarmonyFrequency,
+  quantizeToRoleZone,
+  type HarmonicPitchRole,
+  type HarmonyState,
+} from './harmony';
 import { createAudioBusLayout, type AudioBusLayout } from './audioBuses';
 import { createMusicalInterpreter, type MusicalInterpretationMode } from './musicalInterpreter';
 import {
@@ -984,7 +990,7 @@ export class AudioEngine {
     osc.type = settings.waveform;
     const baseEventFreq = getHarmonyFrequency(harmony, settings.layer, settings.contour, settings.octave, this.getPitchTightness('music'));
     const baseEventMidi = 69 + 12 * Math.log2(baseEventFreq / 440);
-    const zoneMidi = quantizeToRoleZone(baseEventMidi, harmony, settings.voiceRole, this.getPitchTightness('music'));
+    const zoneMidi = quantizeToRoleZone(baseEventMidi, harmony, this.toHarmonicPitchRole(settings.role), this.getPitchTightness('music'));
     const rangedMidi = clamp(zoneMidi, settings.instrument.pitchRange.minMidi, settings.instrument.pitchRange.maxMidi);
     const pitchHz = 440 * 2 ** ((rangedMidi - 69) / 12);
     const noteEvent = this.createNoteEvent({
@@ -1155,6 +1161,19 @@ export class AudioEngine {
     return `${sourceKind}:${sourceId}`;
   }
 
+
+  private toHarmonicPitchRole(role: OrchestrationRole | EcologicalVoiceRole): HarmonicPitchRole {
+    if (role === 'bloom') return 'bloom';
+    if (role === 'grazer') return 'grazer';
+    if (role === 'pollinator') return 'pollinator';
+    if (role === 'predator') return 'predator';
+    if (role === 'decomposer') return 'decomposer';
+    if (role === 'atmosphere') return 'drifter';
+    if (role === 'mixed') return 'mixed';
+    if (role === 'decay') return 'decay';
+    return 'mixed';
+  }
+
   private createNoteEvent(input: {
     pitchHz: number;
     duration: number;
@@ -1202,10 +1221,13 @@ export class AudioEngine {
     }[tool.active];
 
     const baseFreq = getHarmonyFrequency(harmony, tool.active === 'observe' ? 'event' : tool.active === 'grow' ? 'plant' : tool.active === 'feed' ? 'mobile' : 'cluster', settings.contour, settings.octave);
+    const baseMidi = 69 + 12 * Math.log2(baseFreq / 440);
+    const snappedMidi = quantizeToRoleZone(baseMidi, harmony, tool.active === 'disrupt' ? 'predator' : tool.active === 'observe' ? 'drifter' : tool.active === 'grow' ? 'rooted' : 'grazer', this.getPitchTightness('music'));
+    const snappedFreq = 440 * 2 ** ((snappedMidi - 69) / 12);
     osc.type = settings.type;
-    osc.frequency.value = baseFreq * (1 + intensity * 0.08);
+    osc.frequency.value = snappedFreq * (1 + intensity * 0.04);
     filter.type = tool.active === 'observe' ? 'highpass' : 'bandpass';
-    filter.frequency.value = baseFreq * settings.filterScale;
+    filter.frequency.value = snappedFreq * settings.filterScale;
     filter.Q.value = settings.q;
     pan.pan.value = clamp((tool.worldPosition.x - 1200) / 1200, -0.75, 0.75);
 
@@ -1290,13 +1312,26 @@ export class AudioEngine {
     const jitter = (Math.random() * 2 - 1) * (0.04 + entity.activity * 0.05) + novelty * 0.08;
     const contour = clamp(stateContour + activityLift + jitter, 0, 1);
     const octave = entity.stage === 'decay' ? -1 : entity.type === 'flocker' ? 1 : 0;
-    const frequency = getHarmonyFrequency(harmony, roleLayer, contour, octave);
-    const glideTarget = getHarmonyFrequency(
+    const frequencyRaw = getHarmonyFrequency(harmony, roleLayer, contour, octave);
+    const glideRaw = getHarmonyFrequency(
       harmony,
       roleLayer,
       clamp(contour + (entity.visualState === 'dying' ? -0.1 : 0.08) + (Math.random() * 2 - 1) * 0.05, 0, 1),
       octave,
     );
+    const selectionRole: HarmonicPitchRole = entity.type === 'predator'
+      ? 'predator'
+      : entity.type === 'parasite' || entity.type === 'cluster'
+        ? 'decomposer'
+        : entity.type === 'plant' || entity.type === 'canopy' || entity.type === 'ephemeral'
+          ? 'rooted'
+          : entity.type === 'flocker'
+            ? 'drifter'
+            : 'grazer';
+    const frequencyMidi = quantizeToRoleZone(69 + 12 * Math.log2(frequencyRaw / 440), harmony, selectionRole, this.getPitchTightness('music'));
+    const glideMidi = quantizeToRoleZone(69 + 12 * Math.log2(glideRaw / 440), harmony, selectionRole, this.getPitchTightness('music'));
+    const frequency = 440 * 2 ** ((frequencyMidi - 69) / 12);
+    const glideTarget = 440 * 2 ** ((glideMidi - 69) / 12);
     const duration = 0.16 + entity.activity * 0.08 + (entity.stage === 'mature' ? 0.05 : 0) + (entity.visualState === 'dying' ? 0.06 : 0);
 
     const osc = this.context.createOscillator();
@@ -1443,9 +1478,18 @@ export class AudioEngine {
         : entity.type === 'predator' || entity.type === 'parasite' || entity.type === 'cluster'
           ? 'decay'
           : 'grazer';
+    const phrasePitchRole: HarmonicPitchRole = entity.type === 'predator'
+      ? 'predator'
+      : entity.type === 'parasite' || entity.type === 'cluster'
+        ? 'decomposer'
+        : entity.type === 'flocker'
+          ? 'drifter'
+          : entity.type === 'plant' || entity.type === 'canopy' || entity.type === 'ephemeral'
+            ? 'rooted'
+            : entityRole;
     const basePhraseFreq = getHarmonyFrequency(harmony, layer, contour, entity.type === 'plant' ? -1 : 1, this.getPitchTightness('music'));
     const basePhraseMidi = 69 + 12 * Math.log2(basePhraseFreq / 440);
-    const snappedPhraseMidi = quantizeToRoleZone(basePhraseMidi, harmony, entityRole, this.getPitchTightness('music'));
+    const snappedPhraseMidi = quantizeToRoleZone(basePhraseMidi, harmony, phrasePitchRole, this.getPitchTightness('music'));
     const noteEvent = this.createNoteEvent({
       pitchHz: 440 * 2 ** ((snappedPhraseMidi - 69) / 12),
       duration,
