@@ -1,6 +1,6 @@
 export const GAME_TITLE = 'Resonance Garden';
-export const WORLD_WIDTH = 3600;
-export const WORLD_HEIGHT = 2400;
+export const WORLD_WIDTH = 7200;
+export const WORLD_HEIGHT = 4800;
 
 export const FIXED_TIMESTEP = 1 / 60;
 export const MAX_FRAME_DELTA = 0.1;
@@ -24,14 +24,14 @@ export const MAX_PARASITES = 12;
 export const MAX_PREDATORS = 0;
 
 export const NEIGHBOR_RADIUS = 164;
-export const CAMERA_MIN_ZOOM = 0.24;
-export const CAMERA_MAX_ZOOM = 2.4;
-export const CAMERA_ZOOM_SPEED = 0.0011;
+export const CAMERA_MIN_ZOOM = 0.09;
+export const CAMERA_MAX_ZOOM = 4.2;
+export const CAMERA_ZOOM_SPEED = 0.00135;
 export const CAMERA_PAN_SPEED = 680;
 export const CAMERA_SMOOTHING = 0.12;
 
-export const TERRAIN_SAMPLE_COLS = 22;
-export const TERRAIN_SAMPLE_ROWS = 14;
+export const TERRAIN_SAMPLE_COLS = 30;
+export const TERRAIN_SAMPLE_ROWS = 20;
 export const ATTRACTOR_COUNT = 4;
 export const BASE_TOOL_RADIUS = 136;
 export const SOFT_BOUNDARY_MARGIN = 220;
