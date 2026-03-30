@@ -94,8 +94,7 @@ input {
 .hud__dock-button,
 .hud__panel-toggle,
 .hud__action,
-.hud__restart,
-.hud__tool {
+.hud__restart {
   border: 1px solid rgba(167, 208, 255, 0.14);
   background: rgba(255, 255, 255, 0.035);
   color: inherit;
@@ -128,7 +127,7 @@ input {
 .hud__module--left {
   top: 82px;
   left: 18px;
-  width: min(460px, calc(100vw - 36px));
+  width: min(380px, calc(100vw - 36px));
 }
 
 .hud__module--right {
@@ -317,46 +316,27 @@ input {
   color: rgba(202, 215, 236, 0.72);
 }
 
-.hud__tool-grid {
+.hud__gesture-list {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
-.hud__tool {
-  border-radius: 22px;
-  padding: 12px 14px;
-  text-align: left;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, opacity 140ms ease;
-}
-
-.hud__tool small {
-  color: rgba(202, 215, 236, 0.62);
+.hud__gesture-list p {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(164, 198, 236, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(212, 226, 240, 0.8);
+  font-size: 0.85rem;
   line-height: 1.35;
 }
 
-.hud__tool.is-active {
-  border-color: rgba(143, 225, 186, 0.28);
-  background: rgba(143, 225, 186, 0.08);
-  transform: translateY(-1px);
+.hud__gesture-list strong {
+  color: rgba(223, 237, 252, 0.95);
 }
 
-.hud__tool.is-blocked {
-  border-color: rgba(255, 154, 186, 0.28);
-  background: rgba(255, 154, 186, 0.08);
-}
-
-.hud__tool.is-locked {
-  opacity: 0.45;
-}
-
-.hud__tool:hover:enabled,
-.hud__tool:focus-visible:enabled,
 .hud__dock-button:hover,
 .hud__dock-button:focus-visible,
 .hud__panel-toggle:hover,
@@ -512,7 +492,7 @@ input {
 .hud.is-reduced-motion .hud__dock-button,
 .hud.is-reduced-motion .hud__panel,
 .hud.is-reduced-motion .hud__minimal,
-.hud.is-reduced-motion .hud__tool {
+.hud.is-reduced-motion .hud__gesture-list p {
   transition: none;
 }
 
@@ -530,7 +510,7 @@ input {
   }
 
   .hud__module--left {
-    width: min(420px, calc(100vw - 24px));
+    width: min(360px, calc(100vw - 24px));
   }
 
   .hud__settings-grid {

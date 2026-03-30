@@ -1,7 +1,7 @@
 import type { AudioDebugState } from '../audio/audioEngine';
 import type { InterpretationStatus } from '../audio/audioEngine';
 import type { MusicalInterpretationMode } from '../audio/musicalInterpreter';
-import { GAME_TITLE, TOOLS, type ToolType } from '../config';
+import { GAME_TITLE } from '../config';
 import { TOOL_DEFINITIONS } from '../interaction/tools';
 import { DEFAULT_SETTINGS, normalizeSettings, type GameSettings } from '../settings';
 import type { Entity, PerformanceStats, SimulationSnapshot, TerrainCell, Vec2 } from '../types/world';
@@ -99,7 +99,6 @@ export class Hud {
   private readonly interpretationOverlayValue: HTMLSpanElement;
   private readonly debugBody: HTMLDivElement;
   private readonly debugSummary: HTMLSpanElement;
-  private readonly toolButtons = new Map<ToolType, HTMLButtonElement>();
   private readonly rangeInputs = new Map<string, HTMLInputElement>();
   private readonly rangeOutputs = new Map<string, HTMLSpanElement>();
   private readonly toggleInputs = new Map<string, HTMLInputElement>();
@@ -116,7 +115,6 @@ export class Hud {
   private lastInterpretationMode: MusicalInterpretationMode | null = null;
 
   constructor(
-    onToolSelect: (tool: ToolType) => void,
     private readonly onSettingsChange: (settings: GameSettings) => void,
     initialSettings: GameSettings = DEFAULT_SETTINGS,
   ) {
@@ -149,10 +147,15 @@ export class Hud {
           <div class="hud__panel-body" data-panel-body="left">
             <div class="hud__tools-card">
               <div class="hud__row hud__row--tools-head">
-                <span>Field tools</span>
-                <span data-tool-hint>1–5 select tools · M cycles interpretation · drag places regions · O opens settings</span>
+                <span>World gestures</span>
+                <span data-tool-hint>tap nurtures · hold listens · drag guides flow · right-click/Shift adds a stronger counter-gesture</span>
               </div>
-              <div class="hud__tool-grid"></div>
+              <div class="hud__gesture-list">
+                <p><strong>Tap</strong> injects support based on local need (grow/feed).</p>
+                <p><strong>Hold</strong> enters ATTENTION to follow an entity or define a listening region.</p>
+                <p><strong>Drag</strong> applies directional influence across space.</p>
+                <p><strong>Right-click / Shift+drag</strong> applies alternate repel/disrupt pressure.</p>
+              </div>
             </div>
           </div>
         </section>
@@ -286,17 +289,6 @@ export class Hud {
 
     this.buildControls();
 
-    const toolGrid = this.element.querySelector('.hud__tool-grid') as HTMLDivElement;
-    TOOLS.forEach((tool, index) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'hud__tool';
-      button.innerHTML = `<span>${index + 1}. ${TOOL_DEFINITIONS[tool].label}</span><small>${TOOL_DEFINITIONS[tool].description}</small>`;
-      button.addEventListener('click', () => onToolSelect(tool));
-      this.toolButtons.set(tool, button);
-      toolGrid.append(button);
-    });
-
     this.element.querySelectorAll<HTMLElement>('[data-collapse-toggle]').forEach((button) => {
       const key = button.dataset.collapseToggle as PanelKey;
       this.panelToggleButtons.set(key, button as HTMLButtonElement);
@@ -367,22 +359,6 @@ export class Hud {
       this.lastInterpretationMode = interpretationStatus.mode;
     }
 
-    for (const tool of TOOLS) {
-      const button = this.toolButtons.get(tool);
-      if (!button) continue;
-      const unlocked = snapshot.tool.unlocked.includes(tool);
-      button.disabled = !unlocked;
-      button.classList.toggle('is-active', snapshot.tool.active === tool);
-      button.classList.toggle('is-locked', !unlocked);
-      button.classList.toggle('is-blocked', snapshot.tool.active === tool && snapshot.tool.blocked);
-      const label = button.querySelector('small');
-      if (label) {
-        if (!unlocked) label.textContent = 'Locked by ecosystem progression';
-        else if (snapshot.tool.active === tool && snapshot.tool.blocked) label.textContent = 'Need more Resonance Energy';
-        else label.textContent = TOOL_DEFINITIONS[tool].description;
-      }
-    }
-
     const latestNotification = snapshot.notifications.recent[0];
 
     if (latestNotification) {
@@ -397,15 +373,11 @@ export class Hud {
     } else if (snapshot.tool.blocked) {
       this.hintValue.textContent = 'Let the field recover before stacking more interventions; low density keeps the garden readable.';
     } else if (snapshot.tool.active === 'observe') {
-      this.hintValue.textContent = 'ATTENTION mode: click an entity to follow and clarify it, drag to create a listening region, and click empty space to clear.';
-    } else if (snapshot.tool.active === 'grow') {
-      this.hintValue.textContent = 'Grow gently enriches soil for several seconds, helping Rooted Blooms mature, fruit, and keep grazers supplied.';
-    } else if (snapshot.tool.active === 'feed') {
-      this.hintValue.textContent = 'Feed releases visible particles. Watch Pollinator Drifters curve toward them and nearby blooms.';
-    } else if (snapshot.tool.active === 'repel') {
-      this.hintValue.textContent = 'Repel opens calm empty space without introducing jitter or abrupt flashes.';
-    } else if (snapshot.tool.active === 'disrupt') {
-      this.hintValue.textContent = 'Disrupt waits, then bursts outward: some entities die into nutrient residue while terrain shifts slightly.';
+      this.hintValue.textContent = 'Hold to listen: follow an entity with a short hold-release, or drag while holding to define a listening region.';
+    } else if (snapshot.tool.active === 'grow' || snapshot.tool.active === 'feed') {
+      this.hintValue.textContent = 'Tap directly in the world to nurture this area; the gesture layer picks growth or feeding pressure from local conditions.';
+    } else if (snapshot.tool.active === 'repel' || snapshot.tool.active === 'disrupt') {
+      this.hintValue.textContent = 'Drag to guide spacing and flow, or use right-click / Shift for a stronger alternate intervention.';
     } else if (snapshot.stats.nutrients > 0.42) {
       this.hintValue.textContent = 'Residue is feeding the soil. Fertile bloom patches should fruit while grazers and Decomposers work the substrate.';
     } else {
@@ -417,8 +389,8 @@ export class Hud {
         ? `Minimal HUD · ${this.interpretationValue.textContent} · following selection · M cycles mode · H restores full HUD · O opens settings`
         : snapshot.attention.mode === 'region'
           ? `Minimal HUD · ${this.interpretationValue.textContent} · listening region active · M cycles mode · H restores full HUD · O opens settings`
-          : `Minimal HUD · ${this.interpretationValue.textContent} · ${TOOL_DEFINITIONS[snapshot.tool.active].label} active · M cycles mode · H restores full HUD · O opens settings`
-      : 'Minimal HUD · M cycles interpretation · H restores the full interface · O opens settings';
+          : `Minimal HUD · ${this.interpretationValue.textContent} · gesture-ready (${TOOL_DEFINITIONS[snapshot.tool.active].label}) · M cycles mode · H restores full HUD · O opens settings`
+      : 'Minimal HUD · tap/hold/drag in-world · M cycles interpretation · H restores the full interface · O opens settings';
 
     this.renderInspectionCard(snapshot);
     this.renderDebugOverlay(snapshot, audioDebug, performanceStats);
