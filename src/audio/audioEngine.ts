@@ -33,6 +33,7 @@ import { createEnvironmentalPulseEvent, mapWorldEventToEcologicalAudioEvents, ty
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const smooth = (previous: number, next: number, amount: number) => lerp(previous, next, clamp(amount, 0, 1));
 const smoothstep = (edge0: number, edge1: number, value: number) => {
   const t = clamp((value - edge0) / (edge1 - edge0 || 1), 0, 1);
   return t * t * (3 - 2 * t);
@@ -64,6 +65,31 @@ type SelectionVoiceMemory = {
   lastAt: number;
 };
 
+type LongFormRegionSignature = {
+  wetland: number;
+  highland: number;
+  basin: number;
+  water: number;
+};
+
+type LongFormState = {
+  calmness: number;
+  tension: number;
+  fertility: number;
+  decay: number;
+  activity: number;
+  density: number;
+  warmth: number;
+  brightness: number;
+  roughness: number;
+  openness: number;
+  motifFamilyPhase: number;
+  instrumentPhase: number;
+  contourBias: number;
+  region: LongFormRegionSignature;
+  regionBlend: number;
+};
+
 export interface AudioDebugState {
   masterGain: number;
   foregroundVoiceCount: number;
@@ -81,6 +107,13 @@ const LEAD_VOICE_COUNT = 3;
 const PHRASE_AGENT_COUNT = 3;
 const MAX_ACTIVE_VOICES = 8;
 const ECOLOGICAL_ROLE_ORDER: EcologicalVoiceRole[] = ['bloom', 'grazer', 'pollinator', 'decay'];
+const MOTIF_FAMILIES: number[][] = [
+  [0, 2, -1, 3],
+  [0, 1, 3, 2],
+  [0, -1, 2, 4],
+  [0, 3, 1, 4],
+  [0, 2, 1, -2],
+];
 
 const ENTITY_OCTAVE: Record<ScoredEntity['entity']['type'], number> = {
   plant: -1,
@@ -205,6 +238,23 @@ export class AudioEngine {
   private lastAnyOnsetTime = -100;
   private phraseCooldownUntil = -100;
   private eventCooldownUntil = -100;
+  private longFormState: LongFormState = {
+    calmness: 0.62,
+    tension: 0.18,
+    fertility: 0.48,
+    decay: 0.12,
+    activity: 0.24,
+    density: 0.26,
+    warmth: 0.52,
+    brightness: 0.48,
+    roughness: 0.18,
+    openness: 0.58,
+    motifFamilyPhase: 0.18,
+    instrumentPhase: 0.24,
+    contourBias: 0.5,
+    region: { wetland: 0.33, highland: 0.33, basin: 0.34, water: 0.2 },
+    regionBlend: 0.26,
+  };
   private noteTiming: NoteTimingGate = { pulseSeconds: 0.28, looseness: 0.45, jitter: 0.01 };
   private readonly debugState: AudioDebugState = {
     masterGain: 0,
@@ -371,12 +421,13 @@ export class AudioEngine {
 
     this.musicState = createEcologicalMusicState(snapshot, this.musicState);
     const music = this.musicState;
+    this.longFormState = this.updateLongFormState(snapshot, music, dt);
     this.noteTiming = {
       pulseSeconds: clamp(0.22 + (1 - music.composition.rhythmDensity) * 0.24, 0.18, 0.46),
       looseness: clamp(0.58 - this.interpretationBlend * 0.24 + music.composition.pulseJitter * 0.2, 0.2, 0.7),
       jitter: clamp(0.004 + music.composition.pulseJitter * 0.016, 0.002, 0.024),
     };
-    const harmony = createHarmonyState(snapshot, music);
+    const harmony = createHarmonyState(snapshot, music, this.longFormState);
     this.lastHarmony = harmony;
     const focus = createAudioFocusContext(snapshot);
     const scored = scoreEntities(snapshot, focus, this.entityPriority);
@@ -433,6 +484,23 @@ export class AudioEngine {
     this.phraseRecentTime = -100;
     this.phraseRecentType = null;
     this.musicState = undefined;
+    this.longFormState = {
+      calmness: 0.62,
+      tension: 0.18,
+      fertility: 0.48,
+      decay: 0.12,
+      activity: 0.24,
+      density: 0.26,
+      warmth: 0.52,
+      brightness: 0.48,
+      roughness: 0.18,
+      openness: 0.58,
+      motifFamilyPhase: 0.18,
+      instrumentPhase: 0.24,
+      contourBias: 0.5,
+      region: { wetland: 0.33, highland: 0.33, basin: 0.34, water: 0.2 },
+      regionBlend: 0.26,
+    };
     this.lastHarmony = undefined;
     this.lastSelectedEntityId = null;
   }
@@ -972,7 +1040,7 @@ export class AudioEngine {
       events: [],
       notifications: { recent: [] },
       diagnostics: createDefaultDiagnostics(),
-    });
+    }, this.musicState, this.longFormState);
 
     this.triggerToolTone({
       active: event.tool,
@@ -1032,7 +1100,7 @@ export class AudioEngine {
       events: [],
       notifications: { recent: [] },
       diagnostics: createDefaultDiagnostics(),
-    });
+    }, this.musicState, this.longFormState);
 
     const settings = this.createEventInstrumentGesture(event, ecologicalEvent);
     const eventProfile = this.getInstrumentVoiceProfile(settings.instrument, 'worldEvent');
@@ -1108,18 +1176,58 @@ export class AudioEngine {
             ? descriptor.maxDensity * 0.7 + descriptor.rhythmicTendency * 0.3
             : 0.4;
         const affinityWeight = hasRole ? 1 : descriptor.roleAffinity.includes('mixed') ? 0.4 : 0;
-        return { descriptor, weight: affinityWeight * modeWeight };
+        const prominence = this.getInstrumentProminence(role, descriptor);
+        return { descriptor, weight: affinityWeight * modeWeight * prominence };
       })
       .filter((item) => item.weight > 0);
     const pool = weighted.length > 0 ? weighted : descriptors.map((descriptor) => ({ descriptor, weight: 1 }));
     const total = pool.reduce((sum, item) => sum + item.weight, 0);
-    const seed = Math.abs(Math.sin((eventId + 1) * 12.9898)) % 1;
+    const epoch = Math.floor(this.longFormState.instrumentPhase * 10) + Math.floor(this.lastSnapshotTime / 24);
+    const seed = Math.abs(Math.sin((eventId + epoch + 1) * 12.9898)) % 1;
     let threshold = seed * total;
     for (const item of pool) {
       threshold -= item.weight;
       if (threshold <= 0) return item.descriptor;
     }
     return pool[pool.length - 1]?.descriptor ?? descriptors[0];
+  }
+
+  private getInstrumentProminence(role: OrchestrationRole, descriptor: InstrumentDescriptor): number {
+    const phase = this.longFormState.instrumentPhase + descriptor.rhythmicTendency * 0.6;
+    const drift = Math.sin(phase * Math.PI * 2) * 0.5 + 0.5;
+    const calm = this.longFormState.calmness;
+    const tension = this.longFormState.tension;
+    const fertility = this.longFormState.fertility;
+    const decay = this.longFormState.decay;
+    const activity = this.longFormState.activity;
+    const region = this.longFormState.region;
+    const regionWeight = this.longFormState.regionBlend;
+
+    const calmLift = descriptor.timbralFamily === 'textural' || descriptor.timbralFamily === 'air' ? calm * 0.34 : 0;
+    const tensionLift = descriptor.timbralFamily === 'reed' || descriptor.timbralFamily === 'bass' ? tension * 0.26 : tension * 0.08;
+    const fertilityLift = descriptor.foregroundFamily === 'soft-pad' || descriptor.foregroundFamily === 'mellow-mallet' ? fertility * 0.28 : fertility * 0.08;
+    const decayLift = descriptor.foregroundFamily === 'reed-lead' || descriptor.timbralFamily === 'reed' ? decay * 0.28 : decay * 0.06;
+    const activityLift = descriptor.rhythmicTendency * activity * 0.24;
+    const opennessLift = this.longFormState.openness * (descriptor.envelopeCharacter === 'long' ? 0.2 : 0.06);
+    const roughnessLift = this.longFormState.roughness * (descriptor.timbralFamily === 'reed' ? 0.18 : 0.07);
+    const regionalLift = (
+      descriptor.timbralFamily === 'air' ? region.highland * 0.24 : 0
+    ) + (
+      descriptor.timbralFamily === 'textural' ? region.water * 0.2 : 0
+    ) + (
+      descriptor.timbralFamily === 'bass' ? region.basin * 0.16 : 0
+    ) + (
+      descriptor.timbralFamily === 'plucked' || descriptor.foregroundFamily === 'soft-pluck' ? region.wetland * 0.16 : 0
+    );
+    const roleLift = role === 'bloom'
+      ? fertility * 0.18 + calm * 0.08
+      : role === 'pollinator'
+        ? activity * 0.16 + this.longFormState.brightness * 0.08
+        : role === 'predator' || role === 'decomposer'
+          ? tension * 0.18 + decay * 0.12
+          : activity * 0.1;
+    const wave = 0.84 + drift * 0.24 + (1 - drift) * activity * 0.08;
+    return clamp(0.46 + calmLift + tensionLift + fertilityLift + decayLift + activityLift + opennessLift + roughnessLift + roleLift + regionalLift * regionWeight, 0.28, 2.4) * wave;
   }
 
   private createEventInstrumentGesture(event: WorldEvent, ecologicalEvent: EcologicalAudioEvent): EventInstrumentGesture {
@@ -1530,15 +1638,29 @@ export class AudioEngine {
         if (!candidate) continue;
         agent.entityId = candidate.entity.id;
         const remembered = this.phraseMotifMemory.get(candidate.entity.id);
+        const motifFamilyIndex = this.getMotifFamilyIndex(snapshot, candidate.entity.id, candidate.entity.type);
+        const motifFamily = MOTIF_FAMILIES[motifFamilyIndex] ?? MOTIF_FAMILIES[0];
         const motifLength = 2 + Math.round(phraseBias * 2);
-        const baseMotif = remembered
-          ? remembered.map((interval, idx) => interval + (Math.random() < 0.22 && idx > 0 ? (Math.random() < 0.5 ? -1 : 1) : 0))
-          : [0, candidate.entity.type === 'flocker' ? 2 : 1, -1, 3];
+        const memoryBlend = remembered && Math.random() < 0.54;
+        const baseMotif = (memoryBlend ? remembered : motifFamily).map((interval, idx) => {
+          const entityLift = candidate.entity.type === 'flocker' ? 1 : candidate.entity.type === 'plant' || candidate.entity.type === 'canopy' ? -1 : 0;
+          const mutationChance = idx === 0 ? 0 : 0.08 + this.longFormState.activity * 0.09 + this.longFormState.roughness * 0.12;
+          const mutation = Math.random() < mutationChance ? (Math.random() < 0.5 ? -1 : 1) : 0;
+          return interval + (idx === 1 ? entityLift : 0) + mutation;
+        });
         agent.motif = baseMotif.slice(0, clamp(motifLength, 2, 4));
         this.phraseMotifMemory.set(candidate.entity.id, baseMotif.slice(0, 4));
-        const spacing = clamp(0.22 - phraseBias * 0.06 + localDensity * 0.11, 0.16, 0.36);
+        const spacing = clamp(
+          0.25
+          - phraseBias * 0.06
+          + localDensity * 0.09
+          - this.longFormState.activity * 0.05
+          + this.longFormState.openness * 0.08,
+          0.14,
+          0.4,
+        );
         agent.rhythm = agent.motif.map((_, idx) => spacing + (idx % 2 === 0 ? 0.06 : 0.12) + Math.random() * 0.06);
-        agent.variation = 0.06 + Math.random() * 0.12;
+        agent.variation = clamp(0.04 + this.longFormState.roughness * 0.08 + this.longFormState.contourBias * 0.06 + Math.random() * 0.08, 0.04, 0.2);
         agent.notesRemaining = agent.motif.length;
         agent.noteIndex = 0;
         agent.phase = 'playing';
@@ -1552,7 +1674,17 @@ export class AudioEngine {
           continue;
         }
         const interval = agent.motif[agent.noteIndex] ?? 0;
-        const contour = clamp(target.tone * 0.5 + target.harmony * 0.34 + 0.16 + interval * 0.06 + (Math.random() * 2 - 1) * agent.variation, 0, 1);
+        const contour = clamp(
+          target.tone * 0.42
+          + target.harmony * 0.3
+          + this.longFormState.contourBias * 0.18
+          + this.longFormState.brightness * 0.1
+          + 0.14
+          + interval * (0.05 + this.longFormState.activity * 0.04)
+          + (Math.random() * 2 - 1) * agent.variation,
+          0,
+          1,
+        );
         const phraseAmount = (0.046 + phraseBias * 0.036 + target.activity * 0.034 + (1 - zoomNorm) * 0.012) * (1 - localDensity * 0.2);
         const played = this.playPhraseNote(snapshot, harmony, target, contour, Math.max(0.02, phraseAmount), agent.rhythm[agent.noteIndex] ?? 0.2, settings);
         const nextDuration = agent.rhythm[agent.noteIndex] ?? 0.2;
@@ -1573,6 +1705,97 @@ export class AudioEngine {
         agent.nextActionTime = now + 1.0 - phraseBias * 0.24 + Math.random() * 1.7 + localDensity * 0.44;
       }
     }
+  }
+
+  private updateLongFormState(snapshot: SimulationSnapshot, music: EcologicalMusicState, dt: number): LongFormState {
+    const seconds = Math.max(0.016, dt);
+    const slow = clamp(seconds * 0.04, 0.002, 0.08);
+    const verySlow = clamp(seconds * 0.014, 0.001, 0.04);
+    const region = this.computeRegionSignature(snapshot);
+    const calmnessTarget = clamp(music.interpretation.stability * 0.6 + (1 - music.interpretation.tension) * 0.4, 0, 1);
+    const fertilityTarget = clamp(music.interpretation.growthRate * 0.42 + music.interpretation.abundance * 0.3 + (1 - region.highland) * 0.1 + region.basin * 0.18, 0, 1);
+    const decayTarget = clamp(music.interpretation.decayPresence * 0.68 + music.interpretation.tension * 0.16 + region.highland * 0.08, 0, 1);
+    const activityTarget = clamp(music.interpretation.rhythmicActivity * 0.56 + music.interpretation.globalActivity * 0.24 + region.water * 0.12, 0, 1);
+    const densityTarget = clamp(music.interpretation.density * 0.58 + music.interpretation.localActivity * 0.2 + region.wetland * 0.14, 0, 1);
+    const warmthTarget = clamp(calmnessTarget * 0.26 + fertilityTarget * 0.36 + region.basin * 0.22 + region.wetland * 0.14 - decayTarget * 0.2, 0, 1);
+    const brightnessTarget = clamp(activityTarget * 0.26 + music.interpretation.harmonicRichness * 0.28 + region.highland * 0.22 + region.water * 0.1 - decayTarget * 0.2, 0, 1);
+    const roughnessTarget = clamp(decayTarget * 0.42 + music.interpretation.tension * 0.34 + region.highland * 0.18 - fertilityTarget * 0.1, 0, 1);
+    const opennessTarget = clamp(calmnessTarget * 0.36 + fertilityTarget * 0.22 + (1 - densityTarget) * 0.24 + region.water * 0.2, 0, 1);
+    const contourTarget = clamp(0.48 + (activityTarget - calmnessTarget) * 0.24 + (region.highland - region.basin) * 0.18, 0.1, 0.9);
+
+    return {
+      calmness: smooth(this.longFormState.calmness, calmnessTarget, slow),
+      tension: smooth(this.longFormState.tension, music.interpretation.tension, slow),
+      fertility: smooth(this.longFormState.fertility, fertilityTarget, slow),
+      decay: smooth(this.longFormState.decay, decayTarget, slow),
+      activity: smooth(this.longFormState.activity, activityTarget, slow),
+      density: smooth(this.longFormState.density, densityTarget, slow),
+      warmth: smooth(this.longFormState.warmth, warmthTarget, verySlow),
+      brightness: smooth(this.longFormState.brightness, brightnessTarget, verySlow),
+      roughness: smooth(this.longFormState.roughness, roughnessTarget, verySlow),
+      openness: smooth(this.longFormState.openness, opennessTarget, verySlow),
+      motifFamilyPhase: smooth(
+        this.longFormState.motifFamilyPhase,
+        clamp(snapshot.time * (0.00085 + music.composition.evolutionSpeed * 0.0006) + fertilityTarget * 0.42 + region.water * 0.2 - decayTarget * 0.12, 0, 64),
+        verySlow,
+      ),
+      instrumentPhase: smooth(
+        this.longFormState.instrumentPhase,
+        clamp(snapshot.time * (0.00068 + music.composition.evolutionSpeed * 0.00044) + activityTarget * 0.36 + region.highland * 0.28 + region.basin * 0.1, 0, 64),
+        verySlow,
+      ),
+      contourBias: smooth(this.longFormState.contourBias, contourTarget, verySlow),
+      region: {
+        wetland: smooth(this.longFormState.region.wetland, region.wetland, slow),
+        highland: smooth(this.longFormState.region.highland, region.highland, slow),
+        basin: smooth(this.longFormState.region.basin, region.basin, slow),
+        water: smooth(this.longFormState.region.water, region.water, slow),
+      },
+      regionBlend: smooth(
+        this.longFormState.regionBlend,
+        clamp(snapshot.attention.mode === 'region' ? 0.74 : snapshot.attention.mode === 'entity' ? 0.52 : 0.3, 0.2, 0.8),
+        slow,
+      ),
+    };
+  }
+
+  private computeRegionSignature(snapshot: SimulationSnapshot): LongFormRegionSignature {
+    const center = snapshot.attention.mode === 'none' ? snapshot.camera.center : snapshot.attention.position;
+    const radius = snapshot.attention.mode === 'none' ? 320 : Math.max(180, snapshot.attention.radius * 0.9);
+    let wetland = 0;
+    let highland = 0;
+    let basin = 0;
+    let water = 0;
+    let totalWeight = 0;
+
+    for (const cell of snapshot.terrain) {
+      const dist = this.distance(cell.center, center, snapshot);
+      if (dist > radius) continue;
+      const proximity = 1 - clamp(dist / radius, 0, 1);
+      const weight = 0.24 + proximity * proximity;
+      wetland += cell.habitatWeights.wetland * weight;
+      highland += cell.habitatWeights.highland * weight;
+      basin += cell.habitatWeights.basin * weight;
+      water += (cell.terrain === 'water' ? 1 : 0) * weight;
+      totalWeight += weight;
+    }
+
+    if (totalWeight <= 0) return this.longFormState.region;
+    return {
+      wetland: clamp(wetland / totalWeight, 0, 1),
+      highland: clamp(highland / totalWeight, 0, 1),
+      basin: clamp(basin / totalWeight, 0, 1),
+      water: clamp(water / totalWeight, 0, 1),
+    };
+  }
+
+  private getMotifFamilyIndex(snapshot: SimulationSnapshot, sourceId: number, sourceType: ScoredEntity['entity']['type']): number {
+    const familyCount = MOTIF_FAMILIES.length;
+    const epoch = Math.floor(snapshot.time / 28);
+    const typeLift = sourceType === 'flocker' ? 1 : sourceType === 'grazer' ? 2 : sourceType === 'cluster' ? 3 : 0;
+    const climateShift = Math.round(this.longFormState.calmness * 2 + this.longFormState.activity * 3 + this.longFormState.region.highland * 2);
+    const phaseShift = Math.round((Math.sin((this.longFormState.motifFamilyPhase + sourceId * 0.07) * Math.PI * 2) * 0.5 + 0.5) * familyCount);
+    return (epoch + typeLift + climateShift + phaseShift + sourceId) % familyCount;
   }
 
   private playPhraseNote(

@@ -65,6 +65,29 @@ export interface HarmonyState {
   field: HarmonicField;
 }
 
+export interface LongFormHarmonyContext {
+  calmness: number;
+  tension: number;
+  fertility: number;
+  decay: number;
+  activity: number;
+  density: number;
+  warmth: number;
+  brightness: number;
+  roughness: number;
+  openness: number;
+  motifFamilyPhase: number;
+  instrumentPhase: number;
+  contourBias: number;
+  region: {
+    wetland: number;
+    highland: number;
+    basin: number;
+    water: number;
+  };
+  regionBlend: number;
+}
+
 const chooseMode = (snapshot: SimulationSnapshot, ecological?: EcologicalMusicState): keyof typeof MODES => {
   const { stability, threat, harmony } = snapshot.stats;
   if (ecological?.composition.mode === 'degraded') return 'aeolianPentatonic';
@@ -80,29 +103,49 @@ const slowRotateMode = (
   baseMode: keyof typeof MODES,
   snapshot: SimulationSnapshot,
   ecological?: EcologicalMusicState,
+  longForm?: LongFormHarmonyContext,
 ): keyof typeof MODES => {
   const richness = ecological?.interpretation.harmonicRichness ?? snapshot.stats.harmony;
-  const speed = 0.0012 + (ecological?.composition.evolutionSpeed ?? 0.1) * 0.0016;
-  const phase = snapshot.time * speed + richness * 0.7;
+  const speed = 0.001 + (ecological?.composition.evolutionSpeed ?? 0.1) * 0.0012 + (longForm?.activity ?? 0.2) * 0.0008;
+  const longBreath = (longForm?.instrumentPhase ?? 0) * 0.22 + (longForm?.motifFamilyPhase ?? 0) * 0.18;
+  const phase = snapshot.time * speed + richness * 0.7 + longBreath;
   const wobble = Math.sin(phase * Math.PI * 2);
-  if (Math.abs(wobble) < 0.76) return baseMode;
+  if (Math.abs(wobble) < 0.78 - (longForm?.brightness ?? 0.5) * 0.12) return baseMode;
   const idx = MODE_ORDER.indexOf(baseMode);
   if (idx < 0) return baseMode;
   const direction = wobble > 0 ? 1 : -1;
-  const nextIndex = clamp(idx + direction, 0, MODE_ORDER.length - 1);
+  const longDirection = (longForm?.warmth ?? 0.5) >= (longForm?.roughness ?? 0.3) ? 1 : -1;
+  const blendDirection = Math.sign(direction * 0.56 + longDirection * 0.44) || direction;
+  const nextIndex = clamp(idx + blendDirection, 0, MODE_ORDER.length - 1);
   return MODE_ORDER[nextIndex];
 };
 
-const createField = (snapshot: SimulationSnapshot, ecological: EcologicalMusicState | undefined, mode: number[]): HarmonicField => {
+const createField = (
+  snapshot: SimulationSnapshot,
+  ecological: EcologicalMusicState | undefined,
+  mode: number[],
+  longForm?: LongFormHarmonyContext,
+): HarmonicField => {
   const stability = ecological?.interpretation.stability ?? snapshot.stats.stability;
   const tension = ecological?.interpretation.tension ?? snapshot.stats.threat;
   const richness = ecological?.interpretation.harmonicRichness ?? snapshot.stats.harmony;
   const driftSource = ecological?.composition.harmonicDrift ?? 0.1;
-  const driftAmount = clamp(0.05 + driftSource * 0.16, 0.05, 0.2);
-  const driftPhase = snapshot.time * (0.0018 + (ecological?.composition.evolutionSpeed ?? 0.1) * 0.0024) + richness * 0.8;
+  const longWarmth = longForm?.warmth ?? 0.5;
+  const longBrightness = longForm?.brightness ?? 0.5;
+  const longRoughness = longForm?.roughness ?? 0.2;
+  const longOpenness = longForm?.openness ?? 0.5;
+  const longRegionBlend = longForm?.regionBlend ?? 0.3;
+  const driftAmount = clamp(0.05 + driftSource * 0.14 + longRoughness * 0.04 + (1 - longOpenness) * 0.03, 0.05, 0.24);
+  const driftPhase = snapshot.time * (0.0015 + (ecological?.composition.evolutionSpeed ?? 0.1) * 0.0019 + (longForm?.activity ?? 0.2) * 0.0012)
+    + richness * 0.8
+    + (longForm?.instrumentPhase ?? 0) * 0.24;
   const rootStability = clamp(0.54 + stability * 0.32 - tension * 0.22, 0.42, 0.92);
   const consonanceBias = clamp(0.52 + stability * 0.28 + (1 - tension) * 0.2 + richness * 0.08, 0.52, 0.96);
-  const modalColorDrift = Math.sin((driftPhase * 0.63 + richness * 0.28) * Math.PI * 2) * driftAmount * 0.42;
+  const modalBreathe = Math.sin((snapshot.time * 0.00036 + (longForm?.motifFamilyPhase ?? 0) * 0.52) * Math.PI * 2);
+  const modalColorDrift = (
+    Math.sin((driftPhase * 0.63 + richness * 0.28 + longWarmth * 0.22) * Math.PI * 2) * 0.72
+    + modalBreathe * 0.28
+  ) * driftAmount * (0.34 + longBrightness * 0.24);
 
   const stableWeights = mode.map((_, idx) => {
     if (idx === 0) return 1.16;
@@ -119,11 +162,13 @@ const createField = (snapshot: SimulationSnapshot, ecological: EcologicalMusicSt
     const degreeNorm = idx / Math.max(1, mode.length - 1);
     const driftWave = 0.5 + Math.sin((driftPhase + degreeNorm * 0.64) * Math.PI * 2) * 0.5;
     const driftBias = driftWave * driftAmount;
-    const calmLift = (1 - tension) * stableWeights[idx] * 0.34;
+    const calmLift = (1 - tension) * stableWeights[idx] * (0.28 + longWarmth * 0.14);
     const tensionLift = tension * tensionWeights[idx] * 0.12;
-    const stabilityLift = stability * (idx === 0 || idx === 2 ? 0.26 : 0.1);
+    const stabilityLift = stability * (idx === 0 || idx === 2 ? 0.24 + longOpenness * 0.06 : 0.08 + longRoughness * 0.04);
     const tonicLift = idx === 0 ? rootStability * 0.26 : 0;
-    const modalLift = idx === 1 || idx === mode.length - 1 ? modalColorDrift : modalColorDrift * 0.45;
+    const modalLift = idx === 1 || idx === mode.length - 1
+      ? modalColorDrift * (0.82 + longRegionBlend * 0.18)
+      : modalColorDrift * (0.38 + longWarmth * 0.16);
     return 0.14 + stableWeights[idx] * 0.26 + driftBias + calmLift + tensionLift + stabilityLift + tonicLift + modalLift;
   });
 
@@ -150,15 +195,20 @@ const createField = (snapshot: SimulationSnapshot, ecological: EcologicalMusicSt
   };
 };
 
-export const createHarmonyState = (snapshot: SimulationSnapshot, ecological?: EcologicalMusicState): HarmonyState => {
+export const createHarmonyState = (
+  snapshot: SimulationSnapshot,
+  ecological?: EcologicalMusicState,
+  longForm?: LongFormHarmonyContext,
+): HarmonyState => {
   const baseMode = chooseMode(snapshot, ecological);
-  const modeName = slowRotateMode(baseMode, snapshot, ecological);
+  const modeName = slowRotateMode(baseMode, snapshot, ecological, longForm);
   const baseRootMidi = ecological
     ? ecological.composition.tonalCenter
     : Math.round(38 + snapshot.stats.nutrients * 4 + snapshot.stats.growth * 3 + snapshot.stats.harmony * 2 - snapshot.stats.threat * 3);
   const mode = [...MODES[modeName]];
-  const field = createField(snapshot, ecological, mode);
-  const driftedRoot = Math.round(baseRootMidi + clamp(field.tonicDriftSemitones, -1.2, 1.2));
+  const field = createField(snapshot, ecological, mode, longForm);
+  const rootBreath = Math.sin((snapshot.time * 0.00024 + (longForm?.motifFamilyPhase ?? 0) * 0.3) * Math.PI * 2) * (0.36 + (longForm?.warmth ?? 0.5) * 0.28);
+  const driftedRoot = Math.round(baseRootMidi + clamp(field.tonicDriftSemitones + rootBreath * 0.35, -1.6, 1.6));
   const rootMidi = clamp(driftedRoot, 30, 62);
   return {
     modeName,
