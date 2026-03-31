@@ -30,6 +30,7 @@ import {
   type InstrumentRegistry,
 } from './instruments';
 import { createEnvironmentalPulseEvent, mapWorldEventToEcologicalAudioEvents, type EcologicalAudioEvent } from './musicalEvents';
+import { ProceduralMusicEngine } from '../music/musicEngine';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -204,6 +205,7 @@ export class AudioEngine {
   private leadVoices: PooledVoice[] = [];
   private eventBus?: GainNode;
   private phraseBus?: GainNode;
+  private proceduralMusic?: ProceduralMusicEngine;
   private busLayout?: AudioBusLayout;
   private phraseAgents: PhraseAgent[] = [];
   private activeTransientVoices = 0;
@@ -357,6 +359,7 @@ export class AudioEngine {
     const phraseBus = context.createGain();
     phraseBus.gain.value = 0.42;
     phraseBus.connect(busLayout.music);
+    const proceduralMusic = new ProceduralMusicEngine(context, phraseBus);
 
     this.context = context;
     this.master = master;
@@ -374,6 +377,7 @@ export class AudioEngine {
     this.leadVoices = leadVoices;
     this.eventBus = eventBus;
     this.phraseBus = phraseBus;
+    this.proceduralMusic = proceduralMusic;
     this.busLayout = busLayout;
     this.phraseAgents = Array.from({ length: PHRASE_AGENT_COUNT }, (_, id) => ({
       id,
@@ -441,6 +445,7 @@ export class AudioEngine {
     this.updateForegroundVoices(snapshot, harmony, focus, foreground, zoomNorm, now, settings);
     this.updateLeadVoices(snapshot, harmony, music, focus, zoomNorm, now, settings);
     this.updatePhraseAgents(snapshot, harmony, foreground, zoomNorm, now, settings);
+    this.proceduralMusic?.update(harmony, music, settings, this.interpretationBlend, this.interpretationMode);
 
     const entityPresence = 0.2 + settings.audio.entityVolume * 0.28 + music.interpretation.rhythmicActivity * 0.1 + music.composition.foregroundLift * 0.04;
     this.eventBus.gain.setTargetAtTime(entityPresence, now, 0.12);
@@ -503,6 +508,7 @@ export class AudioEngine {
     };
     this.lastHarmony = undefined;
     this.lastSelectedEntityId = null;
+    this.proceduralMusic?.reset();
   }
 
   setInterpretationMode(mode: MusicalInterpretationMode): void {
