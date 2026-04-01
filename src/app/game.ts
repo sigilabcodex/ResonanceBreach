@@ -1,6 +1,7 @@
 import { CAMERA_MAX_ZOOM, CAMERA_MIN_ZOOM, CAMERA_SMOOTHING, CAMERA_ZOOM_SPEED, FIXED_TIMESTEP, MAX_FRAME_DELTA, WORLD_HEIGHT, WORLD_WIDTH, type ToolType } from '../config';
 import { AudioEngine } from '../audio/audioEngine';
 import { PlayerInput } from '../interaction/input';
+import { MusicEngine } from '../music/engine/musicEngine';
 import { Renderer } from '../render/renderer';
 import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, storeSettings, type GameSettings } from '../settings';
 import { Simulation } from '../sim/simulation';
@@ -19,6 +20,7 @@ export class App {
   private readonly simulation = new Simulation();
   private readonly renderer: Renderer;
   private readonly audio = new AudioEngine();
+  private readonly music = new MusicEngine();
   private readonly hud: Hud;
   private readonly input: PlayerInput;
   private readonly camera: CameraState = {
@@ -129,6 +131,7 @@ export class App {
   private restart(): void {
     this.simulation.reset();
     this.audio.reset();
+    this.music.reset();
     this.camera.center.x = WORLD_WIDTH / 2;
     this.camera.center.y = WORLD_HEIGHT / 2;
     this.camera.zoom = 1;
@@ -431,6 +434,7 @@ export class App {
 
     const snapshot = this.simulation.getSnapshot();
     this.latestSnapshot = snapshot;
+    this.music.updateFromSnapshot(snapshot, rawDelta);
     const audioStart = performance.now();
     this.audio.update(snapshot, this.settings);
     this.perfStats.audioUpdateTimeMs = performance.now() - audioStart;
