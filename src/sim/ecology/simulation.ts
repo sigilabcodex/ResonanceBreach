@@ -38,6 +38,9 @@ import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../ev
 import { createDefaultAttentionState, createDefaultCamera, createDefaultDiagnostics, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
 import { WorldFieldModel } from '../fields/worldField';
+import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
+import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
+import type { SpawningRuntimeContext } from './spawning/types';
 import type {
   Attractor,
   AttentionState,
@@ -1126,57 +1129,7 @@ export class Simulation {
   }
 
   private updatePropagules(dt: number): void {
-    const next: Propagule[] = [];
-    for (const propagule of this.propagules) {
-      propagule.age += dt;
-      const flow = this.sampleField(propagule.position.x, propagule.position.y).flow;
-      if (propagule.kind === 'spore') {
-        propagule.velocity.x = lerp(propagule.velocity.x, flow.x * 0.14, dt * 0.6);
-        propagule.velocity.y = lerp(propagule.velocity.y, flow.y * 0.14, dt * 0.6);
-      } else {
-        propagule.velocity.x *= Math.pow(0.92, dt * 60);
-        propagule.velocity.y *= Math.pow(0.92, dt * 60);
-      }
-      propagule.position = this.wrapPosition({
-        x: propagule.position.x + propagule.velocity.x * dt,
-        y: propagule.position.y + propagule.velocity.y * dt,
-      });
-
-      const sample = this.sampleField(propagule.position.x, propagule.position.y);
-      const ready = propagule.age >= propagule.dormancy;
-      const withinCap = (() => {
-        const counts = this.countEntities();
-        if (propagule.species === 'plant') return counts.plant < MAX_PLANTS;
-        if (propagule.species === 'ephemeral') return counts.ephemeral < MAX_EPHEMERALS;
-        if (propagule.species === 'canopy') return counts.canopy < MAX_CANOPIES;
-        if (propagule.species === 'cluster') return counts.cluster < MAX_CLUSTERS;
-        if (propagule.species === 'parasite') return counts.parasite < MAX_PARASITES;
-        return true
-      })();
-      const density = this.getNeighborsAtPosition(propagule.position, propagule.species === 'canopy' ? 120 : 84).filter((candidate) => candidate.type === propagule.species).length;
-      const suitability = this.getEntitySpawnSuitability(propagule.species, sample)
-        + sample.nutrient * 0.28
-        + (propagule.species === 'ephemeral' ? sample.temperature * 0.22 : propagule.species === 'canopy' ? (1 - Math.abs(sample.temperature - 0.42)) * 0.16 : 0);
-      const germinationRate = dt * clamp(0.01 + suitability * 0.035 - density * 0.008 + propagule.viability * 0.02, 0.002, 0.08);
-      if (ready && withinCap && this.rng.next() < germinationRate) {
-        const entity = this.createEntity(propagule.species, propagule.position);
-        entity.age = propagule.kind === 'seed' ? this.rng.range(0, entity.lifeSpan * 0.06) : 0;
-        entity.energy = clamp(entity.energy + propagule.nutrient * 0.28, 0, 1.3);
-        this.entities.push(entity);
-        this.propagulesById.delete(propagule.id);
-        this.diagnostics.lifecycleTransitions.germinations += 1;
-        this.emitWorldEvent({ type: 'entityBorn', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id });
-        continue;
-      }
-      if (propagule.age < propagule.dormancy + 90 && propagule.viability > 0.04) {
-        propagule.viability = clamp(propagule.viability - dt * 0.0012 + sample.nutrient * dt * 0.0006, 0, 1);
-        next.push(propagule);
-      } else {
-        this.affectEnvironment(propagule.position, 24, propagule.nutrient * 0.08, -0.002);
-        this.propagulesById.delete(propagule.id);
-      }
-    }
-    this.propagules = next;
+    updatePropagulesStep(this.createSpawningRuntimeContext(), dt);
   }
 
   private updateBursts(dt: number): void {
@@ -1913,166 +1866,54 @@ export class Simulation {
   }
 
   private spawnEntities(dt: number): void {
-    const counts = this.countEntities();
-    const additions: Entity[] = [];
-    const pendingCounts: Record<EntityType, number> = { flocker: 0, cluster: 0, plant: 0, ephemeral: 0, canopy: 0, grazer: 0, parasite: 0, predator: 0 };
+    spawnEntitiesStep(this.createSpawningRuntimeContext(), dt);
+  }
 
-    for (const entity of this.entities) {
-      if (entity.reproductionCooldown > 0) continue;
-      const localDensity = this.getNeighborsByEntity(entity, ROOTED_BLOOM_TYPES.includes(entity.type) ? 150 : entity.type === 'cluster' ? 100 : entity.type === 'grazer' ? 120 : 130).length;
-      const localSample = this.sampleField(entity.position.x, entity.position.y);
-      let producedEntity: Entity | undefined;
-      let producedPropagule = false;
-
-      if (
-        entity.type === 'plant'
-        && entity.stage !== 'birth'
-        && entity.pollination > 0.58
-        && entity.food > 0.72
-        && entity.energy > 0.74
-        && localSample.fertility > 0.42
-        && localSample.moisture > 0.24
-        && habitatMatch(localSample, 'basin') > 0.3
-        && habitatPenalty(localSample, 'highland') < 0.54
-        && counts.plant + pendingCounts.plant < MAX_PLANTS
-      ) {
-        const birthRate = dt * clamp(0.008 + entity.pollination * 0.018 + localSample.fertility * 0.012 - localDensity * 0.005, 0.002, 0.04);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 84, (sample) => sample.fertility > 0.44 && sample.moisture > 0.26 && habitatMatch(sample, 'basin') > 0.34 && habitatPenalty(sample, 'highland') < 0.46 && sample.slope < 0.58), 'seed', 'plant', entity.id, 0.48);
-          pendingCounts.plant += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(24, 34);
-          entity.pollination *= 0.58;
-          entity.food *= 0.82;
-          entity.energy *= 0.88;
-        }
-      } else if (
-        entity.type === 'ephemeral'
-        && entity.stage !== 'birth'
-        && entity.pollination > 0.34
-        && entity.energy > 0.54
-        && localSample.temperature > 0.52
-        && counts.ephemeral + pendingCounts.ephemeral < MAX_EPHEMERALS
-      ) {
-        const birthRate = dt * clamp(0.016 + localSample.temperature * 0.02 + localSample.nutrient * 0.016 - localDensity * 0.006, 0.004, 0.06);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 96, (sample) => sample.temperature > 0.54 && sample.nutrient > 0.34 && sample.moisture > 0.24), 'spore', 'ephemeral', entity.id, 0.34);
-          pendingCounts.ephemeral += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(10, 18);
-          entity.energy *= 0.86;
-          entity.food *= 0.84;
-        }
-      } else if (
-        entity.type === 'canopy'
-        && entity.stage === 'mature'
-        && entity.pollination > 0.62
-        && entity.energy > 0.82
-        && localSample.nutrient > 0.46
-        && counts.canopy + pendingCounts.canopy < MAX_CANOPIES
-      ) {
-        const birthRate = dt * clamp(0.004 + localSample.nutrient * 0.01 + entity.food * 0.008 - localDensity * 0.004, 0.001, 0.018);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 130, (sample) => sample.nutrient > 0.46 && Math.abs(sample.temperature - 0.42) < 0.22 && habitatPenalty(sample, 'highland') < 0.62), 'seed', 'canopy', entity.id, 0.6);
-          pendingCounts.canopy += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(32, 44);
-          entity.energy *= 0.9;
-          entity.food *= 0.88;
-        }
-      } else if (
-        entity.type === 'flocker'
-        && entity.stage !== 'birth'
-        && entity.food > 0.74
-        && entity.energy > 0.72
-        && entity.memory > 0.3
-        && localSample.traversability > 0.24
-        && habitatPenalty(localSample, 'highland') < 0.72
-        && counts.flocker + pendingCounts.flocker < MAX_FLOCKERS
-      ) {
-        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 + localSample.moisture * 0.008 + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.006 - localDensity * 0.006, 0.001, 0.03);
-        if (this.rng.next() <= birthRate) {
-          const position = this.findNearbySpawnPoint(entity.position, 62, (sample) => sample.moisture > 0.32 && sample.slope < 0.56 && sample.traversability > 0.24 && habitatPenalty(sample, 'highland') < 0.58);
-          producedEntity = this.createEntity('flocker', position);
-          additions.push(producedEntity);
-          pendingCounts.flocker += 1;
-          entity.reproductionCooldown = this.rng.range(20, 30);
-          entity.food *= 0.7;
-          entity.energy *= 0.82;
-        }
-      } else if (
-        entity.type === 'grazer'
-        && entity.stage !== 'birth'
-        && entity.food > 0.84
-        && entity.energy > 0.8
-        && entity.memory > 0.28
-        && localSample.traversability > 0.22
-        && habitatMatch(localSample, 'basin') > 0.24
-        && counts.grazer + pendingCounts.grazer < MAX_GRAZERS
-      ) {
-        const nearbyFruit = this.findFoodTarget(entity.position, 180, (particle) => particle.kind === 'fruit');
-        const birthRate = dt * clamp(0.006 + entity.food * 0.012 + entity.energy * 0.012 + habitatMatch(localSample, 'basin') * 0.01 - habitatPenalty(localSample, 'wetland') * 0.006 + (nearbyFruit ? 0.008 : 0) - localDensity * 0.007, 0.001, 0.024);
-        if (this.rng.next() <= birthRate) {
-          const origin = nearbyFruit?.position ?? entity.position;
-          const position = this.findNearbySpawnPoint(origin, 54, (terrain) => terrain.traversability > 0.24 && terrain.fertility > 0.34 && habitatMatch(terrain, 'basin') > 0.26 && habitatPenalty(terrain, 'wetland') < 0.5 && habitatPenalty(terrain, 'highland') < 0.54 && terrain.slope < 0.58);
-          producedEntity = this.createEntity('grazer', position);
-          additions.push(producedEntity);
-          pendingCounts.grazer += 1;
-          entity.reproductionCooldown = this.rng.range(28, 40);
-          entity.food *= 0.62;
-          entity.energy *= 0.74;
-        }
-      } else if (
-        entity.type === 'cluster'
-        && entity.stage !== 'birth'
-        && entity.food > 0.6
-        && entity.energy > 0.58
-        && entity.memory > 0.34
-        && counts.cluster + pendingCounts.cluster < MAX_CLUSTERS
-      ) {
-        const nearbyResidue = this.findResidueTarget(entity.position, 140);
-        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.005 - habitatPenalty(localSample, 'highland') * 0.01 - localDensity * 0.006, 0.001, 0.024);
-        if (this.rng.next() <= birthRate) {
-          const origin = nearbyResidue?.position ?? entity.position;
-          this.spawnPropagule(this.findNearbySpawnPoint(origin, 48, (sample) => sample.nutrient > 0.2 && sample.traversability > 0.1 && habitatPenalty(sample, 'highland') < 0.68 && sample.slope < 0.7), 'spore', 'cluster', entity.id, 0.4);
-          pendingCounts.cluster += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(22, 34);
-          entity.food *= 0.72;
-          entity.energy *= 0.84;
-        }
-      } else if (
-        entity.type === 'parasite'
-        && entity.stage !== 'birth'
-        && entity.energy > 0.72
-        && entity.memory > 0.22
-        && localSample.temperature > 0.48
-        && counts.parasite + pendingCounts.parasite < MAX_PARASITES
-      ) {
-        const birthRate = dt * clamp(0.004 + localSample.temperature * 0.012 + localSample.nutrient * 0.006 - localDensity * 0.006, 0.001, 0.018);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 60, (sample) => sample.temperature > 0.5 && sample.fertility > 0.24 && habitatPenalty(sample, 'highland') < 0.62), 'spore', 'parasite', entity.id, 0.3);
-          pendingCounts.parasite += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(24, 36);
-          entity.energy *= 0.9;
-          entity.food *= 0.88;
-        }
-      } else {
-        continue;
-      }
-
-      entity.visualState = 'reproducing';
-      entity.visualPulse = 0.8;
-      this.emitBurst('birth', entity.position, 14 + entity.size, 0.34 + entity.hueShift * 0.05);
-      if (producedEntity) {
-        this.emitWorldEvent({ type: 'entityBorn', time: this.time, position: { ...producedEntity.position }, entityType: producedEntity.type, entityId: producedEntity.id });
-      } else if (producedPropagule) {
+  private createSpawningRuntimeContext(): SpawningRuntimeContext {
+    return {
+      rootBloomTypes: new Set(ROOTED_BLOOM_TYPES),
+      maxBySpecies: {
+        flocker: MAX_FLOCKERS,
+        cluster: MAX_CLUSTERS,
+        plant: MAX_PLANTS,
+        ephemeral: MAX_EPHEMERALS,
+        canopy: MAX_CANOPIES,
+        grazer: MAX_GRAZERS,
+        parasite: MAX_PARASITES,
+        predator: Number.POSITIVE_INFINITY,
+      },
+      now: this.time,
+      entities: this.entities,
+      getPropagules: () => this.propagules,
+      setPropagules: (propagules) => {
+        this.propagules = propagules;
+      },
+      sampleField: (x, y) => this.sampleField(x, y),
+      wrapPosition: (position) => this.wrapPosition(position),
+      countEntities: () => this.countEntities(),
+      getNeighborsAtPosition: (position, radius) => this.getNeighborsAtPosition(position, radius),
+      getNeighborsByEntity: (entity, radius) => this.getNeighborsByEntity(entity, radius),
+      getEntitySpawnSuitability: (type, sample) => this.getEntitySpawnSuitability(type, sample),
+      findNearbySpawnPoint: (origin, radius, predicate) => this.findNearbySpawnPoint(origin, radius, predicate),
+      findFoodTarget: (position, radius, filter) => this.findFoodTarget(position, radius, filter ?? (() => true)) ?? null,
+      findResidueTarget: (position, radius) => this.findResidueTarget(position, radius) ?? null,
+      createEntity: (type, position) => this.createEntity(type, position),
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrientBoost) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrientBoost),
+      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
+      emitWorldEvent: (event) => this.emitWorldEvent(event),
+      removePropaguleById: (id) => this.propagulesById.delete(id),
+      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) =>
+        this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
+      random: () => this.rng.next(),
+      randomRange: (min, max) => this.rng.range(min, max),
+      incrementGerminations: () => {
+        this.diagnostics.lifecycleTransitions.germinations += 1;
+      },
+      incrementPropagulesCreated: () => {
         this.diagnostics.lifecycleTransitions.propagulesCreated += 1;
-      }
-    }
-
-    this.entities.push(...additions);
+      },
+    };
   }
 
   private updateEnergy(
