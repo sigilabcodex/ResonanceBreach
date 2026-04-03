@@ -44,6 +44,13 @@ import { updateLifecycle } from './lifecycle/updateLifecycle';
 import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
 import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
 import type { SpawningRuntimeContext } from './spawning/types';
+import { updateDecomposer } from './species/updateDecomposer';
+import { updateGrazer } from './species/updateGrazer';
+import { updateParasite } from './species/updateParasite';
+import { updatePlant } from './species/updatePlant';
+import { updatePollinator } from './species/updatePollinator';
+import { updatePredator } from './species/updatePredator';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './species/types';
 import type {
   Attractor,
   AttentionState,
@@ -1194,115 +1201,33 @@ export class Simulation {
     localStats.temperature += sample.temperature;
   }
 
-  private updatePlant(
-    entity: Entity,
-    sample: FieldSample,
-    dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
-  ): void {
-    const anchor = entity.anchor ?? entity.position;
-    const anchorDelta = this.delta(entity.position, anchor);
-    entity.velocity.x = lerp(entity.velocity.x, -anchorDelta.x * (entity.type === 'canopy' ? 0.028 : 0.02) + sample.flow.x * 0.012 + sample.moistureGradient.x * (entity.type === 'ephemeral' ? 3.2 : 2.8) - sample.gradient.x * (entity.type === 'canopy' ? 2 : 2.4), dt * (entity.type === 'canopy' ? 0.35 : 0.5));
-    entity.velocity.y = lerp(entity.velocity.y, -anchorDelta.y * (entity.type === 'canopy' ? 0.028 : 0.02) + sample.flow.y * 0.012 + sample.moistureGradient.y * (entity.type === 'ephemeral' ? 3.2 : 2.8) - sample.gradient.y * (entity.type === 'canopy' ? 2 : 2.4), dt * (entity.type === 'canopy' ? 0.35 : 0.5));
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt,
-      y: entity.position.y + entity.velocity.y * dt,
-    });
-
-    const basinBoost = habitatMatch(sample, 'basin');
-    const wetBoost = habitatMatch(sample, 'wetland');
-    const ridgeStress = habitatPenalty(sample, 'highland');
-    const preferredTemperature = entity.type === 'ephemeral' ? 0.68 : entity.type === 'canopy' ? 0.42 : 0.54;
-    const temperatureComfort = clamp(1 - Math.abs(sample.temperature - preferredTemperature) * (entity.type === 'canopy' ? 1.35 : 1.55), 0, 1);
-    const nutrientDemand = entity.type === 'ephemeral' ? 0.05 : entity.type === 'canopy' ? 0.07 : 0.045;
-    const fertilityScore = sample.fertility * (entity.type === 'canopy' ? 0.34 : 0.42)
-      + sample.nutrient * (entity.type === 'ephemeral' ? 0.48 : entity.type === 'canopy' ? 0.44 : 0.38)
-      + sample.moisture * (entity.type === 'ephemeral' ? 0.16 : 0.12)
-      + entity.pollination * (entity.type === 'canopy' ? 0.14 : 0.16)
-      + basinBoost * (entity.type === 'canopy' ? 0.18 : 0.22)
-      + wetBoost * (entity.type === 'ephemeral' ? 0.12 : 0.08)
-      + temperatureComfort * 0.18;
-    const stress = (1 - sample.traversability) * 0.04
-      + sample.slope * (entity.type === 'canopy' ? 0.02 : 0.028)
-      + ridgeStress * (entity.type === 'ephemeral' ? 0.06 : 0.08)
-      + (sample.terrain === 'solid' ? 0.06 : sample.terrain === 'water' ? (entity.type === 'ephemeral' ? 0.01 : 0.016) : 0)
-      + Math.max(0, 0.38 - fertilityScore) * (entity.type === 'ephemeral' ? 0.04 : 0.05)
-      + Math.max(0, 0.42 - temperatureComfort) * (entity.type === 'ephemeral' ? 0.05 : 0.04);
-
-    this.affectEnvironment(entity.position, 40 + entity.size * 2.6, -nutrientDemand * dt * (0.7 + entity.growth * 0.4), entity.type === 'ephemeral' ? 0.01 * dt : entity.type === 'canopy' ? -0.005 * dt : 0.002 * dt);
-
-    entity.growth = clamp(entity.growth + dt * (fertilityScore * (entity.type === 'ephemeral' ? 0.07 : entity.type === 'canopy' ? 0.038 : 0.05) - stress), 0, 1.8);
-    entity.energy = clamp(entity.energy + dt * (fertilityScore * (entity.type === 'canopy' ? 0.068 : 0.08) - stress * 1.22), 0, 1.4);
-    entity.food = clamp(entity.food + dt * (sample.nutrient * (entity.type === 'ephemeral' ? 0.08 : entity.type === 'canopy' ? 0.075 : 0.065) + sample.fertility * 0.04 - stress * 0.82), 0, 1.5);
-    entity.harmony = clamp(lerp(entity.harmony, 0.34 + sample.resonance * 0.32 + sample.moisture * 0.08 + entity.pollination * 0.12 + temperatureComfort * 0.08, dt * 0.08), 0, 1.2);
-
-    if (fertilityScore > 0.6 && entity.stage !== 'birth') {
-      this.seedTerrain(entity.position, 48 + entity.size * (entity.type === 'canopy' ? 3.2 : 2.4), 0.008 * dt, entity.type === 'ephemeral' ? 0.005 * dt : 0.003 * dt, -0.001 * dt, entity.type === 'canopy' ? 3.6 : 2.6);
-    }
-
-    const fruitingHealth = fertilityScore * 0.34 + entity.energy * 0.24 + entity.food * 0.16 + entity.growth * 0.14 + entity.pollination * 0.08 + temperatureComfort * 0.12;
-    if (
-      entity.stage === 'mature'
-      && entity.fruitCooldown <= 0
-      && fruitingHealth > (entity.type === 'ephemeral' ? 0.66 : entity.type === 'canopy' ? 0.78 : 0.72)
-      && entity.pollination > (entity.type === 'canopy' ? 0.52 : 0.42)
-      && entity.energy > (entity.type === 'ephemeral' ? 0.62 : 0.74)
-      && entity.food > (entity.type === 'ephemeral' ? 0.58 : 0.7)
-      && sample.terrain !== 'solid'
-    ) {
-      const fruitCount = entity.type === 'canopy' ? (sample.nutrient > 0.42 ? 4 : 3) : entity.type === 'ephemeral' ? 1 : sample.nutrient > 0.42 ? 2 : 1;
-      for (let i = 0; i < fruitCount; i += 1) {
-        this.spawnParticle(entity.position, entity.size * (entity.type === 'canopy' ? 3.2 : 2.6), 'fruit', false, entity.id);
-        localStats.fruit += 1;
-      }
-      entity.fruitCooldown = this.rng.range(entity.type === 'ephemeral' ? 7 : entity.type === 'canopy' ? 18 : 12, entity.type === 'ephemeral' ? 12 : entity.type === 'canopy' ? 28 : 20);
-      entity.energy *= entity.type === 'ephemeral' ? 0.84 : 0.9;
-      entity.food *= entity.type === 'ephemeral' ? 0.86 : 0.92;
-      entity.visualState = 'reproducing';
-      entity.visualPulse = 0.42;
-      this.diagnostics.lifecycleTransitions.fruitingBursts += 1;
-      this.emitBurst('birth', entity.position, 8 + entity.size * 0.7, 0.12 + entity.hueShift * 0.04);
-      this.emitWorldEvent({ type: 'fruitCreated', time: this.time, position: { ...entity.position }, sourceEntityId: entity.id, count: fruitCount });
-    }
-
-    const propaguleChance = entity.type === 'ephemeral' ? 0.24 : entity.type === 'canopy' ? 0.06 : 0.1;
-    if (entity.stage !== 'birth' && entity.pollination > 0.4 && entity.energy > 0.56 && this.rng.next() < dt * propaguleChance * clamp(sample.nutrient + temperatureComfort, 0.4, 1.4)) {
-      this.spawnPropagule(entity.position, entity.type === 'canopy' ? 'seed' : 'spore', entity.type, entity.id, entity.type === 'canopy' ? 0.56 : 0.38);
-      entity.pollination *= entity.type === 'ephemeral' ? 0.88 : 0.92;
-    }
-
-    if (entity.stage === 'decay' && (fertilityScore < 0.34 || entity.energy < 0.28 || temperatureComfort < 0.22)) {
-      entity.visualState = 'dying';
-      entity.visualPulse = Math.max(entity.visualPulse, 0.18);
-      entity.energy = clamp(entity.energy - dt * (entity.type === 'ephemeral' ? 0.022 : 0.015), 0, 1.4);
-    }
-  }
-
   private updateCreature(
     entity: Entity,
     sample: FieldSample,
     neighbors: Entity[],
     dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+    localStats: SpeciesLocalStats,
   ): void {
+    const speciesContext = this.createSpeciesRuntimeContext();
+
     if (entity.type === 'cluster') {
-      this.updateDecomposer(entity, sample, neighbors, dt, localStats);
+      updateDecomposer(speciesContext, entity, sample, neighbors, dt, localStats);
       return;
     }
     if (entity.type === 'predator') {
-      this.updatePredator(entity, sample, neighbors, dt, localStats);
+      updatePredator(speciesContext, entity, sample, neighbors, dt, localStats);
       return;
     }
     if (entity.type === 'grazer') {
-      this.updateGrazer(entity, sample, neighbors, dt, localStats);
+      updateGrazer(speciesContext, entity, sample, neighbors, dt, localStats);
       return;
     }
     if (entity.type === 'parasite') {
-      this.updateParasite(entity, sample, neighbors, dt, localStats);
+      updateParasite(speciesContext, entity, sample, neighbors, dt, localStats);
       return;
     }
 
-    this.updatePollinator(entity, sample, neighbors, dt, localStats);
+    updatePollinator(speciesContext, entity, sample, neighbors, dt, localStats);
   }
 
   private shouldEmitSound(
@@ -1331,473 +1256,50 @@ export class Simulation {
     return true;
   }
 
-  private updatePredator(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
-  ): void {
-    const hungerNeed = clamp((0.62 - entity.energy) * 0.72 + (0.56 - entity.food) * 0.92, 0, 1.2);
-
-    let loudestSignal: Entity | undefined;
-    let loudestScore = 0;
-    for (const other of neighbors) {
-      if (other.id === entity.id) continue;
-      const offset = this.delta(entity.position, other.position);
-      const distance = Math.max(1, Math.hypot(offset.x, offset.y));
-      const amplitude = clamp(other.visualPulse * 0.52 + other.activity * 0.3 + other.energy * 0.1, 0, 1.4);
-      const repetitiveness = clamp(other.acousticPattern * 0.7 + other.pulse * 0.3, 0, 1.2);
-      const irregularity = clamp(Math.abs(other.acousticPattern - other.pulse), 0, 1);
-      const regularity = 1 - irregularity * 0.7;
-      const silenceCover = clamp(0.34 - other.activity * 0.14 - other.visualPulse * 0.22, 0, 0.26);
-      const score = Math.max(0, (amplitude * 0.64 + repetitiveness * 0.46) * regularity - silenceCover) * clamp(1 - distance / 320, 0, 1);
-      if (score > loudestScore) {
-        loudestScore = score;
-        loudestSignal = other;
-      }
-    }
-
-    entity.acousticPressure = lerp(entity.acousticPressure, loudestScore, dt * 0.6);
-    entity.acousticPattern = lerp(entity.acousticPattern, loudestSignal ? loudestSignal.acousticPattern : 0.2, dt * 0.35);
-    const opportunity = clamp(entity.acousticPressure * 0.62 + loudestScore * 0.38, 0, 1.4);
-    if (entity.predatorState === 'resting') {
-      if (hungerNeed > 0.64 || (hungerNeed > 0.4 && opportunity > 0.42)) {
-        entity.predatorState = 'hunting';
-      }
-    } else if (hungerNeed < 0.24 && opportunity < 0.2) {
-      entity.predatorState = 'resting';
-    }
-    const hunting = entity.predatorState === 'hunting';
-
-    const basinBias = habitatMatch(sample, 'basin');
-    entity.velocity.x += sample.flow.x * dt * 0.022 + sample.fertilityGradient.x * dt * (1.2 + basinBias * 1.4) - sample.gradient.x * dt * 1.8;
-    entity.velocity.y += sample.flow.y * dt * 0.022 + sample.fertilityGradient.y * dt * (1.2 + basinBias * 1.4) - sample.gradient.y * dt * 1.8;
-
-    if (hunting && loudestSignal && loudestScore > 0.24) {
-      const offset = this.delta(entity.position, loudestSignal.position);
-      const distance = Math.max(1, Math.hypot(offset.x, offset.y));
-      const pull = smoothstep(320, 0, distance) * (6 + loudestScore * 8);
-      entity.velocity.x += (offset.x / distance) * pull * dt;
-      entity.velocity.y += (offset.y / distance) * pull * dt;
-      entity.targetId = loudestSignal.id;
-      entity.targetKind = 'signal';
-      entity.activity = lerp(entity.activity, 0.5 + loudestScore * 0.4, dt * 1.8);
-      localStats.threat += dt * (0.03 + loudestScore * 0.18);
-      if (distance < 26) {
-        entity.food = clamp(entity.food + dt * 0.24, 0, 1.4);
-      }
-    } else {
-      entity.targetId = undefined;
-      entity.targetKind = undefined;
-      const driftTheta = this.time * 0.01 + entity.id * 0.36;
-      entity.velocity.x += Math.cos(driftTheta) * dt * (hunting ? 0.28 : 0.18);
-      entity.velocity.y += Math.sin(driftTheta * 0.8) * dt * (hunting ? 0.24 : 0.16);
-      entity.activity = lerp(entity.activity, hunting ? 0.2 : 0.06, dt * 1.6);
-    }
-
-    entity.velocity.x *= Math.pow(0.964, dt * 60);
-    entity.velocity.y *= Math.pow(0.964, dt * 60);
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt * (0.26 + entity.activity * 0.34),
-      y: entity.position.y + entity.velocity.y * dt * (0.26 + entity.activity * 0.34),
-    });
-    entity.energy = clamp(entity.energy + dt * (hunting ? -0.011 : 0.0024), 0, 1.2);
-    entity.harmony = clamp(lerp(entity.harmony, 0.14 + sample.resonance * 0.2, dt * 0.04), 0, 1.1);
+  private createSpeciesRuntimeContext(): SpeciesRuntimeContext {
+    return {
+      now: this.time,
+      delta: (a, b) => this.delta(a, b),
+      wrapPosition: (position) => this.wrapPosition(position),
+      habitatMatch,
+      habitatPenalty,
+      shouldReuseTarget: (entity) => this.shouldReuseTarget(entity),
+      scheduleRetarget: (entity, urgency) => this.scheduleRetarget(entity, urgency),
+      getTrackedParticleTarget: (entity, radius, predicate) => this.getTrackedParticleTarget(entity, radius, predicate),
+      getTrackedResidueTarget: (entity, radius) => this.getTrackedResidueTarget(entity, radius),
+      getTrackedBloomTarget: (entity, radius, grazer = false) => this.getTrackedBloomTarget(entity, radius, grazer),
+      findFoodTarget: (position, radius, predicate) => this.findFoodTarget(position, radius, predicate),
+      findBloomTarget: (position) => this.findBloomTarget(position),
+      findGrazerBloomTarget: (position) => this.findGrazerBloomTarget(position),
+      findResidueTarget: (position) => this.findResidueTarget(position),
+      consumeParticle: (entity, particle, dt, seekRadius, pullRadius, fruitPull, feedPull, gain, localStats) => this.consumeParticle(entity, particle, dt, seekRadius, pullRadius, fruitPull, feedPull, gain, localStats),
+      computePairResonance: (a, b, proximity) => this.computePairResonance(a, b, proximity),
+      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) => this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
+      seedTerrain: (position, radius, fertility, moisture, solidity, duration) => this.seedTerrain(position, radius, fertility, moisture, solidity, duration),
+      spawnParticle: (origin, spread, kind, initial, sourceEntityId) => this.spawnParticle(origin, spread, kind, initial, sourceEntityId),
+      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
+      emitWorldEvent: (event) => this.emitWorldEvent(event),
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrient) => this.spawnPropagule(position, kind, species, sourceEntityId, nutrient),
+      spawnResidue: (position, nutrient, sourceType) => this.spawnResidue(position, nutrient, sourceType),
+      random: () => this.rng.next(),
+      randomRange: (min, max) => this.rng.range(min, max),
+      shouldEmitSound: (entity, dt, baseRate, contextWeight) => this.shouldEmitSound(entity, dt, baseRate, contextWeight),
+      incrementTargetRetargets: () => {
+        this.diagnostics.queryCounts.targetRetargets += 1;
+      },
+      incrementFruitingBursts: () => {
+        this.diagnostics.lifecycleTransitions.fruitingBursts += 1;
+      },
+    };
   }
 
-  private updatePollinator(
+  private updatePlant(
     entity: Entity,
     sample: FieldSample,
-    neighbors: Entity[],
     dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+    localStats: SpeciesLocalStats,
   ): void {
-    const nearestFood = this.shouldReuseTarget(entity)
-      ? this.getTrackedParticleTarget(entity, 240, (particle) => particle.kind === 'fruit' || particle.kind === 'feed')
-      : undefined;
-    const bloomTarget = !nearestFood && this.shouldReuseTarget(entity)
-      ? this.getTrackedBloomTarget(entity, 340)
-      : undefined;
-    const activeFood = nearestFood ?? (!bloomTarget
-      ? this.findFoodTarget(entity.position, 240, (particle) => particle.kind === 'fruit' || particle.kind === 'feed')
-      : undefined);
-    const activeBloomTarget = activeFood ? undefined : (bloomTarget ?? this.findBloomTarget(entity.position));
-    if (!nearestFood && !bloomTarget) this.diagnostics.queryCounts.targetRetargets += 1;
-    const nearestOffset = activeBloomTarget ? this.delta(entity.position, activeBloomTarget.position) : undefined;
-    const nearestDistance = activeBloomTarget ? Math.hypot(nearestOffset!.x, nearestOffset!.y) : Infinity;
-
-    let cohesionX = 0;
-    let cohesionY = 0;
-    let separationX = 0;
-    let separationY = 0;
-    let neighborCount = 0;
-
-    for (const other of neighbors) {
-      if (other.type !== 'flocker') continue;
-      const offset = this.delta(entity.position, other.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const proximity = clamp(1 - dist / 150, 0, 1);
-      if (proximity <= 0) continue;
-      neighborCount += 1;
-      cohesionX += offset.x * proximity;
-      cohesionY += offset.y * proximity;
-      separationX -= (offset.x / dist) * proximity * proximity;
-      separationY -= (offset.y / dist) * proximity * proximity;
-      const pair = this.computePairResonance(entity, other, proximity);
-      entity.harmony = clamp(entity.harmony + (pair.harmony - pair.dissonance * 0.18) * dt * 0.08, 0, 1.2);
-      entity.stability = clamp(entity.stability + (pair.harmony - pair.dissonance * 0.12) * dt * 0.04, 0, 1.2);
-    }
-
-    const wanderTheta = this.time * (0.03 + entity.activityBias * 0.028) + entity.id * 0.6;
-    entity.velocity.x += Math.cos(wanderTheta) * dt * 1.6 * entity.activity;
-    entity.velocity.y += Math.sin(wanderTheta * 0.85) * dt * 1.2 * entity.activity;
-    const wetPull = habitatMatch(sample, 'wetland');
-    const basinPull = habitatMatch(sample, 'basin');
-    const ridgePush = habitatPenalty(sample, 'highland');
-    entity.velocity.x += sample.flow.x * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.x * dt * (5.8 + basinPull * 3.8) - sample.gradient.x * dt * (4.2 + ridgePush * 4.8);
-    entity.velocity.y += sample.flow.y * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.y * dt * (5.8 + basinPull * 3.8) - sample.gradient.y * dt * (4.2 + ridgePush * 4.8);
-
-    if (activeBloomTarget && nearestOffset && nearestDistance < 320) {
-      const dist = nearestDistance || 1;
-      const nx = nearestOffset.x / dist;
-      const ny = nearestOffset.y / dist;
-      const tangentX = -ny;
-      const tangentY = nx;
-      const curve = 0.55 + Math.sin(this.time * 0.12 + entity.id) * 0.24;
-      const pull = smoothstep(320, 0, dist) * 18;
-      entity.velocity.x += (nx * pull + tangentX * curve * 8) * dt;
-      entity.velocity.y += (ny * pull + tangentY * curve * 8) * dt;
-      entity.targetId = activeBloomTarget.id;
-      entity.targetKind = 'bloom';
-      entity.memory = clamp(entity.memory + dt * 0.08, 0, 1.2);
-      this.scheduleRetarget(entity, 1.15);
-
-      if (dist < entity.size + activeBloomTarget.size + 14) {
-        activeBloomTarget.pollination = clamp(activeBloomTarget.pollination + dt * 0.48, 0, 1.8);
-        activeBloomTarget.energy = clamp(activeBloomTarget.energy + dt * 0.12, 0, 1.5);
-        activeBloomTarget.growth = clamp(activeBloomTarget.growth + dt * 0.08, 0, 1.8);
-        activeBloomTarget.visualState = 'feeding';
-        activeBloomTarget.visualPulse = Math.max(activeBloomTarget.visualPulse, 0.22);
-        entity.visualState = 'feeding';
-        entity.visualPulse = Math.max(entity.visualPulse, 0.3);
-        entity.energy = clamp(entity.energy + dt * 0.06, 0, 1.5);
-        entity.food = clamp(entity.food + dt * 0.04, 0, 1.5);
-        localStats.fruit += dt * 0.8;
-      }
-    } else if (activeFood) {
-      this.consumeParticle(entity, activeFood, dt, 240, 190, 16, 12, 0.2, localStats);
-      this.scheduleRetarget(entity, 1.35);
-    } else {
-      entity.targetId = undefined;
-      entity.targetKind = undefined;
-      this.scheduleRetarget(entity, 0.72);
-    }
-
-    if (neighborCount > 0) {
-      const inv = 1 / neighborCount;
-      entity.velocity.x += cohesionX * inv * dt * 0.012;
-      entity.velocity.y += cohesionY * inv * dt * 0.012;
-      entity.velocity.x += separationX * dt * 7.5;
-      entity.velocity.y += separationY * dt * 7.5;
-    }
-
-    if (sample.traversability < 0.28 || sample.terrain === 'solid' || ridgePush > 0.72) {
-      entity.velocity.x -= sample.gradient.x * dt * (10 + ridgePush * 8) + sample.flow.x * dt * 0.04;
-      entity.velocity.y -= sample.gradient.y * dt * (10 + ridgePush * 8) + sample.flow.y * dt * 0.04;
-      entity.energy -= dt * (0.016 + ridgePush * 0.018);
-      entity.stability = clamp(entity.stability - dt * (0.024 + ridgePush * 0.028), 0, 1.2);
-    } else if (sample.terrain === 'dense') {
-      entity.velocity.x *= Math.pow(0.93, dt * 60);
-      entity.velocity.y *= Math.pow(0.93, dt * 60);
-      entity.stability = clamp(entity.stability + dt * 0.008, 0, 1.2);
-    } else if (sample.terrain === 'fertile' || basinPull > 0.42) {
-      entity.energy = clamp(entity.energy + dt * (0.008 + basinPull * 0.012), 0, 1.5);
-    } else if (sample.terrain === 'water' || wetPull > 0.48) {
-      entity.velocity.x += sample.moistureGradient.x * dt * (1.8 + wetPull * 1.2);
-      entity.velocity.y += sample.moistureGradient.y * dt * (1.8 + wetPull * 1.2);
-      entity.stability = clamp(entity.stability + dt * 0.006, 0, 1.2);
-    }
-
-    const damping = 0.982 - wetPull * 0.012 - ridgePush * 0.018;
-    entity.velocity.x *= Math.pow(damping, dt * 60);
-    entity.velocity.y *= Math.pow(damping, dt * 60);
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt * (0.46 + entity.activity * 0.72),
-      y: entity.position.y + entity.velocity.y * dt * (0.46 + entity.activity * 0.72),
-    });
-  }
-
-  private updateGrazer(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
-  ): void {
-    const nearestFruit = this.shouldReuseTarget(entity)
-      ? this.getTrackedParticleTarget(entity, 300, (particle) => particle.kind === 'fruit')
-      : undefined;
-    const bloomTarget = nearestFruit
-      ? undefined
-      : this.shouldReuseTarget(entity)
-        ? this.getTrackedBloomTarget(entity, 260, true)
-        : undefined;
-    const activeFruit = nearestFruit ?? this.findFoodTarget(entity.position, 300, (particle) => particle.kind === 'fruit');
-    const activeBloomTarget = activeFruit ? undefined : (bloomTarget ?? this.findGrazerBloomTarget(entity.position));
-    if (!nearestFruit && !bloomTarget) this.diagnostics.queryCounts.targetRetargets += 1;
-
-    const basinPull = habitatMatch(sample, 'basin');
-    const wetPenalty = habitatPenalty(sample, 'wetland');
-    const ridgePenalty = habitatPenalty(sample, 'highland');
-    entity.velocity.x += sample.flow.x * dt * 0.024 + sample.fertilityGradient.x * dt * (3.6 + basinPull * 4.2) - sample.gradient.x * dt * (2.6 + ridgePenalty * 3.8);
-    entity.velocity.y += sample.flow.y * dt * 0.024 + sample.fertilityGradient.y * dt * (3.6 + basinPull * 4.2) - sample.gradient.y * dt * (2.6 + ridgePenalty * 3.8);
-
-    let separationX = 0;
-    let separationY = 0;
-    let grazerCount = 0;
-    for (const other of neighbors) {
-      if (other.type !== 'grazer') continue;
-      const offset = this.delta(entity.position, other.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const proximity = clamp(1 - dist / 120, 0, 1);
-      if (proximity <= 0) continue;
-      grazerCount += 1;
-      separationX -= (offset.x / dist) * proximity * proximity;
-      separationY -= (offset.y / dist) * proximity * proximity;
-    }
-
-    const strideTheta = this.time * (0.014 + entity.activityBias * 0.008) + entity.id * 0.43;
-    entity.velocity.x += Math.cos(strideTheta) * dt * 0.72;
-    entity.velocity.y += Math.sin(strideTheta * 0.82) * dt * 0.56;
-
-    if (activeFruit) {
-      this.consumeParticle(entity, activeFruit, dt, 300, 300, 22, 22, 0.34, localStats);
-      entity.memory = clamp(entity.memory + dt * 0.08, 0, 1.2);
-      this.scheduleRetarget(entity, 1.4);
-    } else if (activeBloomTarget) {
-      const offset = this.delta(entity.position, activeBloomTarget.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const pull = smoothstep(260, 0, dist) * 14;
-      entity.velocity.x += (offset.x / dist) * pull * dt;
-      entity.velocity.y += (offset.y / dist) * pull * dt;
-      entity.targetId = activeBloomTarget.id;
-      entity.targetKind = 'bloom';
-      this.scheduleRetarget(entity, 1.1);
-
-      if (dist < entity.size + activeBloomTarget.size + 10) {
-        const browseAmount = Math.min(dt * 0.12, activeBloomTarget.pollination * 0.1 + activeBloomTarget.energy * 0.04);
-        activeBloomTarget.pollination = clamp(activeBloomTarget.pollination - browseAmount * 0.3, 0, 1.8);
-        activeBloomTarget.energy = clamp(activeBloomTarget.energy - browseAmount * 0.08, 0, 1.5);
-        activeBloomTarget.visualState = 'feeding';
-        activeBloomTarget.visualPulse = Math.max(activeBloomTarget.visualPulse, 0.18);
-        entity.energy = clamp(entity.energy + browseAmount * 0.72, 0, 1.5);
-        entity.food = clamp(entity.food + browseAmount * 0.84, 0, 1.6);
-        entity.growth = clamp(entity.growth + browseAmount * 0.2, 0, 1.8);
-        entity.visualState = 'feeding';
-        entity.visualPulse = Math.max(entity.visualPulse, 0.38);
-        entity.pulse = Math.max(entity.pulse, 0.22);
-        entity.acousticPressure = clamp(entity.acousticPressure + browseAmount * 0.26, 0, 1.4);
-        if (this.shouldEmitSound(entity, dt, 1.6, 1 + browseAmount * 4)) {
-          this.emitBurst('feed', entity.position, 9 + entity.size * 0.8, 0.12 + entity.hueShift * 0.03);
-          this.emitWorldEvent({ type: 'entityFed', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: 'fruit' });
-        }
-      }
-    } else {
-      entity.targetId = undefined;
-      entity.targetKind = undefined;
-      this.scheduleRetarget(entity, 0.68);
-      entity.energy = clamp(entity.energy - dt * 0.006, 0, 1.5);
-      entity.stability = clamp(entity.stability - dt * 0.008, 0, 1.2);
-      if (entity.energy < 0.24 || entity.food < 0.22) {
-        entity.visualState = 'dying';
-        entity.visualPulse = Math.max(entity.visualPulse, 0.18);
-      }
-    }
-
-    if (grazerCount > 0) {
-      entity.velocity.x += separationX * dt * 6.2;
-      entity.velocity.y += separationY * dt * 6.2;
-    }
-
-    if (sample.terrain === 'fertile' || basinPull > 0.38) {
-      entity.stability = clamp(entity.stability + dt * (0.008 + basinPull * 0.014), 0, 1.2);
-      entity.energy = clamp(entity.energy + dt * basinPull * 0.012, 0, 1.5);
-    } else if (sample.terrain === 'solid' || sample.traversability < 0.22 || ridgePenalty > 0.7) {
-      entity.energy = clamp(entity.energy - dt * (0.016 + ridgePenalty * 0.022), 0, 1.5);
-      entity.stability = clamp(entity.stability - dt * (0.016 + ridgePenalty * 0.024), 0, 1.2);
-    } else if (sample.terrain === 'water' || wetPenalty > 0.44) {
-      entity.velocity.x += sample.moistureGradient.x * dt * 1.1;
-      entity.velocity.y += sample.moistureGradient.y * dt * 1.1;
-      entity.energy = clamp(entity.energy - dt * (0.01 + wetPenalty * 0.016), 0, 1.5);
-    }
-
-    entity.harmony = clamp(lerp(entity.harmony, 0.24 + sample.resonance * 0.22 + entity.food * 0.16, dt * 0.05), 0, 1.1);
-    entity.velocity.x *= Math.pow(0.957, dt * 60);
-    entity.velocity.y *= Math.pow(0.957, dt * 60);
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt * (0.28 + entity.activity * 0.34),
-      y: entity.position.y + entity.velocity.y * dt * (0.28 + entity.activity * 0.34),
-    });
-  }
-
-  private updateDecomposer(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
-  ): void {
-    const residue = this.shouldReuseTarget(entity)
-      ? this.getTrackedResidueTarget(entity, 260)
-      : undefined;
-    const activeResidue = residue ?? this.findResidueTarget(entity.position);
-    if (!residue) this.diagnostics.queryCounts.targetRetargets += 1;
-    let targetOffset = activeResidue ? this.delta(entity.position, activeResidue.position) : undefined;
-    let targetDistance = activeResidue ? Math.hypot(targetOffset!.x, targetOffset!.y) : Infinity;
-
-    const wetBias = habitatMatch(sample, 'wetland');
-    const basinBias = habitatMatch(sample, 'basin');
-    const ridgePenalty = habitatPenalty(sample, 'highland');
-    entity.velocity.x += sample.flow.x * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.x * dt * (3.8 + basinBias * 2.2) - sample.gradient.x * dt * (2 + ridgePenalty * 3.2);
-    entity.velocity.y += sample.flow.y * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.y * dt * (3.8 + basinBias * 2.2) - sample.gradient.y * dt * (2 + ridgePenalty * 3.2);
-
-    if (activeResidue && targetOffset && targetDistance < 260) {
-      const dist = targetDistance || 1;
-      const nx = targetOffset.x / dist;
-      const ny = targetOffset.y / dist;
-      const tangentX = -ny;
-      const tangentY = nx;
-      const creep = smoothstep(260, 0, dist) * 8;
-      entity.velocity.x += (nx * creep + tangentX * 1.2) * dt;
-      entity.velocity.y += (ny * creep + tangentY * 1.2) * dt;
-      entity.targetId = activeResidue.id;
-      entity.targetKind = 'residue';
-      this.scheduleRetarget(entity, 1.1);
-
-      if (dist < activeResidue.radius * 0.46 + entity.size + 10) {
-        const consumed = Math.min(activeResidue.nutrient, dt * (0.045 + entity.appetite * 0.018));
-        activeResidue.nutrient = clamp(activeResidue.nutrient - consumed, 0, 1.2);
-        activeResidue.richness = clamp(activeResidue.richness - consumed * 0.65, 0, 1.4);
-        entity.energy = clamp(entity.energy + consumed * 0.84, 0, 1.4);
-        entity.food = clamp(entity.food + consumed * 0.66, 0, 1.5);
-        entity.growth = clamp(entity.growth + consumed * 0.46, 0, 1.8);
-        entity.memory = clamp(entity.memory + consumed * 0.7, 0, 1.2);
-        entity.visualState = 'feeding';
-        entity.visualPulse = Math.max(entity.visualPulse, 0.24);
-        this.seedTerrain(activeResidue.position, activeResidue.radius * 0.54, consumed * 0.42, consumed * 0.08, -consumed * 0.02, 5.2);
-        localStats.nutrients += consumed * 8;
-      }
-    } else {
-      entity.targetId = undefined;
-      entity.targetKind = undefined;
-      this.scheduleRetarget(entity, 0.72);
-      const crawlTheta = this.time * (0.012 + entity.activityBias * 0.01) + entity.id * 0.4;
-      entity.velocity.x += Math.cos(crawlTheta) * dt * 0.55;
-      entity.velocity.y += Math.sin(crawlTheta * 0.76) * dt * 0.42;
-      entity.energy = clamp(entity.energy - dt * 0.004, 0, 1.3);
-    }
-
-    for (const other of neighbors) {
-      if (other.type !== 'cluster') continue;
-      const offset = this.delta(entity.position, other.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const proximity = clamp(1 - dist / 110, 0, 1);
-      entity.velocity.x -= (offset.x / dist) * proximity * proximity * dt * 1.8;
-      entity.velocity.y -= (offset.y / dist) * proximity * proximity * dt * 1.8;
-    }
-
-    if (sample.terrain === 'dense' || wetBias > 0.34 || basinBias > 0.34) {
-      entity.stability = clamp(entity.stability + dt * (0.01 + wetBias * 0.018 + basinBias * 0.012), 0, 1.2);
-      entity.energy = clamp(entity.energy + dt * (0.004 + wetBias * 0.008 + basinBias * 0.006), 0, 1.4);
-    } else if (sample.terrain === 'solid' || sample.traversability < 0.24 || ridgePenalty > 0.64) {
-      entity.energy = clamp(entity.energy - dt * (0.008 + ridgePenalty * 0.014), 0, 1.4);
-    }
-
-    entity.harmony = clamp(lerp(entity.harmony, 0.18 + sample.resonance * 0.24 + entity.memory * 0.08, dt * 0.06), 0, 1.1);
-    entity.velocity.x *= Math.pow(0.965, dt * 60);
-    entity.velocity.y *= Math.pow(0.965, dt * 60);
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt * (0.3 + entity.activity * 0.4),
-      y: entity.position.y + entity.velocity.y * dt * (0.3 + entity.activity * 0.4),
-    });
-  }
-  private updateParasite(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
-  ): void {
-    const host = this.shouldReuseTarget(entity)
-      ? this.getTrackedBloomTarget(entity, 220)
-      : undefined;
-    const activeHost = host ?? this.findBloomTarget(entity.position);
-    const warmth = clamp(1 - Math.abs(sample.temperature - 0.66) * 1.6, 0, 1);
-    localStats.threat += dt * 0.04;
-    const denseBias = sample.terrain === 'dense' ? 0.12 : 0;
-    entity.velocity.x += sample.flow.x * dt * 0.018 + sample.fertilityGradient.x * dt * 2.2 - sample.gradient.x * dt * 1.2;
-    entity.velocity.y += sample.flow.y * dt * 0.018 + sample.fertilityGradient.y * dt * 2.2 - sample.gradient.y * dt * 1.2;
-
-    if (activeHost) {
-      const offset = this.delta(entity.position, activeHost.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const pull = smoothstep(220, 0, dist) * 10;
-      entity.velocity.x += (offset.x / dist) * pull * dt;
-      entity.velocity.y += (offset.y / dist) * pull * dt;
-      entity.targetId = activeHost.id;
-      entity.targetKind = 'bloom';
-      this.scheduleRetarget(entity, 1.15);
-      if (dist < entity.size + activeHost.size + 12) {
-        const siphon = Math.min(dt * 0.06, activeHost.energy * 0.04 + activeHost.food * 0.03 + activeHost.pollination * 0.02);
-        activeHost.energy = clamp(activeHost.energy - siphon * 0.8, 0, 1.5);
-        activeHost.food = clamp(activeHost.food - siphon * 0.4, 0, 1.6);
-        activeHost.pollination = clamp(activeHost.pollination - siphon * 0.22, 0, 1.8);
-        activeHost.visualState = 'dying';
-        activeHost.visualPulse = Math.max(activeHost.visualPulse, 0.22);
-        entity.energy = clamp(entity.energy + siphon * 1.1, 0, 1.4);
-        entity.food = clamp(entity.food + siphon * 0.8, 0, 1.5);
-        entity.growth = clamp(entity.growth + siphon * 0.36, 0, 1.8);
-        entity.memory = clamp(entity.memory + siphon * 0.48, 0, 1.2);
-        entity.visualState = 'feeding';
-        entity.visualPulse = Math.max(entity.visualPulse, 0.28);
-        this.affectEnvironment(entity.position, 36 + entity.size * 2, -siphon * 0.32, siphon * 0.06);
-        if (this.rng.next() < dt * 0.8) {
-          this.spawnResidue(entity.position, siphon * 0.28 + 0.04, 'parasite');
-        }
-      }
-    } else {
-      entity.targetId = undefined;
-      entity.targetKind = undefined;
-      const sway = this.time * (0.01 + entity.activityBias * 0.008) + entity.id * 0.37;
-      entity.velocity.x += Math.cos(sway) * dt * 0.44;
-      entity.velocity.y += Math.sin(sway * 0.81) * dt * 0.34;
-      entity.energy = clamp(entity.energy - dt * 0.01, 0, 1.4);
-      entity.food = clamp(entity.food - dt * 0.006, 0, 1.5);
-    }
-
-    for (const other of neighbors) {
-      if (other.type !== 'parasite') continue;
-      const offset = this.delta(entity.position, other.position);
-      const dist = Math.hypot(offset.x, offset.y) || 1;
-      const proximity = clamp(1 - dist / 80, 0, 1);
-      entity.velocity.x -= (offset.x / dist) * proximity * proximity * dt * 2.2;
-      entity.velocity.y -= (offset.y / dist) * proximity * proximity * dt * 2.2;
-    }
-
-    entity.harmony = clamp(lerp(entity.harmony, 0.16 + sample.resonance * 0.18 + warmth * 0.08 + denseBias, dt * 0.06), 0, 1.1);
-    entity.stability = clamp(entity.stability + dt * (warmth * 0.012 + denseBias * 0.04 - habitatPenalty(sample, 'highland') * 0.018), 0, 1.2);
-    entity.velocity.x *= Math.pow(0.968, dt * 60);
-    entity.velocity.y *= Math.pow(0.968, dt * 60);
-    entity.position = this.wrapPosition({
-      x: entity.position.x + entity.velocity.x * dt * (0.24 + entity.activity * 0.28),
-      y: entity.position.y + entity.velocity.y * dt * (0.24 + entity.activity * 0.28),
-    });
-
-    if (entity.stage !== 'birth' && entity.energy > 0.7 && warmth > 0.4 && this.rng.next() < dt * 0.08) {
-      this.spawnPropagule(entity.position, 'spore', 'parasite', entity.id, 0.34);
-      entity.energy *= 0.92;
-    }
+    updatePlant(this.createSpeciesRuntimeContext(), entity, sample, dt, localStats);
   }
 
   private applyToolFields(
