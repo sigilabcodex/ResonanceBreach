@@ -29,7 +29,6 @@ import {
   WORLD_WIDTH,
   type EntityType,
   type HabitatType,
-  type LifecycleStage,
   type TerrainType,
   type ToolType,
 } from '../../config';
@@ -38,6 +37,10 @@ import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../ev
 import { createDefaultAttentionState, createDefaultCamera, createDefaultDiagnostics, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
 import { WorldFieldModel } from '../fields/worldField';
+import { handleDeathTransition, shouldPersist } from './lifecycle/persistence';
+import type { LifecycleRuntimeContext } from './lifecycle/types';
+import { computeLifecycleProgress, computeLifecycleStage } from './lifecycle/types';
+import { updateLifecycle } from './lifecycle/updateLifecycle';
 import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
 import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
 import type { SpawningRuntimeContext } from './spawning/types';
@@ -88,6 +91,7 @@ const FIELD_CELL_WIDTH = WORLD_WIDTH / FIELD_GRID_COLS;
 const FIELD_CELL_HEIGHT = WORLD_HEIGHT / FIELD_GRID_ROWS;
 const MAX_PROPAGULES = 320;
 const ROOTED_BLOOM_TYPES: EntityType[] = ['plant', 'ephemeral', 'canopy'];
+const ROOTED_BLOOM_TYPE_SET = new Set<EntityType>(ROOTED_BLOOM_TYPES);
 const TOOL_UNLOCK_SCHEDULE: Array<{ tool: ToolType; time: number; energy: number }> = [
   { tool: 'observe', time: 0, energy: 0 },
   { tool: 'grow', time: 0, energy: 0 },
@@ -366,19 +370,12 @@ export class Simulation {
     this.diagnostics.counts.terrainModifiers = this.terrainModifiers.length;
 
     const survivors: Entity[] = [];
+    const lifecycleContext = this.createLifecycleRuntimeContext();
     const localStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0, temperature: 0 };
 
     for (let i = 0; i < this.entities.length; i += 1) {
       const entity = this.entities[i] as Entity;
-      entity.age += dt;
-      entity.pulse = Math.max(0, entity.pulse - dt * 0.28);
-      entity.visualPulse = Math.max(0, entity.visualPulse - dt * 0.44);
-      entity.reproductionCooldown = Math.max(0, entity.reproductionCooldown - dt);
-      entity.fruitCooldown = Math.max(0, entity.fruitCooldown - dt);
-      entity.soundCooldown = Math.max(0, entity.soundCooldown - dt);
-      entity.stageProgress = this.getLifecycleProgress(entity);
-      entity.stage = this.getStage(entity.stageProgress);
-      if (entity.visualPulse <= 0.03 && entity.visualState !== 'dying') entity.visualState = 'idle';
+      updateLifecycle(entity, dt, lifecycleContext);
 
       const sample = this.sampleField(entity.position.x, entity.position.y);
       const neighbors = this.getNeighbors(i, NEIGHBOR_RADIUS);
@@ -386,9 +383,9 @@ export class Simulation {
       this.applyEntityBehavior(entity, sample, neighbors, dt, 0, localStats);
       this.diagnostics.speciesUpdateTimeMs[entity.type] += performance.now() - entityUpdateStart;
 
-      const persists = this.shouldPersist(entity);
+      const persists = shouldPersist(entity, lifecycleContext);
       if (persists) survivors.push(entity);
-      else this.handleDeath(entity);
+      else handleDeathTransition(entity, lifecycleContext);
       this.syncEntityBucket(entity, persists);
     }
 
@@ -1178,8 +1175,8 @@ export class Simulation {
     else this.updateCreature(entity, sample, neighbors, dt, localStats);
 
     entity.vitality = clamp(entity.energy * 0.55 + entity.food * 0.25 + entity.stability * 0.2, 0, 1.6);
-    entity.stageProgress = this.getLifecycleProgress(entity);
-    entity.stage = this.getStage(entity.stageProgress);
+    entity.stageProgress = computeLifecycleProgress(entity, ROOTED_BLOOM_TYPE_SET);
+    entity.stage = computeLifecycleStage(entity.stageProgress);
     entity.size = clamp(entity.baseSize * (0.68 + entity.growth * 0.42 + entity.stageProgress * 0.24 + (rooted ? entity.pollination * 0.04 : entity.type === 'grazer' ? entity.food * 0.05 : 0)), entity.baseSize * 0.54, entity.baseSize * 2.1);
     entity.heading = Math.atan2(entity.velocity.y || 0.001, entity.velocity.x || 0.001);
     entity.acousticPattern = lerp(
@@ -1849,20 +1846,20 @@ export class Simulation {
     }
   }
 
-  private shouldPersist(entity: Entity): boolean {
-    if (entity.energy <= 0.04 || entity.food <= 0.03) return false;
-    if (entity.stageProgress >= 1 && entity.energy < 0.2) return false;
-    if (!ROOTED_BLOOM_TYPES.includes(entity.type) && entity.stability <= 0.04) return false;
-    return true;
-  }
-
-  private handleDeath(entity: Entity): void {
-    this.spawnResidue(entity.position, clamp(0.26 + entity.growth * 0.3 + entity.vitality * 0.24 + entity.pollination * 0.1, 0.18, 1), entity.type);
-    this.diagnostics.lifecycleTransitions.deaths += 1;
-    if (ROOTED_BLOOM_TYPES.includes(entity.type) && this.rng.next() < 0.72) this.spawnPropagule(entity.position, entity.type === 'canopy' ? 'seed' : 'spore', entity.type, entity.id, 0.32);
-    if (entity.type === 'cluster' || entity.type === 'parasite') this.spawnPropagule(entity.position, 'spore', entity.type, entity.id, 0.24);
-    this.emitBurst('death', entity.position, 18 + entity.size * 1.4, 0.88 + entity.hueShift * 0.03);
-    this.emitWorldEvent({ type: 'entityDied', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id });
+  private createLifecycleRuntimeContext(): LifecycleRuntimeContext {
+    return {
+      now: this.time,
+      rootBloomTypes: ROOTED_BLOOM_TYPE_SET,
+      random: () => this.rng.next(),
+      spawnResidue: (position, nutrient, source) => this.spawnResidue(position, nutrient, source),
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrientBoost) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrientBoost),
+      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
+      emitWorldEvent: (event) => this.emitWorldEvent(event),
+      incrementDeaths: () => {
+        this.diagnostics.lifecycleTransitions.deaths += 1;
+      },
+    };
   }
 
   private spawnEntities(dt: number): void {
@@ -1871,7 +1868,7 @@ export class Simulation {
 
   private createSpawningRuntimeContext(): SpawningRuntimeContext {
     return {
-      rootBloomTypes: new Set(ROOTED_BLOOM_TYPES),
+      rootBloomTypes: ROOTED_BLOOM_TYPE_SET,
       maxBySpecies: {
         flocker: MAX_FLOCKERS,
         cluster: MAX_CLUSTERS,
@@ -2035,30 +2032,6 @@ export class Simulation {
     return { harmony, dissonance };
   }
 
-  private getStage(progress: number): LifecycleStage {
-    if (progress < 0.2) return 'birth';
-    if (progress < 0.48) return 'growth';
-    if (progress < 0.82) return 'mature';
-    return 'decay';
-  }
-
-  private getLifecycleProgress(entity: Entity): number {
-    if (ROOTED_BLOOM_TYPES.includes(entity.type)) {
-      const bloomHealth = clamp(entity.growth * 0.46 + entity.pollination * 0.28 + entity.energy * 0.16 + entity.food * 0.1, 0, 1);
-      const ageWeight = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(ageWeight * (entity.type === 'ephemeral' ? 0.5 : entity.type === 'canopy' ? 0.28 : 0.36) + bloomHealth * (entity.type === 'ephemeral' ? 0.5 : entity.type === 'canopy' ? 0.72 : 0.64), 0, 1);
-    }
-    if (entity.type === 'cluster') {
-      const decayArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(decayArc * 0.48 + entity.growth * 0.3 + entity.memory * 0.22, 0, 1);
-    }
-    if (entity.type === 'grazer') {
-      const grazeArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(grazeArc * 0.4 + entity.energy * 0.28 + entity.food * 0.26 + entity.growth * 0.06, 0, 1);
-    }
-    const driftArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-    return clamp(driftArc * 0.42 + entity.energy * 0.24 + entity.food * 0.22 + entity.memory * 0.12, 0, 1);
-  }
 
   private updateTrail(entity: Entity): void {
     if (ROOTED_BLOOM_TYPES.includes(entity.type)) {
@@ -2304,7 +2277,7 @@ export class Simulation {
       entity.visualPulse = 0.9;
       entity.visualState = 'dying';
       if (falloff > 0.74 && this.rng.next() < 0.16 && !ROOTED_BLOOM_TYPES.includes(entity.type)) {
-        this.handleDeath(entity);
+        handleDeathTransition(entity, this.createLifecycleRuntimeContext());
         continue;
       }
       survivors.push(entity);
