@@ -1,3 +1,4 @@
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './species/types';
 import {
   ATTRACTOR_COUNT,
   CAMERA_MAX_ZOOM,
@@ -36,20 +37,7 @@ import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../ev
 import { createDefaultAttentionState, createDefaultCamera, createDefaultDiagnostics, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
 import { WorldFieldModel } from '../fields/worldField';
-import { handleDeathTransition, shouldPersist } from './lifecycle/persistence';
-import type { LifecycleRuntimeContext } from './lifecycle/types';
-import { computeLifecycleProgress, computeLifecycleStage } from './lifecycle/types';
-import { updateLifecycle } from './lifecycle/updateLifecycle';
-import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
-import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
-import type { SpawningRuntimeContext } from './spawning/types';
-import { updateDecomposer } from './species/updateDecomposer';
-import { updateGrazer } from './species/updateGrazer';
-import { updateParasite } from './species/updateParasite';
-import { updatePlant } from './species/updatePlant';
-import { updatePollinator } from './species/updatePollinator';
-import { updatePredator } from './species/updatePredator';
-import type { SpeciesLocalStats, SpeciesRuntimeContext } from './species/types';
+
 import { buildHotspotSummary } from './diagnostics/hotspots';
 import {
   affectEnvironment as affectEnvironmentStep,
@@ -58,8 +46,23 @@ import {
   updateEnvironmentalFields as updateEnvironmentalFieldsStep,
   type EnvironmentalFieldGrid,
 } from './environment/fields';
+import { handleDeathTransition, shouldPersist } from './lifecycle/persistence';
+import type { LifecycleRuntimeContext } from './lifecycle/types';
+import { computeLifecycleProgress, computeLifecycleStage } from './lifecycle/types';
+import { updateLifecycle } from './lifecycle/updateLifecycle';
+import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
+import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
+import type { SpawningRuntimeContext } from './spawning/types';
+import { clamp, habitatMatch, habitatPenalty, lerp, smoothstep } from './species/shared';
+import { updateDecomposer } from './species/updateDecomposer';
+import { updateGrazer } from './species/updateGrazer';
+import { updateParasite } from './species/updateParasite';
+import { updatePlant } from './species/updatePlant';
+import { updatePollinator } from './species/updatePollinator';
+import { updatePredator } from './species/updatePredator';
 import { computeGardenStats, updateSimulationEnergy } from './stats/ecologyStats';
 import type { LocalEcologyStats } from './stats/types';
+
 import type {
   Attractor,
   AttentionState,
@@ -123,15 +126,7 @@ const TOOL_UNLOCK_SCHEDULE: Array<{ tool: ToolType; time: number; energy: number
   { tool: 'disrupt', time: 48, energy: 40 },
 ];
 
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const smoothstep = (edge0: number, edge1: number, value: number) => {
-  const t = clamp((value - edge0) / (edge1 - edge0 || 1), 0, 1);
-  return t * t * (3 - 2 * t);
-};
 const maxHabitatWeight = (sample: FieldSample) => Math.max(sample.habitatWeights.wetland, sample.habitatWeights.highland, sample.habitatWeights.basin);
-const habitatMatch = (sample: FieldSample, preferred: HabitatType) => sample.habitatWeights[preferred];
-const habitatPenalty = (sample: FieldSample, avoided: HabitatType) => sample.habitatWeights[avoided];
 const fract = (value: number) => value - Math.floor(value);
 const wrap = (value: number, size: number) => ((value % size) + size) % size;
 const wrapDelta = (from: number, to: number, size: number) => {
@@ -227,6 +222,7 @@ export class Simulation {
   constructor() {
     this.reset();
   }
+
 
   reset(): void {
     this.rng = new Rng(0xdecafbad);
@@ -1133,6 +1129,7 @@ export class Simulation {
       : 0;
     const nearbyResidue = entity.type === 'cluster' || entity.type === 'parasite' ? this.getResidueInfluence(entity.position.x, entity.position.y) : 0;
     const rooted = ROOTED_BLOOM_TYPES.includes(entity.type);
+    const speciesContext = this.createSpeciesRuntimeContext();
     const targetActivity = rooted
       ? 0.06 + sample.fertility * 0.08 + sample.nutrient * 0.14 + focusWeight * 0.08 + entity.pollination * 0.05 + (entity.type === 'ephemeral' ? 0.08 : entity.type === 'canopy' ? -0.01 : 0)
       : entity.type === 'cluster'
@@ -1153,7 +1150,7 @@ export class Simulation {
     this.applyToolFields(entity, dt);
     entity.boundaryFade = lerp(entity.boundaryFade, clamp(0.58 + sample.traversability * 0.42, 0.52, 1), dt * 0.24);
 
-    if (rooted) this.updatePlant(entity, sample, dt, localStats);
+    if (rooted) updatePlant(speciesContext, entity, sample, dt, localStats);
     else this.updateCreature(entity, sample, neighbors, dt, localStats);
 
     entity.vitality = clamp(entity.energy * 0.55 + entity.food * 0.25 + entity.stability * 0.2, 0, 1.6);
@@ -1175,36 +1172,113 @@ export class Simulation {
     localStats.nutrients += sample.nutrient;
     localStats.temperature += sample.temperature;
   }
+  private createSpeciesRuntimeContext(): SpeciesRuntimeContext {
+    return {
+      now: this.time,
+      delta: (from, to) => this.delta(from, to),
+      wrapPosition: (position) => this.wrapPosition(position),
 
-  private updateCreature(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: SpeciesLocalStats,
-  ): void {
-    const speciesContext = this.createSpeciesRuntimeContext();
+      habitatMatch,
+      habitatPenalty,
 
-    if (entity.type === 'cluster') {
-      updateDecomposer(speciesContext, entity, sample, neighbors, dt, localStats);
-      return;
-    }
-    if (entity.type === 'predator') {
-      updatePredator(speciesContext, entity, sample, neighbors, dt, localStats);
-      return;
-    }
-    if (entity.type === 'grazer') {
-      updateGrazer(speciesContext, entity, sample, neighbors, dt, localStats);
-      return;
-    }
-    if (entity.type === 'parasite') {
-      updateParasite(speciesContext, entity, sample, neighbors, dt, localStats);
-      return;
-    }
+      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) =>
+        this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
 
-    updatePollinator(speciesContext, entity, sample, neighbors, dt, localStats);
+      seedTerrain: (position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness) =>
+        this.seedTerrain(position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness),
+
+      spawnParticle: (position, radius, kind, fromTool, sourceEntityId) =>
+        this.spawnParticle(position, radius, kind, fromTool ?? false, sourceEntityId),
+
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrient) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrient),
+
+      spawnResidue: (position, nutrient, source) =>
+        this.spawnResidue(position, nutrient, source),
+
+      emitBurst: (type, position, radius, intensity) =>
+        this.emitBurst(type, position, radius, intensity),
+
+      emitWorldEvent: (input) =>
+        this.emitWorldEvent(input),
+
+      random: () => this.rng.next(),
+      randomRange: (min, max) => this.rng.range(min, max),
+
+      shouldEmitSound: (entity, dt, baseRate, contextWeight) =>
+        this.shouldEmitSound(entity, dt, baseRate, contextWeight),
+
+      scheduleRetarget: (entity, duration) =>
+        this.scheduleRetarget(entity, duration),
+
+      shouldReuseTarget: (entity) =>
+        this.shouldReuseTarget(entity),
+
+      consumeParticle: (entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats) =>
+        this.consumeParticle(entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats),
+
+      getTrackedParticleTarget: (entity, maxDistance, predicate) =>
+        this.getTrackedParticleTarget(entity, maxDistance, predicate),
+
+      getTrackedBloomTarget: (entity, maxDistance, requireMature) =>
+        this.getTrackedBloomTarget(entity, maxDistance, requireMature ?? false),
+
+      getTrackedResidueTarget: (entity, maxDistance) =>
+        this.getTrackedResidueTarget(entity, maxDistance),
+
+      findFoodTarget: (position, maxDistance, predicate) =>
+        this.findFoodTarget(position, maxDistance, predicate),
+
+      findBloomTarget: (position) =>
+        this.findBloomTarget(position),
+
+      findGrazerBloomTarget: (position) =>
+        this.findGrazerBloomTarget(position),
+
+      findResidueTarget: (position) =>
+        this.findResidueTarget(position),
+
+      computePairResonance: (entity, other, proximity) =>
+        this.computePairResonance(entity, other, proximity),
+
+      incrementTargetRetargets: () => {
+        this.diagnostics.queryCounts.targetRetargets += 1;
+      },
+
+      incrementFruitingBursts: () => {
+        this.diagnostics.lifecycleTransitions.fruitingBursts += 1;
+      },
+    };
   }
 
+  private updateCreature(
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
+): void {
+  const speciesContext = this.createSpeciesRuntimeContext();
+
+  if (entity.type === 'cluster') {
+    updateDecomposer(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'predator') {
+    updatePredator(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'grazer') {
+    updateGrazer(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'parasite') {
+    updateParasite(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+
+  updatePollinator(speciesContext, entity, sample, neighbors, dt, localStats);
+}
   private shouldEmitSound(
     entity: Entity,
     dt: number,
@@ -1230,53 +1304,6 @@ export class Simulation {
     entity.soundCooldown = this.rng.range(0.2, 1.1) * (entity.visualState === 'idle' ? 1.2 : 0.85);
     return true;
   }
-
-  private createSpeciesRuntimeContext(): SpeciesRuntimeContext {
-    return {
-      now: this.time,
-      delta: (a, b) => this.delta(a, b),
-      wrapPosition: (position) => this.wrapPosition(position),
-      habitatMatch,
-      habitatPenalty,
-      shouldReuseTarget: (entity) => this.shouldReuseTarget(entity),
-      scheduleRetarget: (entity, urgency) => this.scheduleRetarget(entity, urgency),
-      getTrackedParticleTarget: (entity, radius, predicate) => this.getTrackedParticleTarget(entity, radius, predicate),
-      getTrackedResidueTarget: (entity, radius) => this.getTrackedResidueTarget(entity, radius),
-      getTrackedBloomTarget: (entity, radius, grazer = false) => this.getTrackedBloomTarget(entity, radius, grazer),
-      findFoodTarget: (position, radius, predicate) => this.findFoodTarget(position, radius, predicate),
-      findBloomTarget: (position) => this.findBloomTarget(position),
-      findGrazerBloomTarget: (position) => this.findGrazerBloomTarget(position),
-      findResidueTarget: (position) => this.findResidueTarget(position),
-      consumeParticle: (entity, particle, dt, seekRadius, pullRadius, fruitPull, feedPull, gain, localStats) => this.consumeParticle(entity, particle, dt, seekRadius, pullRadius, fruitPull, feedPull, gain, localStats),
-      computePairResonance: (a, b, proximity) => this.computePairResonance(a, b, proximity),
-      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) => this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
-      seedTerrain: (position, radius, fertility, moisture, solidity, duration) => this.seedTerrain(position, radius, fertility, moisture, solidity, duration),
-      spawnParticle: (origin, spread, kind, initial, sourceEntityId) => this.spawnParticle(origin, spread, kind, initial, sourceEntityId),
-      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
-      emitWorldEvent: (event) => this.emitWorldEvent(event),
-      spawnPropagule: (position, kind, species, sourceEntityId, nutrient) => this.spawnPropagule(position, kind, species, sourceEntityId, nutrient),
-      spawnResidue: (position, nutrient, sourceType) => this.spawnResidue(position, nutrient, sourceType),
-      random: () => this.rng.next(),
-      randomRange: (min, max) => this.rng.range(min, max),
-      shouldEmitSound: (entity, dt, baseRate, contextWeight) => this.shouldEmitSound(entity, dt, baseRate, contextWeight),
-      incrementTargetRetargets: () => {
-        this.diagnostics.queryCounts.targetRetargets += 1;
-      },
-      incrementFruitingBursts: () => {
-        this.diagnostics.lifecycleTransitions.fruitingBursts += 1;
-      },
-    };
-  }
-
-  private updatePlant(
-    entity: Entity,
-    sample: FieldSample,
-    dt: number,
-    localStats: SpeciesLocalStats,
-  ): void {
-    updatePlant(this.createSpeciesRuntimeContext(), entity, sample, dt, localStats);
-  }
-
   private applyToolFields(
     entity: Entity,
     dt: number,
