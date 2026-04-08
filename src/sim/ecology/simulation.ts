@@ -2,7 +2,6 @@ import {
   ATTRACTOR_COUNT,
   CAMERA_MAX_ZOOM,
   CAMERA_MIN_ZOOM,
-  ENERGY_MAX,
   ENERGY_START,
   INITIAL_CANOPY_COUNT,
   INITIAL_CLUSTER_COUNT,
@@ -51,6 +50,16 @@ import { updatePlant } from './species/updatePlant';
 import { updatePollinator } from './species/updatePollinator';
 import { updatePredator } from './species/updatePredator';
 import type { SpeciesLocalStats, SpeciesRuntimeContext } from './species/types';
+import { buildHotspotSummary } from './diagnostics/hotspots';
+import {
+  affectEnvironment as affectEnvironmentStep,
+  initializeEnvironmentalFields as initializeEnvironmentalFieldsStep,
+  sampleEnvironmentalFields as sampleEnvironmentalFieldsStep,
+  updateEnvironmentalFields as updateEnvironmentalFieldsStep,
+  type EnvironmentalFieldGrid,
+} from './environment/fields';
+import { computeGardenStats, updateSimulationEnergy } from './stats/ecologyStats';
+import type { LocalEcologyStats } from './stats/types';
 import type {
   Attractor,
   AttentionState,
@@ -96,6 +105,13 @@ const FIELD_GRID_ROWS = 32;
 const FIELD_GRID_SIZE = FIELD_GRID_COLS * FIELD_GRID_ROWS;
 const FIELD_CELL_WIDTH = WORLD_WIDTH / FIELD_GRID_COLS;
 const FIELD_CELL_HEIGHT = WORLD_HEIGHT / FIELD_GRID_ROWS;
+const ENVIRONMENTAL_FIELD_GRID: EnvironmentalFieldGrid = {
+  cols: FIELD_GRID_COLS,
+  rows: FIELD_GRID_ROWS,
+  cellWidth: FIELD_CELL_WIDTH,
+  cellHeight: FIELD_CELL_HEIGHT,
+  size: FIELD_GRID_SIZE,
+};
 const MAX_PROPAGULES = 320;
 const ROOTED_BLOOM_TYPES: EntityType[] = ['plant', 'ephemeral', 'canopy'];
 const ROOTED_BLOOM_TYPE_SET = new Set<EntityType>(ROOTED_BLOOM_TYPES);
@@ -378,7 +394,7 @@ export class Simulation {
 
     const survivors: Entity[] = [];
     const lifecycleContext = this.createLifecycleRuntimeContext();
-    const localStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0, temperature: 0 };
+    const localStats: LocalEcologyStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0, temperature: 0 };
 
     for (let i = 0; i < this.entities.length; i += 1) {
       const entity = this.entities[i] as Entity;
@@ -659,96 +675,55 @@ export class Simulation {
     this.terrainSampleTimer = TERRAIN_SAMPLE_REFRESH_INTERVAL;
   }
 
-  private fieldIndex(col: number, row: number): number {
-    const wrappedCol = (col + FIELD_GRID_COLS) % FIELD_GRID_COLS;
-    const wrappedRow = (row + FIELD_GRID_ROWS) % FIELD_GRID_ROWS;
-    return wrappedRow * FIELD_GRID_COLS + wrappedCol;
-  }
-
   private initializeEnvironmentalFields(): void {
-    for (let row = 0; row < FIELD_GRID_ROWS; row += 1) {
-      for (let col = 0; col < FIELD_GRID_COLS; col += 1) {
-        const x = (col + 0.5) * FIELD_CELL_WIDTH;
-        const y = (row + 0.5) * FIELD_CELL_HEIGHT;
-        const base = this.worldField.sample(x, y, this.time, {
-          residueInfluence: 0,
-          modifiers: [],
-          delta: (a, b) => this.delta(a, b),
-        });
-        const index = this.fieldIndex(col, row);
-        const nutrient = clamp(base.fertility * 0.52 + base.moisture * 0.18 + base.nutrient * 0.2, 0.08, 0.92);
-        const temperature = clamp(base.temperature * 0.7 + base.elevation * 0.14 + (1 - base.moisture) * 0.08, 0.08, 0.92);
-        this.nutrientBaseline[index] = nutrient;
-        this.nutrientField[index] = nutrient;
-        this.temperatureBaseline[index] = temperature;
-        this.temperatureField[index] = temperature;
-      }
-    }
+    const initialized = initializeEnvironmentalFieldsStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      sampleBaseField: (x, y) => this.worldField.sample(x, y, this.time, {
+        residueInfluence: 0,
+        modifiers: [],
+        delta: (a, b) => this.delta(a, b),
+      }),
+    });
+    this.nutrientField.set(initialized.nutrientField);
+    this.nutrientBaseline.set(initialized.nutrientBaseline);
+    this.temperatureField.set(initialized.temperatureField);
+    this.temperatureBaseline.set(initialized.temperatureBaseline);
   }
 
   private sampleEnvironmentalFields(x: number, y: number): { nutrient: number; temperature: number } {
-    const gx = wrap(x, WORLD_WIDTH) / FIELD_CELL_WIDTH;
-    const gy = wrap(y, WORLD_HEIGHT) / FIELD_CELL_HEIGHT;
-    const x0 = Math.floor(gx);
-    const y0 = Math.floor(gy);
-    const tx = gx - x0;
-    const ty = gy - y0;
-    const x1 = x0 + 1;
-    const y1 = y0 + 1;
-    const n00 = this.nutrientField[this.fieldIndex(x0, y0)];
-    const n10 = this.nutrientField[this.fieldIndex(x1, y0)];
-    const n01 = this.nutrientField[this.fieldIndex(x0, y1)];
-    const n11 = this.nutrientField[this.fieldIndex(x1, y1)];
-    const t00 = this.temperatureField[this.fieldIndex(x0, y0)];
-    const t10 = this.temperatureField[this.fieldIndex(x1, y0)];
-    const t01 = this.temperatureField[this.fieldIndex(x0, y1)];
-    const t11 = this.temperatureField[this.fieldIndex(x1, y1)];
-    return {
-      nutrient: lerp(lerp(n00, n10, tx), lerp(n01, n11, tx), ty),
-      temperature: lerp(lerp(t00, t10, tx), lerp(t01, t11, tx), ty),
-    };
+    return sampleEnvironmentalFieldsStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      buffers: {
+        nutrientField: this.nutrientField,
+        temperatureField: this.temperatureField,
+      },
+    }, x, y);
   }
 
   private affectEnvironment(position: Vec2, radius: number, nutrientDelta: number, temperatureDelta: number): void {
-    const minCol = Math.floor((wrap(position.x - radius, WORLD_WIDTH)) / FIELD_CELL_WIDTH) - 1;
-    const maxCol = Math.floor((wrap(position.x + radius, WORLD_WIDTH)) / FIELD_CELL_WIDTH) + 1;
-    const minRow = Math.floor((wrap(position.y - radius, WORLD_HEIGHT)) / FIELD_CELL_HEIGHT) - 1;
-    const maxRow = Math.floor((wrap(position.y + radius, WORLD_HEIGHT)) / FIELD_CELL_HEIGHT) + 1;
-    for (let row = minRow; row <= maxRow; row += 1) {
-      for (let col = minCol; col <= maxCol; col += 1) {
-        const center = {
-          x: ((col + FIELD_GRID_COLS) % FIELD_GRID_COLS + 0.5) * FIELD_CELL_WIDTH,
-          y: ((row + FIELD_GRID_ROWS) % FIELD_GRID_ROWS + 0.5) * FIELD_CELL_HEIGHT,
-        };
-        const offset = this.delta(position, center);
-        const dist = Math.hypot(offset.x, offset.y);
-        if (dist > radius) continue;
-        const falloff = smoothstep(radius, 0, dist);
-        const index = this.fieldIndex(col, row);
-        this.nutrientField[index] = clamp(this.nutrientField[index] + nutrientDelta * falloff, 0, 1);
-        this.temperatureField[index] = clamp(this.temperatureField[index] + temperatureDelta * falloff, 0, 1);
-      }
-    }
+    affectEnvironmentStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      buffers: {
+        nutrientField: this.nutrientField,
+        temperatureField: this.temperatureField,
+      },
+      delta: (from, to) => this.delta(from, to),
+    }, position, radius, nutrientDelta, temperatureDelta);
   }
 
   private updateEnvironmentalFields(dt: number): void {
-    const nextNutrient = new Float32Array(FIELD_GRID_SIZE);
-    const nextTemperature = new Float32Array(FIELD_GRID_SIZE);
-    for (let row = 0; row < FIELD_GRID_ROWS; row += 1) {
-      for (let col = 0; col < FIELD_GRID_COLS; col += 1) {
-        const index = this.fieldIndex(col, row);
-        const left = this.fieldIndex(col - 1, row);
-        const right = this.fieldIndex(col + 1, row);
-        const up = this.fieldIndex(col, row - 1);
-        const down = this.fieldIndex(col, row + 1);
-        const nutrientAverage = (this.nutrientField[left] + this.nutrientField[right] + this.nutrientField[up] + this.nutrientField[down]) * 0.25;
-        const temperatureAverage = (this.temperatureField[left] + this.temperatureField[right] + this.temperatureField[up] + this.temperatureField[down]) * 0.25;
-        nextNutrient[index] = clamp(this.nutrientField[index] + (nutrientAverage - this.nutrientField[index]) * dt * 0.32 + (this.nutrientBaseline[index] - this.nutrientField[index]) * dt * 0.06, 0, 1);
-        nextTemperature[index] = clamp(this.temperatureField[index] + (temperatureAverage - this.temperatureField[index]) * dt * 0.18 + (this.temperatureBaseline[index] - this.temperatureField[index]) * dt * 0.04, 0, 1);
-      }
-    }
-    this.nutrientField = nextNutrient;
-    this.temperatureField = nextTemperature;
+    const nextFields = updateEnvironmentalFieldsStep(
+      ENVIRONMENTAL_FIELD_GRID,
+      {
+        nutrientField: this.nutrientField,
+        nutrientBaseline: this.nutrientBaseline,
+        temperatureField: this.temperatureField,
+        temperatureBaseline: this.temperatureBaseline,
+      },
+      dt,
+    );
+    this.nutrientField.set(nextFields.nutrientField);
+    this.temperatureField.set(nextFields.temperatureField);
   }
 
   private bucketIndex(value: number, size: number, bucketSize: number, bucketCount: number): number {
@@ -1149,7 +1124,7 @@ export class Simulation {
     neighbors: Entity[],
     dt: number,
     focusWeight: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+    localStats: LocalEcologyStats,
   ): void {
     const activityPulse = Math.sin(this.time * (0.018 + entity.activityBias * 0.015) + entity.id * 0.7) * 0.5 + 0.5;
     entity.retargetTimer = Math.max(0, (entity.retargetTimer ?? 0) - dt);
@@ -1417,59 +1392,18 @@ export class Simulation {
 
   private updateEnergy(
     dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+    localStats: LocalEcologyStats,
   ): void {
-    const interactions = Math.max(1, localStats.interactions);
-    const harmony = localStats.harmony / interactions;
-    const stability = localStats.stability / interactions;
-    const nutrientLift = localStats.nutrients / interactions;
-    const gain = clamp(harmony * 0.24 + stability * 0.24 + nutrientLift * 0.22, 0, 1) * dt * 5.6;
-    const loss = clamp(this.fields.filter((field) => field.tool !== 'observe').length * 0.03 + localStats.threat / interactions, 0, 1.2) * dt * 3.8;
-    this.energy = clamp(this.energy + gain - loss, 0, ENERGY_MAX);
+    this.energy = updateSimulationEnergy(this.energy, dt, localStats, this.fields);
   }
 
-  private computeStats(localStats?: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number }): GardenStats {
+  private computeStats(localStats?: LocalEcologyStats): GardenStats {
     const counts = this.countEntities();
-    const interactions = Math.max(1, localStats?.interactions ?? this.entities.length);
-    const harmony = clamp((localStats?.harmony ?? this.entities.reduce((sum, entity) => sum + entity.harmony, 0)) / interactions, 0, 1);
-    const activity = clamp((localStats?.activity ?? this.entities.reduce((sum, entity) => sum + entity.activity, 0)) / interactions, 0, 1);
-    const threat = clamp((localStats?.threat ?? counts.predator * 0.06) / interactions, 0, 1);
-    const stability = clamp((localStats?.stability ?? this.entities.reduce((sum, entity) => sum + entity.stability, 0)) / interactions, 0, 1);
-    const growth = clamp(this.entities.reduce((sum, entity) => sum + entity.growth, 0) / Math.max(1, this.entities.length), 0, 1);
-    const richness = [counts.flocker > 0, counts.cluster > 0, counts.plant > 0, counts.ephemeral > 0, counts.canopy > 0, counts.grazer > 0, counts.parasite > 0].filter(Boolean).length / 7;
-    const focus = clamp((localStats?.focus ?? 0) / Math.max(1, this.entities.length * 0.7), 0, 1);
-    const nutrients = clamp((localStats?.nutrients ?? this.terrain.reduce((sum, cell) => sum + cell.nutrient, 0)) / Math.max(1, this.terrain.length), 0, 1);
-    const fruit = clamp(((localStats?.fruit ?? this.particles.filter((particle) => particle.kind === 'fruit').length) / 24), 0, 1);
-    const temperature = clamp((localStats?.temperature ?? this.terrain.reduce((sum, cell) => sum + cell.temperature, 0)) / Math.max(1, this.terrain.length), 0, 1);
-    return {
-      harmony,
-      activity,
-      threat,
-      growth,
-      stability,
-      biodiversity: clamp(richness * 0.72 + this.entities.length / 120, 0, 1),
-      energy: this.energy / ENERGY_MAX,
-      focus,
-      nutrients,
-      fruit,
-      temperature,
-    };
+    return computeGardenStats(this.energy, counts, this.entities, this.terrain, this.particles, localStats);
   }
 
   private buildHotspotSummary(): string[] {
-    const speciesEntries = Object.entries(this.diagnostics.speciesUpdateTimeMs)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([type, timeMs]) => `${type} ${timeMs.toFixed(2)} ms`);
-    const querySummary = [
-      `field ${this.diagnostics.queryCounts.terrainSamples}`,
-      `neighbors ${this.diagnostics.queryCounts.neighbors}`,
-      `food ${this.diagnostics.queryCounts.foodSearches}`,
-      `residue ${this.diagnostics.queryCounts.residueSearches}`,
-    ]
-      .sort((a, b) => Number(b.split(' ')[1]) - Number(a.split(' ')[1]))
-      .slice(0, 2);
-    return [...speciesEntries, ...querySummary];
+    return buildHotspotSummary(this.diagnostics);
   }
 
   private unlockTools(): void {
