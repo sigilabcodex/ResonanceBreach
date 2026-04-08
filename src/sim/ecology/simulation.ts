@@ -1,8 +1,8 @@
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './species/types';
 import {
   ATTRACTOR_COUNT,
   CAMERA_MAX_ZOOM,
   CAMERA_MIN_ZOOM,
-  ENERGY_MAX,
   ENERGY_START,
   INITIAL_CANOPY_COUNT,
   INITIAL_CLUSTER_COUNT,
@@ -29,7 +29,6 @@ import {
   WORLD_WIDTH,
   type EntityType,
   type HabitatType,
-  type LifecycleStage,
   type TerrainType,
   type ToolType,
 } from '../../config';
@@ -38,14 +37,32 @@ import { WorldEventQueue, buildNotifications, type WorldEventInput } from '../ev
 import { createDefaultAttentionState, createDefaultCamera, createDefaultDiagnostics, createDefaultStats, createDefaultToolState, createWorldState } from '../world';
 import type { FieldSample, TerrainModifier } from '../fields/types';
 import { WorldFieldModel } from '../fields/worldField';
+
+import { buildHotspotSummary } from './diagnostics/hotspots';
+import {
+  affectEnvironment as affectEnvironmentStep,
+  initializeEnvironmentalFields as initializeEnvironmentalFieldsStep,
+  sampleEnvironmentalFields as sampleEnvironmentalFieldsStep,
+  updateEnvironmentalFields as updateEnvironmentalFieldsStep,
+  type EnvironmentalFieldGrid,
+} from './environment/fields';
+import { handleDeathTransition, shouldPersist } from './lifecycle/persistence';
+import type { LifecycleRuntimeContext } from './lifecycle/types';
+import { computeLifecycleProgress, computeLifecycleStage } from './lifecycle/types';
+import { updateLifecycle } from './lifecycle/updateLifecycle';
+import { spawnEntities as spawnEntitiesStep } from './spawning/spawnEntities';
+import { updatePropagules as updatePropagulesStep } from './spawning/updatePropagules';
+import type { SpawningRuntimeContext } from './spawning/types';
+import { clamp, habitatMatch, habitatPenalty, lerp, smoothstep } from './species/shared';
 import { updateDecomposer } from './species/updateDecomposer';
 import { updateGrazer } from './species/updateGrazer';
 import { updateParasite } from './species/updateParasite';
 import { updatePlant } from './species/updatePlant';
 import { updatePollinator } from './species/updatePollinator';
 import { updatePredator } from './species/updatePredator';
-import { clamp, habitatMatch, habitatPenalty, lerp, smoothstep } from './species/shared';
-import type { SpeciesBehaviorContext, SpeciesLocalStats } from './species/types';
+import { computeGardenStats, updateSimulationEnergy } from './stats/ecologyStats';
+import type { LocalEcologyStats } from './stats/types';
+
 import type {
   Attractor,
   AttentionState,
@@ -91,8 +108,16 @@ const FIELD_GRID_ROWS = 32;
 const FIELD_GRID_SIZE = FIELD_GRID_COLS * FIELD_GRID_ROWS;
 const FIELD_CELL_WIDTH = WORLD_WIDTH / FIELD_GRID_COLS;
 const FIELD_CELL_HEIGHT = WORLD_HEIGHT / FIELD_GRID_ROWS;
+const ENVIRONMENTAL_FIELD_GRID: EnvironmentalFieldGrid = {
+  cols: FIELD_GRID_COLS,
+  rows: FIELD_GRID_ROWS,
+  cellWidth: FIELD_CELL_WIDTH,
+  cellHeight: FIELD_CELL_HEIGHT,
+  size: FIELD_GRID_SIZE,
+};
 const MAX_PROPAGULES = 320;
 const ROOTED_BLOOM_TYPES: EntityType[] = ['plant', 'ephemeral', 'canopy'];
+const ROOTED_BLOOM_TYPE_SET = new Set<EntityType>(ROOTED_BLOOM_TYPES);
 const TOOL_UNLOCK_SCHEDULE: Array<{ tool: ToolType; time: number; energy: number }> = [
   { tool: 'observe', time: 0, energy: 0 },
   { tool: 'grow', time: 0, energy: 0 },
@@ -198,34 +223,6 @@ export class Simulation {
     this.reset();
   }
 
-  private get speciesBehaviorContext(): SpeciesBehaviorContext {
-    return {
-      time: this.time,
-      rng: this.rng,
-      diagnostics: this.diagnostics,
-      delta: (from, to) => this.delta(from, to),
-      wrapPosition: (position) => this.wrapPosition(position),
-      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) => this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
-      seedTerrain: (position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness) => this.seedTerrain(position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness),
-      spawnParticle: (position, radius, kind, fromTool, sourceEntityId) => this.spawnParticle(position, radius, kind, fromTool ?? false, sourceEntityId),
-      spawnPropagule: (position, kind, species, sourceEntityId, nutrient) => this.spawnPropagule(position, kind, species, sourceEntityId, nutrient),
-      spawnResidue: (position, nutrient, source) => this.spawnResidue(position, nutrient, source),
-      emitBurst: (type, position, radius, intensity) => this.emitBurst(type, position, radius, intensity),
-      emitWorldEvent: (input) => this.emitWorldEvent(input),
-      shouldEmitSound: (entity, dt, baseRate, contextWeight) => this.shouldEmitSound(entity, dt, baseRate, contextWeight),
-      scheduleRetarget: (entity, duration) => this.scheduleRetarget(entity, duration),
-      shouldReuseTarget: (entity) => this.shouldReuseTarget(entity),
-      consumeParticle: (entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats) => this.consumeParticle(entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats),
-      getTrackedParticleTarget: (entity, maxDistance, predicate) => this.getTrackedParticleTarget(entity, maxDistance, predicate),
-      getTrackedBloomTarget: (entity, maxDistance, requireMature) => this.getTrackedBloomTarget(entity, maxDistance, requireMature ?? false),
-      getTrackedResidueTarget: (entity, maxDistance) => this.getTrackedResidueTarget(entity, maxDistance),
-      findFoodTarget: (position, maxDistance, predicate) => this.findFoodTarget(position, maxDistance, predicate),
-      findBloomTarget: (position) => this.findBloomTarget(position),
-      findGrazerBloomTarget: (position) => this.findGrazerBloomTarget(position),
-      findResidueTarget: (position) => this.findResidueTarget(position),
-      computePairResonance: (entity, other, proximity) => this.computePairResonance(entity, other, proximity),
-    };
-  }
 
   reset(): void {
     this.rng = new Rng(0xdecafbad);
@@ -392,19 +389,12 @@ export class Simulation {
     this.diagnostics.counts.terrainModifiers = this.terrainModifiers.length;
 
     const survivors: Entity[] = [];
-    const localStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0, temperature: 0 };
+    const lifecycleContext = this.createLifecycleRuntimeContext();
+    const localStats: LocalEcologyStats = { harmony: 0, activity: 0, threat: 0, stability: 0, interactions: 0, focus: 0, nutrients: 0, fruit: 0, temperature: 0 };
 
     for (let i = 0; i < this.entities.length; i += 1) {
       const entity = this.entities[i] as Entity;
-      entity.age += dt;
-      entity.pulse = Math.max(0, entity.pulse - dt * 0.28);
-      entity.visualPulse = Math.max(0, entity.visualPulse - dt * 0.44);
-      entity.reproductionCooldown = Math.max(0, entity.reproductionCooldown - dt);
-      entity.fruitCooldown = Math.max(0, entity.fruitCooldown - dt);
-      entity.soundCooldown = Math.max(0, entity.soundCooldown - dt);
-      entity.stageProgress = this.getLifecycleProgress(entity);
-      entity.stage = this.getStage(entity.stageProgress);
-      if (entity.visualPulse <= 0.03 && entity.visualState !== 'dying') entity.visualState = 'idle';
+      updateLifecycle(entity, dt, lifecycleContext);
 
       const sample = this.sampleField(entity.position.x, entity.position.y);
       const neighbors = this.getNeighbors(i, NEIGHBOR_RADIUS);
@@ -412,9 +402,9 @@ export class Simulation {
       this.applyEntityBehavior(entity, sample, neighbors, dt, 0, localStats);
       this.diagnostics.speciesUpdateTimeMs[entity.type] += performance.now() - entityUpdateStart;
 
-      const persists = this.shouldPersist(entity);
+      const persists = shouldPersist(entity, lifecycleContext);
       if (persists) survivors.push(entity);
-      else this.handleDeath(entity);
+      else handleDeathTransition(entity, lifecycleContext);
       this.syncEntityBucket(entity, persists);
     }
 
@@ -681,96 +671,55 @@ export class Simulation {
     this.terrainSampleTimer = TERRAIN_SAMPLE_REFRESH_INTERVAL;
   }
 
-  private fieldIndex(col: number, row: number): number {
-    const wrappedCol = (col + FIELD_GRID_COLS) % FIELD_GRID_COLS;
-    const wrappedRow = (row + FIELD_GRID_ROWS) % FIELD_GRID_ROWS;
-    return wrappedRow * FIELD_GRID_COLS + wrappedCol;
-  }
-
   private initializeEnvironmentalFields(): void {
-    for (let row = 0; row < FIELD_GRID_ROWS; row += 1) {
-      for (let col = 0; col < FIELD_GRID_COLS; col += 1) {
-        const x = (col + 0.5) * FIELD_CELL_WIDTH;
-        const y = (row + 0.5) * FIELD_CELL_HEIGHT;
-        const base = this.worldField.sample(x, y, this.time, {
-          residueInfluence: 0,
-          modifiers: [],
-          delta: (a, b) => this.delta(a, b),
-        });
-        const index = this.fieldIndex(col, row);
-        const nutrient = clamp(base.fertility * 0.52 + base.moisture * 0.18 + base.nutrient * 0.2, 0.08, 0.92);
-        const temperature = clamp(base.temperature * 0.7 + base.elevation * 0.14 + (1 - base.moisture) * 0.08, 0.08, 0.92);
-        this.nutrientBaseline[index] = nutrient;
-        this.nutrientField[index] = nutrient;
-        this.temperatureBaseline[index] = temperature;
-        this.temperatureField[index] = temperature;
-      }
-    }
+    const initialized = initializeEnvironmentalFieldsStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      sampleBaseField: (x, y) => this.worldField.sample(x, y, this.time, {
+        residueInfluence: 0,
+        modifiers: [],
+        delta: (a, b) => this.delta(a, b),
+      }),
+    });
+    this.nutrientField.set(initialized.nutrientField);
+    this.nutrientBaseline.set(initialized.nutrientBaseline);
+    this.temperatureField.set(initialized.temperatureField);
+    this.temperatureBaseline.set(initialized.temperatureBaseline);
   }
 
   private sampleEnvironmentalFields(x: number, y: number): { nutrient: number; temperature: number } {
-    const gx = wrap(x, WORLD_WIDTH) / FIELD_CELL_WIDTH;
-    const gy = wrap(y, WORLD_HEIGHT) / FIELD_CELL_HEIGHT;
-    const x0 = Math.floor(gx);
-    const y0 = Math.floor(gy);
-    const tx = gx - x0;
-    const ty = gy - y0;
-    const x1 = x0 + 1;
-    const y1 = y0 + 1;
-    const n00 = this.nutrientField[this.fieldIndex(x0, y0)];
-    const n10 = this.nutrientField[this.fieldIndex(x1, y0)];
-    const n01 = this.nutrientField[this.fieldIndex(x0, y1)];
-    const n11 = this.nutrientField[this.fieldIndex(x1, y1)];
-    const t00 = this.temperatureField[this.fieldIndex(x0, y0)];
-    const t10 = this.temperatureField[this.fieldIndex(x1, y0)];
-    const t01 = this.temperatureField[this.fieldIndex(x0, y1)];
-    const t11 = this.temperatureField[this.fieldIndex(x1, y1)];
-    return {
-      nutrient: lerp(lerp(n00, n10, tx), lerp(n01, n11, tx), ty),
-      temperature: lerp(lerp(t00, t10, tx), lerp(t01, t11, tx), ty),
-    };
+    return sampleEnvironmentalFieldsStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      buffers: {
+        nutrientField: this.nutrientField,
+        temperatureField: this.temperatureField,
+      },
+    }, x, y);
   }
 
   private affectEnvironment(position: Vec2, radius: number, nutrientDelta: number, temperatureDelta: number): void {
-    const minCol = Math.floor((wrap(position.x - radius, WORLD_WIDTH)) / FIELD_CELL_WIDTH) - 1;
-    const maxCol = Math.floor((wrap(position.x + radius, WORLD_WIDTH)) / FIELD_CELL_WIDTH) + 1;
-    const minRow = Math.floor((wrap(position.y - radius, WORLD_HEIGHT)) / FIELD_CELL_HEIGHT) - 1;
-    const maxRow = Math.floor((wrap(position.y + radius, WORLD_HEIGHT)) / FIELD_CELL_HEIGHT) + 1;
-    for (let row = minRow; row <= maxRow; row += 1) {
-      for (let col = minCol; col <= maxCol; col += 1) {
-        const center = {
-          x: ((col + FIELD_GRID_COLS) % FIELD_GRID_COLS + 0.5) * FIELD_CELL_WIDTH,
-          y: ((row + FIELD_GRID_ROWS) % FIELD_GRID_ROWS + 0.5) * FIELD_CELL_HEIGHT,
-        };
-        const offset = this.delta(position, center);
-        const dist = Math.hypot(offset.x, offset.y);
-        if (dist > radius) continue;
-        const falloff = smoothstep(radius, 0, dist);
-        const index = this.fieldIndex(col, row);
-        this.nutrientField[index] = clamp(this.nutrientField[index] + nutrientDelta * falloff, 0, 1);
-        this.temperatureField[index] = clamp(this.temperatureField[index] + temperatureDelta * falloff, 0, 1);
-      }
-    }
+    affectEnvironmentStep({
+      grid: ENVIRONMENTAL_FIELD_GRID,
+      buffers: {
+        nutrientField: this.nutrientField,
+        temperatureField: this.temperatureField,
+      },
+      delta: (from, to) => this.delta(from, to),
+    }, position, radius, nutrientDelta, temperatureDelta);
   }
 
   private updateEnvironmentalFields(dt: number): void {
-    const nextNutrient = new Float32Array(FIELD_GRID_SIZE);
-    const nextTemperature = new Float32Array(FIELD_GRID_SIZE);
-    for (let row = 0; row < FIELD_GRID_ROWS; row += 1) {
-      for (let col = 0; col < FIELD_GRID_COLS; col += 1) {
-        const index = this.fieldIndex(col, row);
-        const left = this.fieldIndex(col - 1, row);
-        const right = this.fieldIndex(col + 1, row);
-        const up = this.fieldIndex(col, row - 1);
-        const down = this.fieldIndex(col, row + 1);
-        const nutrientAverage = (this.nutrientField[left] + this.nutrientField[right] + this.nutrientField[up] + this.nutrientField[down]) * 0.25;
-        const temperatureAverage = (this.temperatureField[left] + this.temperatureField[right] + this.temperatureField[up] + this.temperatureField[down]) * 0.25;
-        nextNutrient[index] = clamp(this.nutrientField[index] + (nutrientAverage - this.nutrientField[index]) * dt * 0.32 + (this.nutrientBaseline[index] - this.nutrientField[index]) * dt * 0.06, 0, 1);
-        nextTemperature[index] = clamp(this.temperatureField[index] + (temperatureAverage - this.temperatureField[index]) * dt * 0.18 + (this.temperatureBaseline[index] - this.temperatureField[index]) * dt * 0.04, 0, 1);
-      }
-    }
-    this.nutrientField = nextNutrient;
-    this.temperatureField = nextTemperature;
+    const nextFields = updateEnvironmentalFieldsStep(
+      ENVIRONMENTAL_FIELD_GRID,
+      {
+        nutrientField: this.nutrientField,
+        nutrientBaseline: this.nutrientBaseline,
+        temperatureField: this.temperatureField,
+        temperatureBaseline: this.temperatureBaseline,
+      },
+      dt,
+    );
+    this.nutrientField.set(nextFields.nutrientField);
+    this.temperatureField.set(nextFields.temperatureField);
   }
 
   private bucketIndex(value: number, size: number, bucketSize: number, bucketCount: number): number {
@@ -1155,57 +1104,7 @@ export class Simulation {
   }
 
   private updatePropagules(dt: number): void {
-    const next: Propagule[] = [];
-    for (const propagule of this.propagules) {
-      propagule.age += dt;
-      const flow = this.sampleField(propagule.position.x, propagule.position.y).flow;
-      if (propagule.kind === 'spore') {
-        propagule.velocity.x = lerp(propagule.velocity.x, flow.x * 0.14, dt * 0.6);
-        propagule.velocity.y = lerp(propagule.velocity.y, flow.y * 0.14, dt * 0.6);
-      } else {
-        propagule.velocity.x *= Math.pow(0.92, dt * 60);
-        propagule.velocity.y *= Math.pow(0.92, dt * 60);
-      }
-      propagule.position = this.wrapPosition({
-        x: propagule.position.x + propagule.velocity.x * dt,
-        y: propagule.position.y + propagule.velocity.y * dt,
-      });
-
-      const sample = this.sampleField(propagule.position.x, propagule.position.y);
-      const ready = propagule.age >= propagule.dormancy;
-      const withinCap = (() => {
-        const counts = this.countEntities();
-        if (propagule.species === 'plant') return counts.plant < MAX_PLANTS;
-        if (propagule.species === 'ephemeral') return counts.ephemeral < MAX_EPHEMERALS;
-        if (propagule.species === 'canopy') return counts.canopy < MAX_CANOPIES;
-        if (propagule.species === 'cluster') return counts.cluster < MAX_CLUSTERS;
-        if (propagule.species === 'parasite') return counts.parasite < MAX_PARASITES;
-        return true
-      })();
-      const density = this.getNeighborsAtPosition(propagule.position, propagule.species === 'canopy' ? 120 : 84).filter((candidate) => candidate.type === propagule.species).length;
-      const suitability = this.getEntitySpawnSuitability(propagule.species, sample)
-        + sample.nutrient * 0.28
-        + (propagule.species === 'ephemeral' ? sample.temperature * 0.22 : propagule.species === 'canopy' ? (1 - Math.abs(sample.temperature - 0.42)) * 0.16 : 0);
-      const germinationRate = dt * clamp(0.01 + suitability * 0.035 - density * 0.008 + propagule.viability * 0.02, 0.002, 0.08);
-      if (ready && withinCap && this.rng.next() < germinationRate) {
-        const entity = this.createEntity(propagule.species, propagule.position);
-        entity.age = propagule.kind === 'seed' ? this.rng.range(0, entity.lifeSpan * 0.06) : 0;
-        entity.energy = clamp(entity.energy + propagule.nutrient * 0.28, 0, 1.3);
-        this.entities.push(entity);
-        this.propagulesById.delete(propagule.id);
-        this.diagnostics.lifecycleTransitions.germinations += 1;
-        this.emitWorldEvent({ type: 'entityBorn', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id });
-        continue;
-      }
-      if (propagule.age < propagule.dormancy + 90 && propagule.viability > 0.04) {
-        propagule.viability = clamp(propagule.viability - dt * 0.0012 + sample.nutrient * dt * 0.0006, 0, 1);
-        next.push(propagule);
-      } else {
-        this.affectEnvironment(propagule.position, 24, propagule.nutrient * 0.08, -0.002);
-        this.propagulesById.delete(propagule.id);
-      }
-    }
-    this.propagules = next;
+    updatePropagulesStep(this.createSpawningRuntimeContext(), dt);
   }
 
   private updateBursts(dt: number): void {
@@ -1221,7 +1120,7 @@ export class Simulation {
     neighbors: Entity[],
     dt: number,
     focusWeight: number,
-    localStats: SpeciesLocalStats,
+    localStats: LocalEcologyStats,
   ): void {
     const activityPulse = Math.sin(this.time * (0.018 + entity.activityBias * 0.015) + entity.id * 0.7) * 0.5 + 0.5;
     entity.retargetTimer = Math.max(0, (entity.retargetTimer ?? 0) - dt);
@@ -1230,6 +1129,7 @@ export class Simulation {
       : 0;
     const nearbyResidue = entity.type === 'cluster' || entity.type === 'parasite' ? this.getResidueInfluence(entity.position.x, entity.position.y) : 0;
     const rooted = ROOTED_BLOOM_TYPES.includes(entity.type);
+    const speciesContext = this.createSpeciesRuntimeContext();
     const targetActivity = rooted
       ? 0.06 + sample.fertility * 0.08 + sample.nutrient * 0.14 + focusWeight * 0.08 + entity.pollination * 0.05 + (entity.type === 'ephemeral' ? 0.08 : entity.type === 'canopy' ? -0.01 : 0)
       : entity.type === 'cluster'
@@ -1250,12 +1150,12 @@ export class Simulation {
     this.applyToolFields(entity, dt);
     entity.boundaryFade = lerp(entity.boundaryFade, clamp(0.58 + sample.traversability * 0.42, 0.52, 1), dt * 0.24);
 
-    if (rooted) updatePlant(this.speciesBehaviorContext, { entity, sample, dt, localStats });
+    if (rooted) updatePlant(speciesContext, entity, sample, dt, localStats);
     else this.updateCreature(entity, sample, neighbors, dt, localStats);
 
     entity.vitality = clamp(entity.energy * 0.55 + entity.food * 0.25 + entity.stability * 0.2, 0, 1.6);
-    entity.stageProgress = this.getLifecycleProgress(entity);
-    entity.stage = this.getStage(entity.stageProgress);
+    entity.stageProgress = computeLifecycleProgress(entity, ROOTED_BLOOM_TYPE_SET);
+    entity.stage = computeLifecycleStage(entity.stageProgress);
     entity.size = clamp(entity.baseSize * (0.68 + entity.growth * 0.42 + entity.stageProgress * 0.24 + (rooted ? entity.pollination * 0.04 : entity.type === 'grazer' ? entity.food * 0.05 : 0)), entity.baseSize * 0.54, entity.baseSize * 2.1);
     entity.heading = Math.atan2(entity.velocity.y || 0.001, entity.velocity.x || 0.001);
     entity.acousticPattern = lerp(
@@ -1272,34 +1172,113 @@ export class Simulation {
     localStats.nutrients += sample.nutrient;
     localStats.temperature += sample.temperature;
   }
+  private createSpeciesRuntimeContext(): SpeciesRuntimeContext {
+    return {
+      now: this.time,
+      delta: (from, to) => this.delta(from, to),
+      wrapPosition: (position) => this.wrapPosition(position),
 
-  private updateCreature(
-    entity: Entity,
-    sample: FieldSample,
-    neighbors: Entity[],
-    dt: number,
-    localStats: SpeciesLocalStats,
-  ): void {
-    if (entity.type === 'cluster') {
-      updateDecomposer(this.speciesBehaviorContext, { entity, sample, neighbors, dt, localStats });
-      return;
-    }
-    if (entity.type === 'predator') {
-      updatePredator(this.speciesBehaviorContext, { entity, sample, neighbors, dt, localStats });
-      return;
-    }
-    if (entity.type === 'grazer') {
-      updateGrazer(this.speciesBehaviorContext, { entity, sample, neighbors, dt, localStats });
-      return;
-    }
-    if (entity.type === 'parasite') {
-      updateParasite(this.speciesBehaviorContext, { entity, sample, neighbors, dt, localStats });
-      return;
-    }
+      habitatMatch,
+      habitatPenalty,
 
-    updatePollinator(this.speciesBehaviorContext, { entity, sample, neighbors, dt, localStats });
+      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) =>
+        this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
+
+      seedTerrain: (position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness) =>
+        this.seedTerrain(position, radius, fertilityDelta, moistureDelta, traversabilityDelta, softness),
+
+      spawnParticle: (position, radius, kind, fromTool, sourceEntityId) =>
+        this.spawnParticle(position, radius, kind, fromTool ?? false, sourceEntityId),
+
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrient) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrient),
+
+      spawnResidue: (position, nutrient, source) =>
+        this.spawnResidue(position, nutrient, source),
+
+      emitBurst: (type, position, radius, intensity) =>
+        this.emitBurst(type, position, radius, intensity),
+
+      emitWorldEvent: (input) =>
+        this.emitWorldEvent(input),
+
+      random: () => this.rng.next(),
+      randomRange: (min, max) => this.rng.range(min, max),
+
+      shouldEmitSound: (entity, dt, baseRate, contextWeight) =>
+        this.shouldEmitSound(entity, dt, baseRate, contextWeight),
+
+      scheduleRetarget: (entity, duration) =>
+        this.scheduleRetarget(entity, duration),
+
+      shouldReuseTarget: (entity) =>
+        this.shouldReuseTarget(entity),
+
+      consumeParticle: (entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats) =>
+        this.consumeParticle(entity, particle, dt, range, approach, consumeDistance, settleDistance, gainScale, localStats),
+
+      getTrackedParticleTarget: (entity, maxDistance, predicate) =>
+        this.getTrackedParticleTarget(entity, maxDistance, predicate),
+
+      getTrackedBloomTarget: (entity, maxDistance, requireMature) =>
+        this.getTrackedBloomTarget(entity, maxDistance, requireMature ?? false),
+
+      getTrackedResidueTarget: (entity, maxDistance) =>
+        this.getTrackedResidueTarget(entity, maxDistance),
+
+      findFoodTarget: (position, maxDistance, predicate) =>
+        this.findFoodTarget(position, maxDistance, predicate),
+
+      findBloomTarget: (position) =>
+        this.findBloomTarget(position),
+
+      findGrazerBloomTarget: (position) =>
+        this.findGrazerBloomTarget(position),
+
+      findResidueTarget: (position) =>
+        this.findResidueTarget(position),
+
+      computePairResonance: (entity, other, proximity) =>
+        this.computePairResonance(entity, other, proximity),
+
+      incrementTargetRetargets: () => {
+        this.diagnostics.queryCounts.targetRetargets += 1;
+      },
+
+      incrementFruitingBursts: () => {
+        this.diagnostics.lifecycleTransitions.fruitingBursts += 1;
+      },
+    };
   }
 
+  private updateCreature(
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
+): void {
+  const speciesContext = this.createSpeciesRuntimeContext();
+
+  if (entity.type === 'cluster') {
+    updateDecomposer(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'predator') {
+    updatePredator(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'grazer') {
+    updateGrazer(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+  if (entity.type === 'parasite') {
+    updateParasite(speciesContext, entity, sample, neighbors, dt, localStats);
+    return;
+  }
+
+  updatePollinator(speciesContext, entity, sample, neighbors, dt, localStats);
+}
   private shouldEmitSound(
     entity: Entity,
     dt: number,
@@ -1325,7 +1304,6 @@ export class Simulation {
     entity.soundCooldown = this.rng.range(0.2, 1.1) * (entity.visualState === 'idle' ? 1.2 : 0.85);
     return true;
   }
-
   private applyToolFields(
     entity: Entity,
     dt: number,
@@ -1372,240 +1350,87 @@ export class Simulation {
     }
   }
 
-  private shouldPersist(entity: Entity): boolean {
-    if (entity.energy <= 0.04 || entity.food <= 0.03) return false;
-    if (entity.stageProgress >= 1 && entity.energy < 0.2) return false;
-    if (!ROOTED_BLOOM_TYPES.includes(entity.type) && entity.stability <= 0.04) return false;
-    return true;
-  }
-
-  private handleDeath(entity: Entity): void {
-    this.spawnResidue(entity.position, clamp(0.26 + entity.growth * 0.3 + entity.vitality * 0.24 + entity.pollination * 0.1, 0.18, 1), entity.type);
-    this.diagnostics.lifecycleTransitions.deaths += 1;
-    if (ROOTED_BLOOM_TYPES.includes(entity.type) && this.rng.next() < 0.72) this.spawnPropagule(entity.position, entity.type === 'canopy' ? 'seed' : 'spore', entity.type, entity.id, 0.32);
-    if (entity.type === 'cluster' || entity.type === 'parasite') this.spawnPropagule(entity.position, 'spore', entity.type, entity.id, 0.24);
-    this.emitBurst('death', entity.position, 18 + entity.size * 1.4, 0.88 + entity.hueShift * 0.03);
-    this.emitWorldEvent({ type: 'entityDied', time: this.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id });
+  private createLifecycleRuntimeContext(): LifecycleRuntimeContext {
+    return {
+      now: this.time,
+      rootBloomTypes: ROOTED_BLOOM_TYPE_SET,
+      random: () => this.rng.next(),
+      spawnResidue: (position, nutrient, source) => this.spawnResidue(position, nutrient, source),
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrientBoost) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrientBoost),
+      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
+      emitWorldEvent: (event) => this.emitWorldEvent(event),
+      incrementDeaths: () => {
+        this.diagnostics.lifecycleTransitions.deaths += 1;
+      },
+    };
   }
 
   private spawnEntities(dt: number): void {
-    const counts = this.countEntities();
-    const additions: Entity[] = [];
-    const pendingCounts: Record<EntityType, number> = { flocker: 0, cluster: 0, plant: 0, ephemeral: 0, canopy: 0, grazer: 0, parasite: 0, predator: 0 };
+    spawnEntitiesStep(this.createSpawningRuntimeContext(), dt);
+  }
 
-    for (const entity of this.entities) {
-      if (entity.reproductionCooldown > 0) continue;
-      const localDensity = this.getNeighborsByEntity(entity, ROOTED_BLOOM_TYPES.includes(entity.type) ? 150 : entity.type === 'cluster' ? 100 : entity.type === 'grazer' ? 120 : 130).length;
-      const localSample = this.sampleField(entity.position.x, entity.position.y);
-      let producedEntity: Entity | undefined;
-      let producedPropagule = false;
-
-      if (
-        entity.type === 'plant'
-        && entity.stage !== 'birth'
-        && entity.pollination > 0.58
-        && entity.food > 0.72
-        && entity.energy > 0.74
-        && localSample.fertility > 0.42
-        && localSample.moisture > 0.24
-        && habitatMatch(localSample, 'basin') > 0.3
-        && habitatPenalty(localSample, 'highland') < 0.54
-        && counts.plant + pendingCounts.plant < MAX_PLANTS
-      ) {
-        const birthRate = dt * clamp(0.008 + entity.pollination * 0.018 + localSample.fertility * 0.012 - localDensity * 0.005, 0.002, 0.04);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 84, (sample) => sample.fertility > 0.44 && sample.moisture > 0.26 && habitatMatch(sample, 'basin') > 0.34 && habitatPenalty(sample, 'highland') < 0.46 && sample.slope < 0.58), 'seed', 'plant', entity.id, 0.48);
-          pendingCounts.plant += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(24, 34);
-          entity.pollination *= 0.58;
-          entity.food *= 0.82;
-          entity.energy *= 0.88;
-        }
-      } else if (
-        entity.type === 'ephemeral'
-        && entity.stage !== 'birth'
-        && entity.pollination > 0.34
-        && entity.energy > 0.54
-        && localSample.temperature > 0.52
-        && counts.ephemeral + pendingCounts.ephemeral < MAX_EPHEMERALS
-      ) {
-        const birthRate = dt * clamp(0.016 + localSample.temperature * 0.02 + localSample.nutrient * 0.016 - localDensity * 0.006, 0.004, 0.06);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 96, (sample) => sample.temperature > 0.54 && sample.nutrient > 0.34 && sample.moisture > 0.24), 'spore', 'ephemeral', entity.id, 0.34);
-          pendingCounts.ephemeral += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(10, 18);
-          entity.energy *= 0.86;
-          entity.food *= 0.84;
-        }
-      } else if (
-        entity.type === 'canopy'
-        && entity.stage === 'mature'
-        && entity.pollination > 0.62
-        && entity.energy > 0.82
-        && localSample.nutrient > 0.46
-        && counts.canopy + pendingCounts.canopy < MAX_CANOPIES
-      ) {
-        const birthRate = dt * clamp(0.004 + localSample.nutrient * 0.01 + entity.food * 0.008 - localDensity * 0.004, 0.001, 0.018);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 130, (sample) => sample.nutrient > 0.46 && Math.abs(sample.temperature - 0.42) < 0.22 && habitatPenalty(sample, 'highland') < 0.62), 'seed', 'canopy', entity.id, 0.6);
-          pendingCounts.canopy += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(32, 44);
-          entity.energy *= 0.9;
-          entity.food *= 0.88;
-        }
-      } else if (
-        entity.type === 'flocker'
-        && entity.stage !== 'birth'
-        && entity.food > 0.74
-        && entity.energy > 0.72
-        && entity.memory > 0.3
-        && localSample.traversability > 0.24
-        && habitatPenalty(localSample, 'highland') < 0.72
-        && counts.flocker + pendingCounts.flocker < MAX_FLOCKERS
-      ) {
-        const birthRate = dt * clamp(0.008 + entity.memory * 0.014 + localSample.moisture * 0.008 + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.006 - localDensity * 0.006, 0.001, 0.03);
-        if (this.rng.next() <= birthRate) {
-          const position = this.findNearbySpawnPoint(entity.position, 62, (sample) => sample.moisture > 0.32 && sample.slope < 0.56 && sample.traversability > 0.24 && habitatPenalty(sample, 'highland') < 0.58);
-          producedEntity = this.createEntity('flocker', position);
-          additions.push(producedEntity);
-          pendingCounts.flocker += 1;
-          entity.reproductionCooldown = this.rng.range(20, 30);
-          entity.food *= 0.7;
-          entity.energy *= 0.82;
-        }
-      } else if (
-        entity.type === 'grazer'
-        && entity.stage !== 'birth'
-        && entity.food > 0.84
-        && entity.energy > 0.8
-        && entity.memory > 0.28
-        && localSample.traversability > 0.22
-        && habitatMatch(localSample, 'basin') > 0.24
-        && counts.grazer + pendingCounts.grazer < MAX_GRAZERS
-      ) {
-        const nearbyFruit = this.findFoodTarget(entity.position, 180, (particle) => particle.kind === 'fruit');
-        const birthRate = dt * clamp(0.006 + entity.food * 0.012 + entity.energy * 0.012 + habitatMatch(localSample, 'basin') * 0.01 - habitatPenalty(localSample, 'wetland') * 0.006 + (nearbyFruit ? 0.008 : 0) - localDensity * 0.007, 0.001, 0.024);
-        if (this.rng.next() <= birthRate) {
-          const origin = nearbyFruit?.position ?? entity.position;
-          const position = this.findNearbySpawnPoint(origin, 54, (terrain) => terrain.traversability > 0.24 && terrain.fertility > 0.34 && habitatMatch(terrain, 'basin') > 0.26 && habitatPenalty(terrain, 'wetland') < 0.5 && habitatPenalty(terrain, 'highland') < 0.54 && terrain.slope < 0.58);
-          producedEntity = this.createEntity('grazer', position);
-          additions.push(producedEntity);
-          pendingCounts.grazer += 1;
-          entity.reproductionCooldown = this.rng.range(28, 40);
-          entity.food *= 0.62;
-          entity.energy *= 0.74;
-        }
-      } else if (
-        entity.type === 'cluster'
-        && entity.stage !== 'birth'
-        && entity.food > 0.6
-        && entity.energy > 0.58
-        && entity.memory > 0.34
-        && counts.cluster + pendingCounts.cluster < MAX_CLUSTERS
-      ) {
-        const nearbyResidue = this.findResidueTarget(entity.position, 140);
-        const birthRate = dt * clamp(0.006 + entity.memory * 0.012 + (nearbyResidue ? nearbyResidue.richness * 0.01 : 0) + habitatMatch(localSample, 'wetland') * 0.008 + habitatMatch(localSample, 'basin') * 0.005 - habitatPenalty(localSample, 'highland') * 0.01 - localDensity * 0.006, 0.001, 0.024);
-        if (this.rng.next() <= birthRate) {
-          const origin = nearbyResidue?.position ?? entity.position;
-          this.spawnPropagule(this.findNearbySpawnPoint(origin, 48, (sample) => sample.nutrient > 0.2 && sample.traversability > 0.1 && habitatPenalty(sample, 'highland') < 0.68 && sample.slope < 0.7), 'spore', 'cluster', entity.id, 0.4);
-          pendingCounts.cluster += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(22, 34);
-          entity.food *= 0.72;
-          entity.energy *= 0.84;
-        }
-      } else if (
-        entity.type === 'parasite'
-        && entity.stage !== 'birth'
-        && entity.energy > 0.72
-        && entity.memory > 0.22
-        && localSample.temperature > 0.48
-        && counts.parasite + pendingCounts.parasite < MAX_PARASITES
-      ) {
-        const birthRate = dt * clamp(0.004 + localSample.temperature * 0.012 + localSample.nutrient * 0.006 - localDensity * 0.006, 0.001, 0.018);
-        if (this.rng.next() <= birthRate) {
-          this.spawnPropagule(this.findNearbySpawnPoint(entity.position, 60, (sample) => sample.temperature > 0.5 && sample.fertility > 0.24 && habitatPenalty(sample, 'highland') < 0.62), 'spore', 'parasite', entity.id, 0.3);
-          pendingCounts.parasite += 1;
-          producedPropagule = true;
-          entity.reproductionCooldown = this.rng.range(24, 36);
-          entity.energy *= 0.9;
-          entity.food *= 0.88;
-        }
-      } else {
-        continue;
-      }
-
-      entity.visualState = 'reproducing';
-      entity.visualPulse = 0.8;
-      this.emitBurst('birth', entity.position, 14 + entity.size, 0.34 + entity.hueShift * 0.05);
-      if (producedEntity) {
-        this.emitWorldEvent({ type: 'entityBorn', time: this.time, position: { ...producedEntity.position }, entityType: producedEntity.type, entityId: producedEntity.id });
-      } else if (producedPropagule) {
+  private createSpawningRuntimeContext(): SpawningRuntimeContext {
+    return {
+      rootBloomTypes: ROOTED_BLOOM_TYPE_SET,
+      maxBySpecies: {
+        flocker: MAX_FLOCKERS,
+        cluster: MAX_CLUSTERS,
+        plant: MAX_PLANTS,
+        ephemeral: MAX_EPHEMERALS,
+        canopy: MAX_CANOPIES,
+        grazer: MAX_GRAZERS,
+        parasite: MAX_PARASITES,
+        predator: Number.POSITIVE_INFINITY,
+      },
+      now: this.time,
+      entities: this.entities,
+      getPropagules: () => this.propagules,
+      setPropagules: (propagules) => {
+        this.propagules = propagules;
+      },
+      sampleField: (x, y) => this.sampleField(x, y),
+      wrapPosition: (position) => this.wrapPosition(position),
+      countEntities: () => this.countEntities(),
+      getNeighborsAtPosition: (position, radius) => this.getNeighborsAtPosition(position, radius),
+      getNeighborsByEntity: (entity, radius) => this.getNeighborsByEntity(entity, radius),
+      getEntitySpawnSuitability: (type, sample) => this.getEntitySpawnSuitability(type, sample),
+      findNearbySpawnPoint: (origin, radius, predicate) => this.findNearbySpawnPoint(origin, radius, predicate),
+      findFoodTarget: (position, radius, filter) => this.findFoodTarget(position, radius, filter ?? (() => true)) ?? null,
+      findResidueTarget: (position, radius) => this.findResidueTarget(position, radius) ?? null,
+      createEntity: (type, position) => this.createEntity(type, position),
+      spawnPropagule: (position, kind, species, sourceEntityId, nutrientBoost) =>
+        this.spawnPropagule(position, kind, species, sourceEntityId, nutrientBoost),
+      emitBurst: (type, position, radius, hue) => this.emitBurst(type, position, radius, hue),
+      emitWorldEvent: (event) => this.emitWorldEvent(event),
+      removePropaguleById: (id) => this.propagulesById.delete(id),
+      affectEnvironment: (position, radius, nutrientDelta, temperatureDelta) =>
+        this.affectEnvironment(position, radius, nutrientDelta, temperatureDelta),
+      random: () => this.rng.next(),
+      randomRange: (min, max) => this.rng.range(min, max),
+      incrementGerminations: () => {
+        this.diagnostics.lifecycleTransitions.germinations += 1;
+      },
+      incrementPropagulesCreated: () => {
         this.diagnostics.lifecycleTransitions.propagulesCreated += 1;
-      }
-    }
-
-    this.entities.push(...additions);
+      },
+    };
   }
 
   private updateEnergy(
     dt: number,
-    localStats: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number },
+    localStats: LocalEcologyStats,
   ): void {
-    const interactions = Math.max(1, localStats.interactions);
-    const harmony = localStats.harmony / interactions;
-    const stability = localStats.stability / interactions;
-    const nutrientLift = localStats.nutrients / interactions;
-    const gain = clamp(harmony * 0.24 + stability * 0.24 + nutrientLift * 0.22, 0, 1) * dt * 5.6;
-    const loss = clamp(this.fields.filter((field) => field.tool !== 'observe').length * 0.03 + localStats.threat / interactions, 0, 1.2) * dt * 3.8;
-    this.energy = clamp(this.energy + gain - loss, 0, ENERGY_MAX);
+    this.energy = updateSimulationEnergy(this.energy, dt, localStats, this.fields);
   }
 
-  private computeStats(localStats?: { harmony: number; activity: number; threat: number; stability: number; interactions: number; focus: number; nutrients: number; fruit: number; temperature: number }): GardenStats {
+  private computeStats(localStats?: LocalEcologyStats): GardenStats {
     const counts = this.countEntities();
-    const interactions = Math.max(1, localStats?.interactions ?? this.entities.length);
-    const harmony = clamp((localStats?.harmony ?? this.entities.reduce((sum, entity) => sum + entity.harmony, 0)) / interactions, 0, 1);
-    const activity = clamp((localStats?.activity ?? this.entities.reduce((sum, entity) => sum + entity.activity, 0)) / interactions, 0, 1);
-    const threat = clamp((localStats?.threat ?? counts.predator * 0.06) / interactions, 0, 1);
-    const stability = clamp((localStats?.stability ?? this.entities.reduce((sum, entity) => sum + entity.stability, 0)) / interactions, 0, 1);
-    const growth = clamp(this.entities.reduce((sum, entity) => sum + entity.growth, 0) / Math.max(1, this.entities.length), 0, 1);
-    const richness = [counts.flocker > 0, counts.cluster > 0, counts.plant > 0, counts.ephemeral > 0, counts.canopy > 0, counts.grazer > 0, counts.parasite > 0].filter(Boolean).length / 7;
-    const focus = clamp((localStats?.focus ?? 0) / Math.max(1, this.entities.length * 0.7), 0, 1);
-    const nutrients = clamp((localStats?.nutrients ?? this.terrain.reduce((sum, cell) => sum + cell.nutrient, 0)) / Math.max(1, this.terrain.length), 0, 1);
-    const fruit = clamp(((localStats?.fruit ?? this.particles.filter((particle) => particle.kind === 'fruit').length) / 24), 0, 1);
-    const temperature = clamp((localStats?.temperature ?? this.terrain.reduce((sum, cell) => sum + cell.temperature, 0)) / Math.max(1, this.terrain.length), 0, 1);
-    return {
-      harmony,
-      activity,
-      threat,
-      growth,
-      stability,
-      biodiversity: clamp(richness * 0.72 + this.entities.length / 120, 0, 1),
-      energy: this.energy / ENERGY_MAX,
-      focus,
-      nutrients,
-      fruit,
-      temperature,
-    };
+    return computeGardenStats(this.energy, counts, this.entities, this.terrain, this.particles, localStats);
   }
 
   private buildHotspotSummary(): string[] {
-    const speciesEntries = Object.entries(this.diagnostics.speciesUpdateTimeMs)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 2)
-      .map(([type, timeMs]) => `${type} ${timeMs.toFixed(2)} ms`);
-    const querySummary = [
-      `field ${this.diagnostics.queryCounts.terrainSamples}`,
-      `neighbors ${this.diagnostics.queryCounts.neighbors}`,
-      `food ${this.diagnostics.queryCounts.foodSearches}`,
-      `residue ${this.diagnostics.queryCounts.residueSearches}`,
-    ]
-      .sort((a, b) => Number(b.split(' ')[1]) - Number(a.split(' ')[1]))
-      .slice(0, 2);
-    return [...speciesEntries, ...querySummary];
+    return buildHotspotSummary(this.diagnostics);
   }
 
   private unlockTools(): void {
@@ -1670,30 +1495,6 @@ export class Simulation {
     return { harmony, dissonance };
   }
 
-  private getStage(progress: number): LifecycleStage {
-    if (progress < 0.2) return 'birth';
-    if (progress < 0.48) return 'growth';
-    if (progress < 0.82) return 'mature';
-    return 'decay';
-  }
-
-  private getLifecycleProgress(entity: Entity): number {
-    if (ROOTED_BLOOM_TYPES.includes(entity.type)) {
-      const bloomHealth = clamp(entity.growth * 0.46 + entity.pollination * 0.28 + entity.energy * 0.16 + entity.food * 0.1, 0, 1);
-      const ageWeight = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(ageWeight * (entity.type === 'ephemeral' ? 0.5 : entity.type === 'canopy' ? 0.28 : 0.36) + bloomHealth * (entity.type === 'ephemeral' ? 0.5 : entity.type === 'canopy' ? 0.72 : 0.64), 0, 1);
-    }
-    if (entity.type === 'cluster') {
-      const decayArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(decayArc * 0.48 + entity.growth * 0.3 + entity.memory * 0.22, 0, 1);
-    }
-    if (entity.type === 'grazer') {
-      const grazeArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-      return clamp(grazeArc * 0.4 + entity.energy * 0.28 + entity.food * 0.26 + entity.growth * 0.06, 0, 1);
-    }
-    const driftArc = clamp(entity.age / entity.lifeSpan, 0, 1);
-    return clamp(driftArc * 0.42 + entity.energy * 0.24 + entity.food * 0.22 + entity.memory * 0.12, 0, 1);
-  }
 
   private updateTrail(entity: Entity): void {
     if (ROOTED_BLOOM_TYPES.includes(entity.type)) {
@@ -1939,7 +1740,7 @@ export class Simulation {
       entity.visualPulse = 0.9;
       entity.visualState = 'dying';
       if (falloff > 0.74 && this.rng.next() < 0.16 && !ROOTED_BLOOM_TYPES.includes(entity.type)) {
-        this.handleDeath(entity);
+        handleDeathTransition(entity, this.createLifecycleRuntimeContext());
         continue;
       }
       survivors.push(entity);

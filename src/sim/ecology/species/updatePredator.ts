@@ -1,13 +1,19 @@
-import { clamp, habitatMatch, lerp, smoothstep } from './shared';
-import type { SpeciesBehaviorContext, SpeciesUpdateInput } from './types';
+import type { Entity } from '../../../types/world';
+import type { FieldSample } from '../../fields/types';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './types';
+import { clamp, lerp, smoothstep } from './shared';
 
 export const updatePredator = (
-  context: SpeciesBehaviorContext,
-  { entity, sample, neighbors, dt, localStats }: SpeciesUpdateInput,
+  context: SpeciesRuntimeContext,
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
 ): void => {
   const hungerNeed = clamp((0.62 - entity.energy) * 0.72 + (0.56 - entity.food) * 0.92, 0, 1.2);
 
-  let loudestSignal;
+  let loudestSignal: Entity | undefined;
   let loudestScore = 0;
   for (const other of neighbors) {
     if (other.id === entity.id) continue;
@@ -29,15 +35,13 @@ export const updatePredator = (
   entity.acousticPattern = lerp(entity.acousticPattern, loudestSignal ? loudestSignal.acousticPattern : 0.2, dt * 0.35);
   const opportunity = clamp(entity.acousticPressure * 0.62 + loudestScore * 0.38, 0, 1.4);
   if (entity.predatorState === 'resting') {
-    if (hungerNeed > 0.64 || (hungerNeed > 0.4 && opportunity > 0.42)) {
-      entity.predatorState = 'hunting';
-    }
+    if (hungerNeed > 0.64 || (hungerNeed > 0.4 && opportunity > 0.42)) entity.predatorState = 'hunting';
   } else if (hungerNeed < 0.24 && opportunity < 0.2) {
     entity.predatorState = 'resting';
   }
   const hunting = entity.predatorState === 'hunting';
 
-  const basinBias = habitatMatch(sample, 'basin');
+  const basinBias = context.habitatMatch(sample, 'basin');
   entity.velocity.x += sample.flow.x * dt * 0.022 + sample.fertilityGradient.x * dt * (1.2 + basinBias * 1.4) - sample.gradient.x * dt * 1.8;
   entity.velocity.y += sample.flow.y * dt * 0.022 + sample.fertilityGradient.y * dt * (1.2 + basinBias * 1.4) - sample.gradient.y * dt * 1.8;
 
@@ -51,13 +55,11 @@ export const updatePredator = (
     entity.targetKind = 'signal';
     entity.activity = lerp(entity.activity, 0.5 + loudestScore * 0.4, dt * 1.8);
     localStats.threat += dt * (0.03 + loudestScore * 0.18);
-    if (distance < 26) {
-      entity.food = clamp(entity.food + dt * 0.24, 0, 1.4);
-    }
+    if (distance < 26) entity.food = clamp(entity.food + dt * 0.24, 0, 1.4);
   } else {
     entity.targetId = undefined;
     entity.targetKind = undefined;
-    const driftTheta = context.time * 0.01 + entity.id * 0.36;
+    const driftTheta = context.now * 0.01 + entity.id * 0.36;
     entity.velocity.x += Math.cos(driftTheta) * dt * (hunting ? 0.28 : 0.18);
     entity.velocity.y += Math.sin(driftTheta * 0.8) * dt * (hunting ? 0.24 : 0.16);
     entity.activity = lerp(entity.activity, hunting ? 0.2 : 0.06, dt * 1.6);

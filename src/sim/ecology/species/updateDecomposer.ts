@@ -1,21 +1,27 @@
-import { clamp, habitatMatch, habitatPenalty, lerp, smoothstep } from './shared';
-import type { SpeciesBehaviorContext, SpeciesUpdateInput } from './types';
+import type { Entity } from '../../../types/world';
+import type { FieldSample } from '../../fields/types';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './types';
+import { clamp, lerp, smoothstep } from './shared';
 
 export const updateDecomposer = (
-  context: SpeciesBehaviorContext,
-  { entity, sample, neighbors, dt, localStats }: SpeciesUpdateInput,
+  context: SpeciesRuntimeContext,
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
 ): void => {
   const residue = context.shouldReuseTarget(entity)
     ? context.getTrackedResidueTarget(entity, 260)
     : undefined;
   const activeResidue = residue ?? context.findResidueTarget(entity.position);
-  if (!residue) context.diagnostics.queryCounts.targetRetargets += 1;
-  const targetOffset = activeResidue ? context.delta(entity.position, activeResidue.position) : undefined;
-  const targetDistance = activeResidue ? Math.hypot(targetOffset!.x, targetOffset!.y) : Infinity;
+  if (!residue) context.incrementTargetRetargets();
+  let targetOffset = activeResidue ? context.delta(entity.position, activeResidue.position) : undefined;
+  let targetDistance = activeResidue ? Math.hypot(targetOffset!.x, targetOffset!.y) : Infinity;
 
-  const wetBias = habitatMatch(sample, 'wetland');
-  const basinBias = habitatMatch(sample, 'basin');
-  const ridgePenalty = habitatPenalty(sample, 'highland');
+  const wetBias = context.habitatMatch(sample, 'wetland');
+  const basinBias = context.habitatMatch(sample, 'basin');
+  const ridgePenalty = context.habitatPenalty(sample, 'highland');
   entity.velocity.x += sample.flow.x * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.x * dt * (3.8 + basinBias * 2.2) - sample.gradient.x * dt * (2 + ridgePenalty * 3.2);
   entity.velocity.y += sample.flow.y * dt * (0.026 + wetBias * 0.02) + sample.nutrient * sample.fertilityGradient.y * dt * (3.8 + basinBias * 2.2) - sample.gradient.y * dt * (2 + ridgePenalty * 3.2);
 
@@ -49,7 +55,7 @@ export const updateDecomposer = (
     entity.targetId = undefined;
     entity.targetKind = undefined;
     context.scheduleRetarget(entity, 0.72);
-    const crawlTheta = context.time * (0.012 + entity.activityBias * 0.01) + entity.id * 0.4;
+    const crawlTheta = context.now * (0.012 + entity.activityBias * 0.01) + entity.id * 0.4;
     entity.velocity.x += Math.cos(crawlTheta) * dt * 0.55;
     entity.velocity.y += Math.sin(crawlTheta * 0.76) * dt * 0.42;
     entity.energy = clamp(entity.energy - dt * 0.004, 0, 1.3);

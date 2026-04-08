@@ -1,9 +1,15 @@
-import { clamp, habitatMatch, habitatPenalty, smoothstep } from './shared';
-import type { SpeciesBehaviorContext, SpeciesUpdateInput } from './types';
+import type { Entity } from '../../../types/world';
+import type { FieldSample } from '../../fields/types';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './types';
+import { clamp, smoothstep } from './shared';
 
 export const updatePollinator = (
-  context: SpeciesBehaviorContext,
-  { entity, sample, neighbors, dt, localStats }: SpeciesUpdateInput,
+  context: SpeciesRuntimeContext,
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
 ): void => {
   const nearestFood = context.shouldReuseTarget(entity)
     ? context.getTrackedParticleTarget(entity, 240, (particle) => particle.kind === 'fruit' || particle.kind === 'feed')
@@ -15,7 +21,7 @@ export const updatePollinator = (
     ? context.findFoodTarget(entity.position, 240, (particle) => particle.kind === 'fruit' || particle.kind === 'feed')
     : undefined);
   const activeBloomTarget = activeFood ? undefined : (bloomTarget ?? context.findBloomTarget(entity.position));
-  if (!nearestFood && !bloomTarget) context.diagnostics.queryCounts.targetRetargets += 1;
+  if (!nearestFood && !bloomTarget) context.incrementTargetRetargets();
   const nearestOffset = activeBloomTarget ? context.delta(entity.position, activeBloomTarget.position) : undefined;
   const nearestDistance = activeBloomTarget ? Math.hypot(nearestOffset!.x, nearestOffset!.y) : Infinity;
 
@@ -41,12 +47,12 @@ export const updatePollinator = (
     entity.stability = clamp(entity.stability + (pair.harmony - pair.dissonance * 0.12) * dt * 0.04, 0, 1.2);
   }
 
-  const wanderTheta = context.time * (0.03 + entity.activityBias * 0.028) + entity.id * 0.6;
+  const wanderTheta = context.now * (0.03 + entity.activityBias * 0.028) + entity.id * 0.6;
   entity.velocity.x += Math.cos(wanderTheta) * dt * 1.6 * entity.activity;
   entity.velocity.y += Math.sin(wanderTheta * 0.85) * dt * 1.2 * entity.activity;
-  const wetPull = habitatMatch(sample, 'wetland');
-  const basinPull = habitatMatch(sample, 'basin');
-  const ridgePush = habitatPenalty(sample, 'highland');
+  const wetPull = context.habitatMatch(sample, 'wetland');
+  const basinPull = context.habitatMatch(sample, 'basin');
+  const ridgePush = context.habitatPenalty(sample, 'highland');
   entity.velocity.x += sample.flow.x * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.x * dt * (5.8 + basinPull * 3.8) - sample.gradient.x * dt * (4.2 + ridgePush * 4.8);
   entity.velocity.y += sample.flow.y * dt * (0.04 + wetPull * 0.08 + entity.activity * 0.06) + sample.fertilityGradient.y * dt * (5.8 + basinPull * 3.8) - sample.gradient.y * dt * (4.2 + ridgePush * 4.8);
 
@@ -56,7 +62,7 @@ export const updatePollinator = (
     const ny = nearestOffset.y / dist;
     const tangentX = -ny;
     const tangentY = nx;
-    const curve = 0.55 + Math.sin(context.time * 0.12 + entity.id) * 0.24;
+    const curve = 0.55 + Math.sin(context.now * 0.12 + entity.id) * 0.24;
     const pull = smoothstep(320, 0, dist) * 18;
     entity.velocity.x += (nx * pull + tangentX * curve * 8) * dt;
     entity.velocity.y += (ny * pull + tangentY * curve * 8) * dt;

@@ -1,9 +1,15 @@
-import { clamp, habitatMatch, habitatPenalty, lerp, smoothstep } from './shared';
-import type { SpeciesBehaviorContext, SpeciesUpdateInput } from './types';
+import type { Entity } from '../../../types/world';
+import type { FieldSample } from '../../fields/types';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './types';
+import { clamp, lerp, smoothstep } from './shared';
 
 export const updateGrazer = (
-  context: SpeciesBehaviorContext,
-  { entity, sample, neighbors, dt, localStats }: SpeciesUpdateInput,
+  context: SpeciesRuntimeContext,
+  entity: Entity,
+  sample: FieldSample,
+  neighbors: Entity[],
+  dt: number,
+  localStats: SpeciesLocalStats,
 ): void => {
   const nearestFruit = context.shouldReuseTarget(entity)
     ? context.getTrackedParticleTarget(entity, 300, (particle) => particle.kind === 'fruit')
@@ -15,11 +21,11 @@ export const updateGrazer = (
       : undefined;
   const activeFruit = nearestFruit ?? context.findFoodTarget(entity.position, 300, (particle) => particle.kind === 'fruit');
   const activeBloomTarget = activeFruit ? undefined : (bloomTarget ?? context.findGrazerBloomTarget(entity.position));
-  if (!nearestFruit && !bloomTarget) context.diagnostics.queryCounts.targetRetargets += 1;
+  if (!nearestFruit && !bloomTarget) context.incrementTargetRetargets();
 
-  const basinPull = habitatMatch(sample, 'basin');
-  const wetPenalty = habitatPenalty(sample, 'wetland');
-  const ridgePenalty = habitatPenalty(sample, 'highland');
+  const basinPull = context.habitatMatch(sample, 'basin');
+  const wetPenalty = context.habitatPenalty(sample, 'wetland');
+  const ridgePenalty = context.habitatPenalty(sample, 'highland');
   entity.velocity.x += sample.flow.x * dt * 0.024 + sample.fertilityGradient.x * dt * (3.6 + basinPull * 4.2) - sample.gradient.x * dt * (2.6 + ridgePenalty * 3.8);
   entity.velocity.y += sample.flow.y * dt * 0.024 + sample.fertilityGradient.y * dt * (3.6 + basinPull * 4.2) - sample.gradient.y * dt * (2.6 + ridgePenalty * 3.8);
 
@@ -37,7 +43,7 @@ export const updateGrazer = (
     separationY -= (offset.y / dist) * proximity * proximity;
   }
 
-  const strideTheta = context.time * (0.014 + entity.activityBias * 0.008) + entity.id * 0.43;
+  const strideTheta = context.now * (0.014 + entity.activityBias * 0.008) + entity.id * 0.43;
   entity.velocity.x += Math.cos(strideTheta) * dt * 0.72;
   entity.velocity.y += Math.sin(strideTheta * 0.82) * dt * 0.56;
 
@@ -70,7 +76,7 @@ export const updateGrazer = (
       entity.acousticPressure = clamp(entity.acousticPressure + browseAmount * 0.26, 0, 1.4);
       if (context.shouldEmitSound(entity, dt, 1.6, 1 + browseAmount * 4)) {
         context.emitBurst('feed', entity.position, 9 + entity.size * 0.8, 0.12 + entity.hueShift * 0.03);
-        context.emitWorldEvent({ type: 'entityFed', time: context.time, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: 'fruit' });
+        context.emitWorldEvent({ type: 'entityFed', time: context.now, position: { ...entity.position }, entityType: entity.type, entityId: entity.id, foodKind: 'fruit' });
       }
     }
   } else {

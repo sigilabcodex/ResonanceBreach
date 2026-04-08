@@ -1,9 +1,14 @@
-import { clamp, habitatMatch, habitatPenalty, lerp } from './shared';
-import type { PlantUpdateInput, SpeciesBehaviorContext } from './types';
+import type { Entity } from '../../../types/world';
+import type { FieldSample } from '../../fields/types';
+import type { SpeciesLocalStats, SpeciesRuntimeContext } from './types';
+import { clamp, lerp } from './shared';
 
 export const updatePlant = (
-  context: SpeciesBehaviorContext,
-  { entity, sample, dt, localStats }: PlantUpdateInput,
+  context: SpeciesRuntimeContext,
+  entity: Entity,
+  sample: FieldSample,
+  dt: number,
+  localStats: SpeciesLocalStats,
 ): void => {
   const anchor = entity.anchor ?? entity.position;
   const anchorDelta = context.delta(entity.position, anchor);
@@ -14,9 +19,9 @@ export const updatePlant = (
     y: entity.position.y + entity.velocity.y * dt,
   });
 
-  const basinBoost = habitatMatch(sample, 'basin');
-  const wetBoost = habitatMatch(sample, 'wetland');
-  const ridgeStress = habitatPenalty(sample, 'highland');
+  const basinBoost = context.habitatMatch(sample, 'basin');
+  const wetBoost = context.habitatMatch(sample, 'wetland');
+  const ridgeStress = context.habitatPenalty(sample, 'highland');
   const preferredTemperature = entity.type === 'ephemeral' ? 0.68 : entity.type === 'canopy' ? 0.42 : 0.54;
   const temperatureComfort = clamp(1 - Math.abs(sample.temperature - preferredTemperature) * (entity.type === 'canopy' ? 1.35 : 1.55), 0, 1);
   const nutrientDemand = entity.type === 'ephemeral' ? 0.05 : entity.type === 'canopy' ? 0.07 : 0.045;
@@ -60,18 +65,18 @@ export const updatePlant = (
       context.spawnParticle(entity.position, entity.size * (entity.type === 'canopy' ? 3.2 : 2.6), 'fruit', false, entity.id);
       localStats.fruit += 1;
     }
-    entity.fruitCooldown = context.rng.range(entity.type === 'ephemeral' ? 7 : entity.type === 'canopy' ? 18 : 12, entity.type === 'ephemeral' ? 12 : entity.type === 'canopy' ? 28 : 20);
+    entity.fruitCooldown = context.randomRange(entity.type === 'ephemeral' ? 7 : entity.type === 'canopy' ? 18 : 12, entity.type === 'ephemeral' ? 12 : entity.type === 'canopy' ? 28 : 20);
     entity.energy *= entity.type === 'ephemeral' ? 0.84 : 0.9;
     entity.food *= entity.type === 'ephemeral' ? 0.86 : 0.92;
     entity.visualState = 'reproducing';
     entity.visualPulse = 0.42;
-    context.diagnostics.lifecycleTransitions.fruitingBursts += 1;
+    context.incrementFruitingBursts();
     context.emitBurst('birth', entity.position, 8 + entity.size * 0.7, 0.12 + entity.hueShift * 0.04);
-    context.emitWorldEvent({ type: 'fruitCreated', time: context.time, position: { ...entity.position }, sourceEntityId: entity.id, count: fruitCount });
+    context.emitWorldEvent({ type: 'fruitCreated', time: context.now, position: { ...entity.position }, sourceEntityId: entity.id, count: fruitCount });
   }
 
   const propaguleChance = entity.type === 'ephemeral' ? 0.24 : entity.type === 'canopy' ? 0.06 : 0.1;
-  if (entity.stage !== 'birth' && entity.pollination > 0.4 && entity.energy > 0.56 && context.rng.next() < dt * propaguleChance * clamp(sample.nutrient + temperatureComfort, 0.4, 1.4)) {
+  if (entity.stage !== 'birth' && entity.pollination > 0.4 && entity.energy > 0.56 && context.random() < dt * propaguleChance * clamp(sample.nutrient + temperatureComfort, 0.4, 1.4)) {
     context.spawnPropagule(entity.position, entity.type === 'canopy' ? 'seed' : 'spore', entity.type, entity.id, entity.type === 'canopy' ? 0.56 : 0.38);
     entity.pollination *= entity.type === 'ephemeral' ? 0.88 : 0.92;
   }
